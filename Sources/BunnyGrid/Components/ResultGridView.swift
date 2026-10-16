@@ -52,7 +52,7 @@ struct ResultGridView: NSViewRepresentable {
         menu.delegate = context.coordinator
         tableView.menu = menu
 
-        let scrollView = NSScrollView()
+        let scrollView = GridScrollView()
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
@@ -86,6 +86,9 @@ struct ResultGridView: NSViewRepresentable {
 
         var isEditable: Bool { editing != nil }
 
+        /// Columns whose declared type is numeric; their values (e.g. PostgreSQL numeric, decoded as text) align right.
+        private var numericColumns: Set<Int> = []
+
         func update(_ view: ResultGridView) {
             guard let tableView else { return }
             onHeaderClick = view.onHeaderClick
@@ -99,6 +102,9 @@ struct ResultGridView: NSViewRepresentable {
             columns = view.columns
             rows = view.rows
             columnTypes = view.columnTypes
+            numericColumns = Set(columns.indices.filter { index in
+                columnTypes[columns[index]].map { GridHeaderCell.symbolName(for: $0) == "number" } ?? false
+            })
             revision = view.editing?.revision
             if columnsChanged { rebuildColumns(tableView) }
             for column in tableView.tableColumns where column.identifier != Self.markerID {
@@ -121,8 +127,11 @@ struct ResultGridView: NSViewRepresentable {
             if let header = tableView.headerView as? GridHeaderView, header.height != headerHeight,
                let scrollView = tableView.enclosingScrollView {
                 header.height = headerHeight
-                // With automatic insets off, tiling places the rows below the (taller) header.
+                // With automatic insets off, tiling places the rows below the (taller) header,
+                // but the scroll position keeps the old header's offset; reset it to the top.
                 scrollView.tile()
+                scrollView.contentView.scroll(to: NSPoint(x: 0, y: -headerHeight))
+                scrollView.reflectScrolledClipView(scrollView.contentView)
             }
 
             let marker = NSTableColumn(identifier: Self.markerID)
@@ -252,7 +261,7 @@ struct ResultGridView: NSViewRepresentable {
             var attributes: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: color]
             if state == .deleted { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = value.isNumeric ? .right : .left
+            paragraph.alignment = value.isNumeric || numericColumns.contains(column) ? .right : .left
             paragraph.lineBreakMode = .byTruncatingTail
             attributes[.paragraphStyle] = paragraph
             field.attributedStringValue = NSAttributedString(string: text, attributes: attributes)
@@ -443,6 +452,22 @@ final class GridTableView: NSTableView {
             return
         }
         super.keyDown(with: event)
+    }
+}
+
+/// Keeps the first row below the header: when the header height changes around the first layout,
+/// AppKit can leave the scroll offset at the old height and hide part of row 1.
+final class GridScrollView: NSScrollView {
+    override func tile() {
+        super.tile()
+        guard let header = (documentView as? NSTableView)?.headerView else { return }
+        let top = -header.frame.height
+        let y = contentView.bounds.origin.y
+        // Negative offsets only happen at the top; snap any stale one to the header height.
+        if y < 0 && y != top {
+            contentView.scroll(to: NSPoint(x: contentView.bounds.origin.x, y: top))
+            reflectScrolledClipView(contentView)
+        }
     }
 }
 

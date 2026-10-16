@@ -211,7 +211,7 @@ public actor PostgresDriver: DatabaseDriver {
         case .uuid:
             return (try? cell.decode(UUID.self)).map { .text($0.uuidString.lowercased()) } ?? fallback(cell)
         case .timestamptz:
-            return (try? cell.decode(Date.self)).map { .text($0.formatted(.iso8601)) } ?? fallback(cell)
+            return (try? cell.decode(Date.self)).map { .text(timestampTZFormat.format($0)) } ?? fallback(cell)
         case .timestamp:
             return (try? cell.decode(Date.self)).map { .text(timestampFormat.format($0)) } ?? fallback(cell)
         case .date:
@@ -236,6 +236,9 @@ public actor PostgresDriver: DatabaseDriver {
 
     private static let timestampFormat = Date.ISO8601FormatStyle(timeZone: .gmt)
         .year().month().day().dateTimeSeparator(.space).time(includingFractionalSeconds: false)
+    /// Local time with its offset, like psql: 2026-10-16 19:57:39-03:00.
+    private static let timestampTZFormat = Date.ISO8601FormatStyle(timeZone: .current)
+        .year().month().day().dateTimeSeparator(.space).time(includingFractionalSeconds: false).timeZone(separator: .colon)
     private static let dateFormat = Date.ISO8601FormatStyle(timeZone: .gmt).year().month().day()
 
     private static func message(for error: any Error) -> String {

@@ -188,7 +188,7 @@ final class AppModel {
     func connect(_ id: UUID) -> Session? {
         guard let config = connection(id: id) else { return nil }
         if let existing = sessions[id], !existing.isFailed { return existing }
-        let session = Session(config: config, password: keychain.password(for: id))
+        let session = Session(config: config, keychain: keychain)
         session.onQueryExecuted = { [weak self] entry in self?.record(entry) }
         sessions[id] = session
         expanded.insert(.connection(id))
@@ -510,11 +510,19 @@ final class AppModel {
         var tableName: String?
         var query: String?
         var opened: UUID?
+        var database = "main"
         while let flag = arguments.first {
             arguments.removeFirst()
             switch flag {
             case "--open-table" where !arguments.isEmpty: tableName = arguments.removeFirst()
             case "--query" where !arguments.isEmpty: query = arguments.removeFirst()
+            case "--connect-first":
+                guard let first = connections.first else { continue }
+                connect(first.id)
+                navSelection = .connection(first.id)
+                opened = first.id
+                database = first.kind == .sqlite ? "main" : first.database
+                if let group = first.group { expanded.insert(.group(group)) }
             default:
                 guard !flag.hasPrefix("-"), FileManager.default.fileExists(atPath: flag) else { continue }
                 openSQLiteFile(URL(fileURLWithPath: flag).standardizedFileURL)
@@ -526,9 +534,9 @@ final class AppModel {
             let args = CommandLine.arguments
             let tableName = args[flagIndex] == "--design" && args.indices.contains(flagIndex + 1) ? args[flagIndex + 1] : nil
             Task {
-                while sessions[id]?.context("main")?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
-                guard let context = sessions[id]?.context("main") else { return }
-                let object = tableName.flatMap { name in context.objects(in: nil)?.first { $0.name == name } }
+                while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
+                guard let context = sessions[id]?.context(database) else { return }
+                let object = tableName.flatMap { name in context.objects(in: context.defaultSchema)?.first { $0.name == name } }
                 openDesign(table: object, in: context)
                 if case .design(let model) = selectedTab, tableName != nil {
                     try? await Task.sleep(for: .milliseconds(300))
@@ -539,23 +547,24 @@ final class AppModel {
         }
         if CommandLine.arguments.contains("--show-objects"), let id = opened {
             Task {
-                while sessions[id]?.context("main")?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
-                expanded.insert(.category(id, "main", nil, .tables))
-                select(.category(id, "main", nil, .tables))
+                while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
+                let schema = sessions[id]?.context(database)?.defaultSchema
+                expanded.insert(.category(id, database, schema, .tables))
+                select(.category(id, database, schema, .tables))
             }
         }
         #endif
         guard tableName != nil || query != nil, let id = opened else { return }
         Task {
-            while sessions[id]?.context("main")?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
-            guard let context = sessions[id]?.context("main") else { return }
+            while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
+            guard let context = sessions[id]?.context(database) else { return }
             if let query {
                 openQuery(text: query, in: context)
                 selectedQueryTab?.run()
             }
-            if let tableName, let object = context.objects(in: nil)?.first(where: { $0.name == tableName }) {
-                expanded.insert(.category(id, "main", nil, .tables))
-                navSelection = .object(id, "main", object)
+            if let tableName, let object = context.objects(in: context.defaultSchema)?.first(where: { $0.name == tableName }) {
+                expanded.insert(.category(id, database, context.defaultSchema, .tables))
+                navSelection = .object(id, database, object)
                 openTable(object, in: context)
                 #if DEBUG
                 if let tab = selectedTableTab, CommandLine.arguments.contains("--demo-edits") || CommandLine.arguments.contains("--focus-cell") {

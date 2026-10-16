@@ -93,22 +93,28 @@ final class Session: Identifiable {
 
     let config: ConnectionConfig
     /// Server-level driver: lists databases, and serves every database on MySQL/SQLite.
-    let driver: any DatabaseDriver
-    @ObservationIgnored private let password: String?
+    /// Rebuilt in `connect()` once the password has been read from the Keychain.
+    private(set) var driver: any DatabaseDriver
+    @ObservationIgnored private var password: String?
+    @ObservationIgnored private let keychain: KeychainStore
     private(set) var state: State = .connecting
     private(set) var serverVersion = ""
     private(set) var databases: [String] = []
     private(set) var contexts: [String: DatabaseContext] = [:]
     @ObservationIgnored var onQueryExecuted: ((QueryHistoryEntry) -> Void)?
 
-    init(config: ConnectionConfig, password: String?) {
+    init(config: ConnectionConfig, keychain: KeychainStore) {
         self.config = config
-        self.password = password
+        self.keychain = keychain
+        self.driver = DriverFactory.make(config: Self.serverConfig(config), password: nil)
+    }
+
+    private static func serverConfig(_ config: ConnectionConfig) -> ConnectionConfig {
         var serverConfig = config
         if config.kind == .postgresql && serverConfig.database.isEmpty {
             serverConfig.database = "postgres"
         }
-        self.driver = DriverFactory.make(config: serverConfig, password: password)
+        return serverConfig
     }
 
     nonisolated var id: UUID { config.id }
@@ -122,6 +128,12 @@ final class Session: Identifiable {
 
     func connect() async {
         state = .connecting
+        if !config.kind.isFileBased {
+            // Keychain reads can block on an access prompt; keep them off the main thread.
+            let keychain = keychain, id = config.id
+            password = await Task.detached { keychain.password(for: id) }.value
+            driver = DriverFactory.make(config: Self.serverConfig(config), password: password)
+        }
         do {
             try await driver.connect()
             serverVersion = (try? await driver.serverVersion()) ?? ""
