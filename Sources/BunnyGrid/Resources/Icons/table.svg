@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="head" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5DB0FF"/><stop offset="1" stop-color="#1F6FE5"/></linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E3EEFC"/></linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3D8BFD"/><stop offset="1" stop-color="#1857C4"/></linearGradient>
+  </defs>
+  <ellipse cx="32" cy="57" rx="24" ry="2.6" fill="#000" opacity="0.2"/>
+  <path d="M8 13 Q8 8 13 8 H51 Q56 8 56 13 V50 Q56 55 51 55 H13 Q8 55 8 50 Z" fill="url(#edge)"/>
+  <path d="M10 22 H54 V49 Q54 53 50 53 H14 Q10 53 10 49 Z" fill="url(#body)"/>
+  <path d="M10 13 Q10 10 13 10 H51 Q54 10 54 13 V22 H10 Z" fill="url(#head)"/>
+  <path d="M10 13 Q10 10 13 10 H51 Q54 10 54 13 V15 H10 Z" fill="#FFFFFF" opacity="0.35"/>
+  <rect x="10" y="31" width="44" height="7.5" fill="#D3E5FC"/>
+  <rect x="10" y="45.5" width="44" height="7" fill="#D3E5FC"/>
+  <g stroke="#8DB8F2" stroke-width="1.2">
+    <path d="M10 31 H54 M10 38.5 H54 M10 45.5 H54"/>
+    <path d="M24.5 22 V53 M39.5 22 V53"/>
+  </g>
+  <g stroke="#FFFFFF" stroke-opacity="0.7" stroke-width="1.2"><path d="M24.5 10 V22 M39.5 10 V22"/></g>
+</svg>

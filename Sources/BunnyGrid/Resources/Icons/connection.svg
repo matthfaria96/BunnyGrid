@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5E646D"/><stop offset="0.35" stop-color="#C9CED5"/>
+      <stop offset="0.6" stop-color="#9DA3AC"/><stop offset="1" stop-color="#555B63"/>
+    </linearGradient>
+    <linearGradient id="collar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4A4F57"/><stop offset="0.45" stop-color="#9AA0A9"/><stop offset="1" stop-color="#3E434A"/>
+    </linearGradient>
+    <linearGradient id="prong" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#A8AEB6"/><stop offset="0.5" stop-color="#FFFFFF"/><stop offset="1" stop-color="#9097A0"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6EE07B"/><stop offset="1" stop-color="#1F9E37"/>
+    </linearGradient>
+  </defs>
+  <path d="M38 37 C46 45 46 52 56 58" fill="none" stroke="#3C4047" stroke-width="5.5" stroke-linecap="round"/>
+  <path d="M38 37 C46 45 46 52 56 58" fill="none" stroke="#8B919A" stroke-width="3" stroke-linecap="round"/>
+  <g transform="rotate(-45 28 28)">
+    <rect x="23" y="7" width="3.2" height="11" rx="1.4" fill="url(#prong)"/>
+    <rect x="30" y="7" width="3.2" height="11" rx="1.4" fill="url(#prong)"/>
+    <path d="M17 17 H39 V30 Q39 38 31 38 H25 Q17 38 17 30 Z" fill="url(#metal)"/>
+    <path d="M17 17 H39 V20 H17 Z" fill="#FFFFFF" opacity="0.35"/>
+    <path d="M17 17 H39 V30 Q39 38 31 38 H25 Q17 38 17 30 Z" fill="none" stroke="#3E434A" stroke-opacity="0.55" stroke-width="0.8"/>
+    <rect x="20" y="37" width="16" height="6" rx="2" fill="url(#collar)"/>
+    <rect x="23" y="42" width="10" height="5" rx="2" fill="#55595F"/>
+  </g>
+  <circle cx="47" cy="47" r="11.5" fill="#FFFFFF"/>
+  <circle cx="47" cy="47" r="9.8" fill="url(#green)"/>
+  <path d="M41.5 41.5 A8 8 0 0 1 52.5 41.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="1.5"/>
+  <path d="M47 42 V52 M42 47 H52" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
+</svg>

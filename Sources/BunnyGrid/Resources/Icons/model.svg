@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="box" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFC15E"/><stop offset="1" stop-color="#F0861A"/></linearGradient>
+    <linearGradient id="box2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFAE45"/><stop offset="1" stop-color="#E06B10"/></linearGradient>
+  </defs>
+  <ellipse cx="32" cy="59" rx="24" ry="2.4" fill="#000" opacity="0.18"/>
+  <path d="M20 22 V32 H43 V40" fill="none" stroke="#C25E12" stroke-width="2.6"/>
+  <path d="M43 22 V30" fill="none" stroke="#C25E12" stroke-width="2.6"/>
+  <g>
+    <rect x="6" y="6" width="26" height="18" rx="3.5" fill="url(#box)"/>
+    <rect x="6" y="6" width="26" height="6" rx="3" fill="#FFFFFF" opacity="0.3"/>
+    <path d="M10 16 H26 M10 20 H20" stroke="#FFFFFF" stroke-opacity="0.85" stroke-width="1.8" stroke-linecap="round"/>
+  </g>
+  <g>
+    <rect x="34" y="8" width="22" height="16" rx="3.5" fill="url(#box2)"/>
+    <rect x="34" y="8" width="22" height="5.5" rx="3" fill="#FFFFFF" opacity="0.3"/>
+    <path d="M38 17.5 H51" stroke="#FFFFFF" stroke-opacity="0.85" stroke-width="1.8" stroke-linecap="round"/>
+  </g>
+  <g>
+    <rect x="28" y="38" width="30" height="19" rx="3.5" fill="url(#box)"/>
+    <rect x="28" y="38" width="30" height="6" rx="3" fill="#FFFFFF" opacity="0.3"/>
+    <path d="M32 48 H51 M32 52.5 H44" stroke="#FFFFFF" stroke-opacity="0.85" stroke-width="1.8" stroke-linecap="round"/>
+  </g>
+  <circle cx="20" cy="24" r="2.4" fill="#C25E12"/><circle cx="43" cy="38" r="2.4" fill="#C25E12"/>
+</svg>

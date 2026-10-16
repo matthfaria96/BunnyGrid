@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E4E8EE"/></linearGradient>
+    <linearGradient id="coral" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8A6B"/><stop offset="1" stop-color="#E5483B"/></linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6AB3FF"/><stop offset="1" stop-color="#2E7BEA"/></linearGradient>
+  </defs>
+  <ellipse cx="32" cy="58" rx="22" ry="2.5" fill="#000" opacity="0.18"/>
+  <g transform="translate(22 5)">
+    <rect width="34" height="40" rx="4" fill="url(#paper)" stroke="#B9C2CE" stroke-width="0.8"/>
+    <path d="M4 0 H30 Q34 0 34 4 V10 H0 V4 Q0 0 4 0 Z" fill="url(#blue)"/>
+    <path d="M6 18 H28 M6 24 H22" stroke="#B1BAC5" stroke-width="2.4" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(9 14)">
+    <rect width="36" height="42" rx="4" fill="url(#paper)" stroke="#B9C2CE" stroke-width="0.8"/>
+    <path d="M4 0 H32 Q36 0 36 4 V11 H0 V4 Q0 0 4 0 Z" fill="url(#coral)"/>
+    <path d="M4 0 H32 Q36 0 36 4 V5 H0 V4 Q0 0 4 0 Z" fill="#FFFFFF" opacity="0.35"/>
+    <g stroke-linecap="round" stroke-width="2.6">
+      <path d="M6 18 H20" stroke="#E5483B"/><path d="M23 18 H30" stroke="#2E7BEA"/>
+      <path d="M6 24.5 H14" stroke="#7B8794"/><path d="M17 24.5 H30" stroke="#7B8794"/>
+      <path d="M6 31 H25" stroke="#B1BAC5"/><path d="M6 37 H18" stroke="#B1BAC5"/>
+    </g>
+  </g>
+</svg>

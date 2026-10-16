@@ -74,42 +74,42 @@ struct TableTabView: View {
             FlowLayout(spacing: 12, lineSpacing: 4) {
                 TableProfileMenu(model: model, namingProfile: $namingProfile)
                 if model.isInTransaction {
-                    ToolbarChip(title: "Commit", systemImage: "checkmark.seal.fill", tint: .green, help: "Apply pending edits and commit the transaction") {
+                    ToolbarChip(title: "Commit", systemImage: "checkmark.seal.fill", tint: .green, help: "Apply pending edits and commit the transaction", icon: "tb-commit") {
                         Task { await model.commitTransaction() }
                     }
-                    ToolbarChip(title: "Rollback", systemImage: "arrow.uturn.backward.circle.fill", tint: .red, help: "Undo everything since Begin Transaction") {
+                    ToolbarChip(title: "Rollback", systemImage: "arrow.uturn.backward.circle.fill", tint: .red, help: "Undo everything since Begin Transaction", icon: "tb-rollback") {
                         Task { await model.rollbackTransaction() }
                     }
                 } else {
                     ToolbarChip(title: "Begin Transaction", systemImage: "arrow.triangle.branch", tint: .orange, isEnabled: model.canBeginTransaction,
-                                help: model.canBeginTransaction ? "Edit inside a transaction on this tab's own connection; commit or roll back later" : "Begin Transaction needs an editable table") {
+                                help: model.canBeginTransaction ? "Edit inside a transaction on this tab's own connection; commit or roll back later" : "Begin Transaction needs an editable table", icon: "tb-begin-transaction") {
                         Task { await model.beginTransaction(session: model.connectionID.flatMap { app.sessions[$0] }) }
                     }
                 }
-                ToolbarChip(title: "Cell Editor", systemImage: "square.and.pencil", tint: .orange, isOn: model.showCellEditor) {
+                ToolbarChip(title: "Cell Editor", systemImage: "square.and.pencil", tint: .orange, isOn: model.showCellEditor, icon: "tb-cell-editor") {
                     model.showCellEditor.toggle()
                 }
-                ToolbarChip(title: "Filter & Sort", systemImage: "line.3.horizontal.decrease.circle", tint: .orange, isOn: model.showFilterBar) {
+                ToolbarChip(title: "Filter & Sort", systemImage: "line.3.horizontal.decrease.circle", tint: .orange, isOn: model.showFilterBar, icon: "tb-filter-sort") {
                     model.showFilterBar.toggle()
                 }
-                ToolbarChip(title: "Columns", systemImage: "rectangle.split.3x1", tint: .blue, isOn: !model.hiddenColumns.isEmpty) {
+                ToolbarChip(title: "Columns", systemImage: "rectangle.split.3x1", tint: .blue, isOn: !model.hiddenColumns.isEmpty, icon: "tb-columns") {
                     showingColumns = true
                 }
                 .popover(isPresented: $showingColumns, arrowEdge: .bottom) { ColumnsPopover(model: model) }
-                ToolbarChip(title: "History", systemImage: "clock.arrow.circlepath", tint: .orange, isOn: model.showHistory) {
+                ToolbarChip(title: "History", systemImage: "clock.arrow.circlepath", tint: .orange, isOn: model.showHistory, icon: "tb-history") {
                     model.showHistory.toggle()
                 }
-                ToolbarChip(title: "Fill with AI", systemImage: "sparkles", tint: .blue, isEnabled: model.object.kind == .table) {
+                ToolbarChip(title: "Fill with AI", systemImage: "sparkles", tint: .blue, isEnabled: model.object.kind == .table, icon: "tb-fill-ai") {
                     app.assistant.ask(
                         "Write an INSERT statement with 10 rows of realistic sample data for the table \(model.object.qualifiedName). Respect the column types, primary key and NOT NULL constraints.",
                         includeTable: true
                     )
                 }
-                ToolbarChip(title: "Data Profiling", systemImage: "chart.bar.doc.horizontal", tint: .green, isEnabled: !model.columns.isEmpty) {
+                ToolbarChip(title: "Data Profiling", systemImage: "chart.bar.doc.horizontal", tint: .green, isEnabled: !model.columns.isEmpty, icon: "tb-data-profiling") {
                     model.showProfiling = true
                 }
                 ToolbarChip(title: "Import", systemImage: "square.and.arrow.down", tint: .teal,
-                            isEnabled: model.object.kind == .table && model.readOnlyReason == nil) {
+                            isEnabled: model.object.kind == .table && model.readOnlyReason == nil, icon: "tb-import") {
                     if let context = app.currentContextFor(model) {
                         app.importTarget = ImportTarget(context: context, object: model.object)
                     }
@@ -117,18 +117,18 @@ struct TableTabView: View {
                 ExportChip(columns: model.page?.columns ?? [], rows: model.exportRows, suggestedName: model.object.name)
                     .disabled(model.page == nil)
                 ToolbarChip(title: "Data Generation", systemImage: "wand.and.stars", tint: .purple,
-                            isEnabled: model.object.kind == .table && model.readOnlyReason == nil && !model.isInTransaction) {
+                            isEnabled: model.object.kind == .table && model.readOnlyReason == nil && !model.isInTransaction, icon: "tb-data-generation") {
                     if let context = app.currentContextFor(model) {
                         app.generationTarget = ImportTarget(context: context, object: model.object)
                     }
                 }
                 ToolbarChip(title: "Data Masking", systemImage: "theatermasks", tint: .indigo,
-                            isOn: model.masks.values.contains { $0 != .none }, isEnabled: model.page != nil) {
+                            isOn: model.masks.values.contains { $0 != .none }, isEnabled: model.page != nil, icon: "tb-data-masking") {
                     showingMasking = true
                 }
                 .popover(isPresented: $showingMasking, arrowEdge: .bottom) { DataMaskingPopover(model: model) }
                 ToolbarChip(title: "Create BI Workspace", systemImage: "chart.pie", tint: .pink,
-                            comingSoon: "Turn this table into charts and dashboards.")
+                            comingSoon: "Turn this table into charts and dashboards.", icon: "tb-bi-workspace")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -235,7 +235,7 @@ private struct TableProfileMenu: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "tablecells.badge.ellipsis").foregroundStyle(.blue).frame(width: 16)
+                AppIcon(name: "tb-table-profile", size: 17)
                 Text("Table Profile")
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
             }

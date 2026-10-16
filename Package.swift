@@ -23,7 +23,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "BunnyGrid",
-            dependencies: ["BunnyGridCore"]
+            dependencies: ["BunnyGridCore"],
+            resources: [.copy("Resources/Icons")]
         ),
         .testTarget(
             name: "BunnyGridCoreTests",

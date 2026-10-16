@@ -20,6 +20,8 @@ BIN="$(swift build -c "$CONFIG" --show-bin-path)/BunnyGrid"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/BunnyGrid"
+# SwiftPM resource bundle (SVG icons) lives in Contents/Resources so the signature stays valid.
+cp -R "$(dirname "$BIN")/BunnyGrid_BunnyGrid.bundle" "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

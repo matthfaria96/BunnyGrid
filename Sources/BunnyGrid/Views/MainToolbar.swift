@@ -26,9 +26,7 @@ struct MainToolbar: View {
                     Divider()
                     Button("Open SQLite Database…") { app.presentOpenSQLitePanel() }
                 } label: {
-                    ChromeLabel(title: "Connection") {
-                        ToolbarGlyph(systemImage: "powerplug.fill", style: .symbol([Color(white: 0.62)]), badge: .plus)
-                    }
+                    ChromeLabel(title: "Connection") { AppIcon(name: "connection", size: 32) }
                 } primaryAction: {
                     app.newConnection()
                 }
@@ -41,31 +39,34 @@ struct MainToolbar: View {
                 ChromeButton(title: "New Query", isEnabled: app.currentContext != nil, help: "New Query (⌘T)") {
                     app.openQuery()
                 } glyph: {
-                    ToolbarGlyph(systemImage: "doc.text.fill", style: .tile([Color(red: 0.98, green: 0.55, blue: 0.40), Color(red: 0.86, green: 0.28, blue: 0.26)]), badge: .plus)
+                    AppIcon(name: "new-query", size: 32, isEnabled: app.currentContext != nil)
                 }
 
-                objectButton(.tables, "Table", ToolbarGlyph(systemImage: "tablecells", style: .tile([Color(red: 0.42, green: 0.70, blue: 1.0), Color(red: 0.13, green: 0.45, blue: 0.92)])))
-                objectButton(.views, "View", ToolbarGlyph(systemImage: "eyeglasses", style: .tile([Color(red: 0.55, green: 0.78, blue: 1.0), Color(red: 0.22, green: 0.52, blue: 0.90)])))
+                objectButton(.tables, "Table", "table")
+                objectButton(.views, "View", "view")
                 if app.currentContext?.kind == .postgresql {
-                    objectButton(.materializedViews, "Materialized View", ToolbarGlyph(systemImage: "eyeglasses", style: .tile([Color(red: 1.0, green: 0.70, blue: 0.40), Color(red: 0.93, green: 0.42, blue: 0.20)])))
+                    objectButton(.materializedViews, "Materialized View", "materialized-view")
                 }
-                objectButton(.functions, "Function", ToolbarGlyph(systemImage: "function", style: .symbol([Color(red: 0.25, green: 0.55, blue: 1.0)])))
+                objectButton(.functions, "Function", "function")
                 ChromeButton(title: "User", comingSoon: "Manage users, roles and privileges on the server.") {} glyph: {
-                    ToolbarGlyph(systemImage: "person.fill", style: .symbol([Color(red: 1.0, green: 0.72, blue: 0.20)]))
+                    AppIcon(name: "user", size: 32)
                 }
                 ChromeButton(title: "Others", comingSoon: "Triggers, sequences, types, events and other objects.") {} glyph: {
-                    ToolbarGlyph(systemImage: "wrench.and.screwdriver.fill", style: .symbol([Color(red: 0.25, green: 0.55, blue: 0.95)]), badge: .chevron)
+                    AppIcon(name: "others", size: 32)
+                        .overlay(alignment: .topTrailing) {
+                            Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(.secondary).offset(x: 7, y: 2)
+                        }
                 }
-                objectButton(.queries, "Query", ToolbarGlyph(systemImage: "doc.on.doc.fill", style: .symbol([Color(red: 0.98, green: 0.45, blue: 0.35), Color(red: 0.30, green: 0.60, blue: 1.0)])))
-                objectButton(.backups, "Backup", ToolbarGlyph(systemImage: "arrow.counterclockwise", style: .tile([Color(white: 0.62), Color(white: 0.40)])))
+                objectButton(.queries, "Query", "query")
+                objectButton(.backups, "Backup", "backup")
                 ChromeButton(title: "Automation", comingSoon: "Batch jobs that run queries, exports and backups on a schedule.") {} glyph: {
-                    ToolbarGlyph(systemImage: "gearshape.2.fill", style: .symbol([Color(red: 0.20, green: 0.75, blue: 0.70), Color(red: 0.55, green: 0.60, blue: 0.65)]))
+                    AppIcon(name: "automation", size: 32)
                 }
                 ChromeButton(title: "Model", comingSoon: "ER diagrams, reverse engineering and model-to-database sync.") {} glyph: {
-                    ToolbarGlyph(systemImage: "square.on.square.squareshape.controlhandles", style: .symbol([Color(red: 1.0, green: 0.62, blue: 0.20)]))
+                    AppIcon(name: "model", size: 32)
                 }
                 ChromeButton(title: "BI", comingSoon: "Charts and dashboards built from your queries.") {} glyph: {
-                    ToolbarGlyph(systemImage: "chart.bar.xaxis", style: .symbol([Color(red: 0.92, green: 0.30, blue: 0.75), Color(red: 0.55, green: 0.35, blue: 0.95)]))
+                    AppIcon(name: "bi", size: 32)
                 }
 
                 Spacer(minLength: 16)
@@ -81,11 +82,11 @@ struct MainToolbar: View {
         .background(ChromeBackground())
     }
 
-    private func objectButton(_ category: ObjectCategory, _ title: String, _ glyph: ToolbarGlyph) -> some View {
+    private func objectButton(_ category: ObjectCategory, _ title: String, _ icon: String) -> some View {
         ChromeButton(title: title, isSelected: app.objectCategory == category, help: "Show \(category.rawValue)") {
             app.showCategory(category)
         } glyph: {
-            glyph
+            AppIcon(name: icon, size: 32)
         }
     }
 }
@@ -122,12 +123,16 @@ private struct ChromeLabel<Glyph: View>: View {
     var body: some View {
         VStack(spacing: 2) {
             glyph()
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(isSelected ? Color.primary.opacity(0.13) : (isHovering ? Color.primary.opacity(0.07) : .clear))
-                )
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background {
+                    if isSelected {
+                        // The selected object type sits on a pane of glass, as in Navicat on macOS 26+.
+                        Color.clear.glassBackground(in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    } else if isHovering {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(0.07))
+                    }
+                }
             Text(title)
                 .font(.system(size: 11))
                 .foregroundStyle(isSelected ? Color.accentColor : (isEnabled ? Color.secondary : Color.secondary.opacity(0.5)))
@@ -177,9 +182,8 @@ private struct ViewControl: View {
                 toggle("sidebar.right", isOn: app.showAssistant, help: "Show/Hide Information Pane (⌥⌘2)") { app.showAssistant.toggle() }
             }
             .padding(.horizontal, 4)
-            .frame(height: 30)
-            .background(Capsule().fill(Color.primary.opacity(0.09)))
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+            .frame(height: 32)
+            .glassBackground(in: Capsule(), interactive: true)
             Text("View").font(.system(size: 11)).foregroundStyle(.secondary)
         }
     }
@@ -205,10 +209,12 @@ private struct AccountBadge: View {
             Divider()
             SettingsLink { Text("Settings…") }
         } label: {
-            Image(systemName: "person.crop.circle.fill")
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(Color.white.opacity(0.9), Color.gray.opacity(0.75))
-                .font(.system(size: 32))
+            Image(systemName: "person.fill")
+                .font(.system(size: 17))
+                .foregroundStyle(Color.white.opacity(0.92))
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(LinearGradient(colors: [Color(white: 0.72), Color(white: 0.5)], startPoint: .top, endPoint: .bottom)).padding(3))
+                .glassBackground(in: Circle(), interactive: true)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)

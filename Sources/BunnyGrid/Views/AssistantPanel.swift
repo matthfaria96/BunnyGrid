@@ -429,9 +429,8 @@ private struct Composer: View {
                 }
             }
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: .separatorColor)))
+        .padding(10)
+        .glassBackground(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

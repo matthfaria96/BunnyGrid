@@ -356,11 +356,12 @@ enum WorkspaceTab: Identifiable {
         }
     }
 
+    /// Illustrated icon (Resources/Icons) for the tab.
     var systemImage: String {
         switch self {
-        case .table(let model): model.object.kind == .table ? "tablecells" : "eyeglasses"
-        case .query: "doc.text.magnifyingglass"
-        case .design: "pencil.and.ruler"
+        case .table(let model): model.object.kind.iconName
+        case .query: "query"
+        case .design: "table"
         }
     }
 

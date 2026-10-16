@@ -9,7 +9,7 @@ struct RightPane: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                HStack(spacing: 14) {
+                HStack(spacing: 6) {
                     tab(.info) {
                         Image(systemName: "info.circle").font(.system(size: 14, weight: .medium))
                     }
@@ -17,6 +17,9 @@ struct RightPane: View {
                         Text("AI").font(.system(size: 13, weight: .medium, design: .rounded))
                     }
                 }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .glassBackground(in: Capsule(), interactive: true)
                 HStack {
                     Spacer()
                     IconButton(systemImage: app.assistant.isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
@@ -26,7 +29,7 @@ struct RightPane: View {
                     .padding(.trailing, 8)
                 }
             }
-            .frame(height: 30)
+            .frame(height: 38)
             Divider()
             switch app.rightPane {
             case .info: InfoContent()
@@ -179,10 +182,7 @@ private struct DatabaseInfo: View {
         let context = session?.context(database)
         InfoScroll {
             InfoHeader(title: database, subtitle: "Database · \(config.displayName)") {
-                Image(systemName: "cylinder.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(context?.isOpen == true ? .green : .secondary)
-                    .frame(width: 56, height: 56)
+                AppIcon(name: context?.isOpen == true ? "database-open" : "database-closed", size: 56)
             }
             InfoField(label: "Status", value: context?.isOpen == true ? "Open" : "Closed")
             if let context, context.usesSchemas {
@@ -208,11 +208,7 @@ private struct ObjectInfo: View {
     var body: some View {
         InfoScroll {
             InfoHeader(title: object.name, subtitle: kindName) {
-                ToolbarGlyph(systemImage: object.kind == .routine ? "function" : (object.kind == .table ? "tablecells" : "eyeglasses"),
-                             style: .tile(object.kind == .materializedView
-                                          ? [Color(red: 1.0, green: 0.70, blue: 0.40), Color(red: 0.93, green: 0.42, blue: 0.20)]
-                                          : [Color(red: 0.42, green: 0.70, blue: 1.0), Color(red: 0.13, green: 0.45, blue: 0.92)]),
-                             size: 56)
+                AppIcon(name: object.kind.iconName, size: 56)
             }
             if let rows = stats?.rows { InfoField(label: "Rows", value: rows.formatted()) }
             if let size = stats?.sizeBytes, size > 0 { InfoField(label: "Data Length", value: ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)) }

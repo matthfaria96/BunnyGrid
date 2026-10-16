@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="wrench" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7CC0FF"/><stop offset="1" stop-color="#1F64D6"/></linearGradient>
+    <linearGradient id="shaft" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F4F6F8"/><stop offset="1" stop-color="#8E959E"/></linearGradient>
+    <linearGradient id="handle" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFB44D"/><stop offset="1" stop-color="#E8741B"/></linearGradient>
+  </defs>
+  <ellipse cx="32" cy="58" rx="22" ry="2.4" fill="#000" opacity="0.18"/>
+  <path d="M33 31 L52 12 L56 8 L58 10 L54 14 L35 33 Z" fill="url(#shaft)" stroke="#6E757E" stroke-width="0.8"/>
+  <path d="M14 46 L28 32 Q31 29 34 32 L36 34 Q39 37 36 40 L22 54 Q17 59 12 54 L10 52 Q5 47 10 42 Z" fill="url(#handle)"/>
+  <path d="M13 45 L25 33" stroke="#FFFFFF" stroke-opacity="0.5" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M27 31.5 L37.5 42" stroke="#B85810" stroke-width="2" stroke-linecap="round"/>
+  <path d="M43 51 L19 27 Q12 29 7 24 Q4 20 5 15 L11 20 L17 17 L18 11 L13 5 Q18 4 22 7 Q27 12 25 19 L49 43 Q53 47 49 51 Q46 54 43 51 Z" fill="url(#wrench)"/>
+  <path d="M24 22 L46 44" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="1.6" stroke-linecap="round"/>
+  <circle cx="46.5" cy="48" r="1.8" fill="#0F3E8F"/>
+</svg>

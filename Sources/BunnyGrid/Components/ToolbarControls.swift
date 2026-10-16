@@ -49,6 +49,8 @@ struct ToolbarChip: View {
     var showsMenuIndicator = false
     /// For features not built yet: looks enabled, and a click explains instead of acting.
     var comingSoon: String?
+    /// Illustrated SVG icon (Resources/Icons); replaces `systemImage` when set.
+    var icon: String?
     var action: () -> Void = {}
     @State private var isHovering = false
     @State private var showingSoon = false
@@ -57,11 +59,15 @@ struct ToolbarChip: View {
         Button {
             if comingSoon != nil { showingSoon = true } else { action() }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: systemImage)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(isEnabled ? tint : .secondary)
-                    .frame(width: 16)
+            HStack(spacing: 5) {
+                if let icon {
+                    AppIcon(name: icon, size: 17, isEnabled: isEnabled)
+                } else {
+                    Image(systemName: systemImage)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(isEnabled ? tint : .secondary)
+                        .frame(width: 16)
+                }
                 Text(title)
                     .foregroundStyle(isEnabled ? .primary : .secondary)
                 if showsMenuIndicator {

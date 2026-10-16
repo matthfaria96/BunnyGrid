@@ -90,9 +90,7 @@ private struct TabItem: View {
     var body: some View {
         HStack(spacing: 5) {
             if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.accentColor)
+                AppIcon(name: systemImage, size: 15)
             }
             Text(title)
                 .lineLimit(1)

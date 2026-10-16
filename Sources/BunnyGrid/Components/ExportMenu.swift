@@ -50,7 +50,7 @@ struct ExportChip: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "square.and.arrow.up").foregroundStyle(.teal).frame(width: 16)
+                AppIcon(name: "tb-export", size: 17)
                 Text("Export")
             }
             .font(.system(size: 12.5))

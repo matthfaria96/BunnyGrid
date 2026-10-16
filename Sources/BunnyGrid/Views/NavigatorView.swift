@@ -3,7 +3,7 @@ import BunnyGridCore
 import SwiftUI
 
 /// One visible line of the navigator tree.
-private struct NavRow: Identifiable {
+struct NavRow: Identifiable {
     let node: NavNode
     let depth: Int
     let title: String
@@ -192,7 +192,7 @@ struct NavigatorView: View {
     }
 }
 
-private struct NavRowView: View {
+struct NavRowView: View {
     @Environment(AppModel.self) private var app
     let row: NavRow
 
@@ -216,8 +216,11 @@ private struct NavRowView: View {
                 }
             }
             if let engine = row.engine {
-                DatabaseBadge(kind: engine, size: 16, isActive: row.engineActive)
-                    .frame(width: 18)
+                DatabaseBadge(kind: engine, size: 18, isActive: row.engineActive)
+                    .frame(width: 20)
+            } else if let asset = iconName {
+                AppIcon(name: asset.name, size: 18, isEnabled: !asset.dimmed)
+                    .frame(width: 20)
             } else {
                 Image(systemName: row.icon)
                     .symbolRenderingMode(.hierarchical)
@@ -252,6 +255,24 @@ private struct NavRowView: View {
             withAnimation(.easeInOut(duration: 0.18)) { app.activate(row.node) }
         })
         .contextMenu { NavContextMenu(node: row.node) }
+    }
+}
+
+extension NavRowView {
+    /// The illustrated icon for this node, and whether it is shown dimmed (closed or not loaded).
+    var iconName: (name: String, dimmed: Bool)? {
+        switch row.node {
+        case .myConnections: return ("my-connections", false)
+        case .group: return ("folder", false)
+        case .database(let id, let db):
+            return app.sessions[id]?.context(db)?.isOpen == true ? ("database-open", false) : ("database-closed", false)
+        case .schema(let id, let db, let schema):
+            return ("schema", app.sessions[id]?.context(db)?.objects(in: schema) == nil)
+        case .category(_, _, _, let category): return (category.iconName, false)
+        case .object(_, _, let object): return (object.kind.iconName, false)
+        case .savedQuery: return ("query", false)
+        default: return nil
+        }
     }
 }
 
@@ -393,10 +414,9 @@ private struct NavigatorSearchBar: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 8)
-            .frame(height: 24)
-            .background(Capsule().fill(Color.primary.opacity(0.08)))
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06)))
+            .padding(.horizontal, 9)
+            .frame(height: 26)
+            .glassBackground(in: Capsule())
             IconButton(systemImage: "line.3.horizontal.decrease", help: "Locate the open object", isEnabled: app.selectedTableTab != nil) {
                 app.revealSelectedTab()
             }
@@ -433,6 +453,17 @@ extension DatabaseKind {
 }
 
 extension ObjectCategory {
+    var iconName: String {
+        switch self {
+        case .tables: "table"
+        case .views: "view"
+        case .materializedViews: "materialized-view"
+        case .functions: "function"
+        case .queries: "query"
+        case .backups: "backup"
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .tables: "tablecells.fill"

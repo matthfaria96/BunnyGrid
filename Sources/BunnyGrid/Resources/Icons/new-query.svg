@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E4E8EE"/></linearGradient>
+    <linearGradient id="coral" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8A6B"/><stop offset="1" stop-color="#E5483B"/></linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6AB3FF"/><stop offset="1" stop-color="#2E7BEA"/></linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6EE07B"/><stop offset="1" stop-color="#1F9E37"/></linearGradient>
+  </defs>
+  <ellipse cx="30" cy="58" rx="20" ry="2.5" fill="#000" opacity="0.18"/>
+  <g transform="translate(14 4)">
+    <rect x="0" y="0" width="34" height="40" rx="4" fill="url(#paper)" stroke="#B9C2CE" stroke-width="0.8"/>
+    <path d="M4 0 H30 Q34 0 34 4 V10 H0 V4 Q0 0 4 0 Z" fill="url(#blue)"/>
+  </g>
+  <g transform="translate(8 13)">
+    <rect x="0" y="0" width="36" height="42" rx="4" fill="url(#paper)" stroke="#B9C2CE" stroke-width="0.8"/>
+    <path d="M4 0 H32 Q36 0 36 4 V11 H0 V4 Q0 0 4 0 Z" fill="url(#coral)"/>
+    <path d="M4 0 H32 Q36 0 36 4 V5 H0 V4 Q0 0 4 0 Z" fill="#FFFFFF" opacity="0.35"/>
+    <g stroke-linecap="round" stroke-width="2.6">
+      <path d="M6 18 H22" stroke="#E5483B"/><path d="M25 18 H30" stroke="#2E7BEA"/>
+      <path d="M6 24.5 H17" stroke="#7B8794"/><path d="M20 24.5 H30" stroke="#7B8794"/>
+      <path d="M6 31 H26" stroke="#B1BAC5"/>
+    </g>
+  </g>
+  <circle cx="47" cy="47" r="11.5" fill="#FFFFFF"/>
+  <circle cx="47" cy="47" r="9.8" fill="url(#green)"/>
+  <path d="M41.5 41.5 A8 8 0 0 1 52.5 41.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="1.5"/>
+  <path d="M47 42 V52 M42 47 H52" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
+</svg>

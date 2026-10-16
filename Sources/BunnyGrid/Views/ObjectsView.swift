@@ -107,10 +107,9 @@ struct ObjectsView: View {
                 TextField("Search", text: $search).textFieldStyle(.plain)
             }
             .font(.system(size: 13))
-            .padding(.horizontal, 9)
-            .frame(width: 200, height: 26)
-            .background(Capsule().fill(Color.primary.opacity(0.07)))
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06)))
+            .padding(.horizontal, 10)
+            .frame(width: 200, height: 28)
+            .glassBackground(in: Capsule())
         }
         .padding(.horizontal, 12)
         .frame(height: 38)
@@ -121,8 +120,11 @@ struct ObjectsView: View {
         if let session = connectionSession {
             Table(session.databases.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }.map(DatabaseRow.init), selection: $selection) {
                 TableColumn("Name") { row in
-                    Label(row.name, systemImage: "cylinder.fill")
-                        .foregroundStyle(session.context(row.name)?.isOpen == true ? .primary : .secondary)
+                    Label {
+                        Text(row.name).foregroundStyle(session.context(row.name)?.isOpen == true ? .primary : .secondary)
+                    } icon: {
+                        AppIcon(name: session.context(row.name)?.isOpen == true ? "database-open" : "database-closed", size: 16)
+                    }
                 }
                 TableColumn("Status") { row in
                     Text(session.context(row.name)?.isOpen == true ? "Open" : "Closed").foregroundStyle(.secondary)
@@ -142,7 +144,7 @@ struct ObjectsView: View {
                     Label {
                         Text(query.name)
                     } icon: {
-                        Image(systemName: "doc.text").foregroundStyle(.orange)
+                        AppIcon(name: "query", size: 16)
                     }
                 }
                 TableColumn("Modified") { query in
@@ -187,7 +189,7 @@ struct ObjectsView: View {
                                 Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow)
                             }
                         } icon: {
-                            Image(systemName: object.kind.systemImage).foregroundStyle(category.tint)
+                            AppIcon(name: object.kind.iconName, size: 16)
                         }
                     }
                     .width(min: 160, ideal: 240)
@@ -349,8 +351,7 @@ private struct ObjectTiles: View {
                 ForEach(objects) { object in
                     let isSelected = selection.contains(object.id)
                     VStack(spacing: 6) {
-                        ToolbarGlyph(systemImage: object.kind == .routine ? "function" : (object.kind == .table ? "tablecells" : "eyeglasses"),
-                                     style: .tile([tint.opacity(0.75), tint]), size: 40)
+                        AppIcon(name: object.kind.iconName, size: 46)
                         Text(object.name)
                             .font(.system(size: 12))
                             .lineLimit(2)
