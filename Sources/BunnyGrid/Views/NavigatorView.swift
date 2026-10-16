@@ -16,11 +16,14 @@ private struct NavRow: Identifiable {
     var warning: String?
     var isDisabled = false
     var isFavorite = false
+    /// Connection rows show the engine tile instead of a symbol.
+    var engine: DatabaseKind?
+    var engineActive = true
 
     var id: NavNode { node }
 }
 
-/// The left pane: Cloud, My Connections → groups → connections → databases → schemas → object folders → objects,
+/// The left pane, translucent like Navicat's macOS sidebar: My Connections → groups → connections → databases → schemas → object folders → objects,
 /// with the search bar at the bottom, as in Navicat's Navigation pane.
 struct NavigatorView: View {
     @Environment(AppModel.self) private var app
@@ -37,8 +40,12 @@ struct NavigatorView: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .environment(\.defaultMinListRowHeight, 22)
+            .environment(\.defaultMinListRowHeight, 24)
+            .overlay {
+                if app.connections.isEmpty {
+                    Text("No Items").font(.system(size: 13)).foregroundStyle(.secondary)
+                }
+            }
             .onKeyPress(.return) {
                 guard let node = app.navSelection else { return .ignored }
                 withAnimation(.easeInOut(duration: 0.18)) { app.activate(node) }
@@ -55,11 +62,25 @@ struct NavigatorView: View {
                 return .handled
             }
 
-            Divider()
             NavigatorSearchBar()
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(VisualEffectBackground(material: .sidebar))
+        .alert("New Group", isPresented: Binding(
+            get: { app.groupingConnection != nil },
+            set: { if !$0 { app.groupingConnection = nil } }
+        )) {
+            TextField("Group name", text: $newGroupName)
+            Button("Create") {
+                if let id = app.groupingConnection { app.move(id, toGroup: newGroupName) }
+                newGroupName = ""
+            }
+            Button("Cancel", role: .cancel) { newGroupName = "" }
+        } message: {
+            Text("The connection moves into the new group.")
+        }
     }
+
+    @State private var newGroupName = ""
 
     private func isExpandable(_ node: NavNode) -> Bool {
         switch node {
@@ -74,14 +95,8 @@ struct NavigatorView: View {
         var rows: [NavRow] = []
         let filter = app.navigatorFilter.trimmingCharacters(in: .whitespaces)
 
-        rows.append(NavRow(node: .cloud, depth: 0, title: "BunnyGrid Cloud", icon: "cloud.fill", iconColor: .blue,
-                           isExpandable: true, isExpanded: app.expanded.contains(.cloud)))
-        if app.expanded.contains(.cloud) {
-            rows.append(NavRow(node: .cloudInfo, depth: 1, title: "Sync is coming soon", icon: "icloud.slash",
-                               iconColor: .secondary, isDisabled: true))
-        }
-
-        rows.append(NavRow(node: .myConnections, depth: 0, title: "My Connections", icon: "powerplug.portrait.fill", iconColor: .green,
+        guard !app.connections.isEmpty else { return rows }
+        rows.append(NavRow(node: .myConnections, depth: 0, title: "My Connections", icon: "powerplug.fill", iconColor: Color(white: 0.6),
                            isExpandable: true, isExpanded: app.expanded.contains(.myConnections)))
         guard app.expanded.contains(.myConnections) else { return rows }
 
@@ -108,6 +123,9 @@ struct NavigatorView: View {
         var row = NavRow(node: node, depth: depth, title: config.displayName, icon: config.kind.systemImage,
                          iconColor: isOpen ? (config.color.swiftUIColor ?? config.kind.tint) : .secondary,
                          isExpandable: true, isExpanded: app.expanded.contains(node))
+        row.engine = config.kind
+        row.engineActive = isOpen || session == nil
+        row.isFavorite = app.starredConnections.contains(config.id)
         if case .failed(let message) = session?.state { row.warning = message }
         row.isLoading = session?.state == .connecting
         rows.append(row)
@@ -197,15 +215,23 @@ private struct NavRowView: View {
                     Color.clear.frame(width: 12, height: 16)
                 }
             }
-            Image(systemName: row.icon)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(row.iconColor)
-                .frame(width: 18)
+            if let engine = row.engine {
+                DatabaseBadge(kind: engine, size: 16, isActive: row.engineActive)
+                    .frame(width: 18)
+            } else {
+                Image(systemName: row.icon)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(row.iconColor)
+                    .frame(width: 18)
+            }
             Text(row.title)
                 .lineLimit(1)
                 .foregroundStyle(row.isDisabled ? .secondary : .primary)
             if let subtitle = row.subtitle {
                 Text(subtitle).foregroundStyle(.secondary).lineLimit(1)
+            }
+            if case .connection(let id) = row.node, let color = app.connection(id: id)?.color.swiftUIColor {
+                Circle().fill(color).frame(width: 7, height: 7)
             }
             Spacer(minLength: 2)
             if row.isFavorite {
@@ -236,18 +262,60 @@ private struct NavContextMenu: View {
     var body: some View {
         switch node {
         case .connection(let id):
-            if app.sessions[id]?.isConnected == true {
+            let isOpen = app.sessions[id]?.isConnected == true
+            if isOpen {
                 Button("Close Connection") { app.disconnect(id) }
-                Button("New Query") { app.openQuery(in: app.sessions[id]?.contexts.values.first) }
-                Button("Refresh") { Task { await app.sessions[id]?.refreshDatabases() } }
             } else {
                 Button("Open Connection") { app.setExpanded(node, true) }
             }
             Divider()
             Button("Edit Connection…") { app.edit(id) }
+            Button("New Connection") { app.newConnection(kind: app.connection(id: id)?.kind ?? .postgresql) }
+            Button("Delete Connection", role: .destructive) { app.delete(id) }
             Button("Duplicate Connection") { app.duplicate(id) }
             Divider()
-            Button("Delete Connection", role: .destructive) { app.delete(id) }
+            Button("New Database…") {}.disabled(true)
+            Button("New Query") { app.openQuery(in: app.sessions[id]?.contexts.values.first) }
+                .disabled(!isOpen)
+            Divider()
+            Button("Console") { app.openQuery(in: app.sessions[id]?.contexts.values.first) }
+                .disabled(!isOpen)
+            Button("Execute SQL File…") { app.executeSQLFile(connectionID: id) }
+                .disabled(!isOpen)
+            Divider()
+            Button(app.starredConnections.contains(id) ? "Remove Star" : "Add Star") { app.toggleStar(id) }
+            Menu("Color") {
+                ForEach(ConnectionColor.allCases) { color in
+                    Button {
+                        app.setColor(color, for: id)
+                    } label: {
+                        if let swatch = color.swiftUIColor {
+                            Label(color.rawValue.capitalized, systemImage: app.connection(id: id)?.color == color ? "checkmark.circle.fill" : "circle.fill")
+                                .foregroundStyle(swatch)
+                        } else {
+                            Label("None", systemImage: app.connection(id: id)?.color == color ? "checkmark" : "xmark")
+                        }
+                    }
+                }
+            }
+            Divider()
+            Menu("Manage Group") {
+                Button("New Group…") { app.groupingConnection = id }
+                if !app.groups.isEmpty {
+                    Divider()
+                    ForEach(app.groups, id: \.self) { group in
+                        Button("Move to “\(group)”") { app.move(id, toGroup: group) }
+                            .disabled(app.connection(id: id)?.group == group)
+                    }
+                }
+                if app.connection(id: id)?.group != nil {
+                    Divider()
+                    Button("Remove from Group") { app.move(id, toGroup: nil) }
+                }
+            }
+            Divider()
+            Button("Refresh") { Task { await app.sessions[id]?.refreshDatabases() } }
+                .disabled(!isOpen)
         case .database(let id, let db):
             if let context = app.sessions[id]?.context(db), context.isOpen {
                 Button("Close Database") {
@@ -312,26 +380,36 @@ private struct NavigatorSearchBar: View {
 
     var body: some View {
         @Bindable var app = app
-        HStack(spacing: 4) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.system(size: 12))
-            TextField("Search", text: $app.navigatorFilter)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12.5))
-            if !app.navigatorFilter.isEmpty {
-                IconButton(systemImage: "xmark.circle.fill", help: "Clear Search") { app.navigatorFilter = "" }
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.system(size: 12))
+                TextField("Search", text: $app.navigatorFilter)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                if !app.navigatorFilter.isEmpty {
+                    Button { app.navigatorFilter = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            IconButton(systemImage: "line.3.horizontal.decrease", help: "Filter — coming soon", isEnabled: false) {}
-            IconButton(systemImage: app.favoritesOnly ? "star.fill" : "star", help: "Show only favorites",
-                       isOn: app.favoritesOnly, tint: .yellow, isEnabled: !app.favorites.isEmpty || app.favoritesOnly) {
-                app.favoritesOnly.toggle()
-            }
-            IconButton(systemImage: "scope", help: "Locate the open object in the navigator", isEnabled: app.selectedTableTab != nil) {
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(Capsule().fill(Color.primary.opacity(0.08)))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06)))
+            IconButton(systemImage: "line.3.horizontal.decrease", help: "Locate the open object", isEnabled: app.selectedTableTab != nil) {
                 app.revealSelectedTab()
             }
-            IconButton(systemImage: "chevron.up.chevron.down", help: "Collapse All") { app.collapseNavigator() }
+            IconButton(systemImage: app.favoritesOnly ? "star.fill" : "star", help: "Show only starred items",
+                       isOn: app.favoritesOnly, tint: .secondary) {
+                app.favoritesOnly.toggle()
+            }
+            IconButton(systemImage: "chevron.up.chevron.down", help: "Collapse All") {
+                withAnimation(.easeInOut(duration: 0.18)) { app.collapseNavigator() }
+            }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 30)
+        .padding(.horizontal, 10)
+        .frame(height: 38)
     }
 }
 

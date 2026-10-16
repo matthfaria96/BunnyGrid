@@ -64,7 +64,7 @@ private struct TabBar: View {
             }
         }
         .frame(height: 30)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.primary.opacity(0.07))
         .confirmationDialog(
             "Close “\(app.tabPendingClose?.title ?? "")” and discard its unsaved changes?",
             isPresented: Binding(get: { app.tabPendingClose != nil }, set: { if !$0 { app.tabPendingClose = nil } })
@@ -96,7 +96,7 @@ private struct TabItem: View {
             }
             Text(title)
                 .lineLimit(1)
-                .font(.system(size: 12.5))
+                .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
                 .foregroundStyle(isSelected ? .primary : .secondary)
             if closable {
                 Button(action: close) {
@@ -115,11 +115,8 @@ private struct TabItem: View {
         .padding(.horizontal, 12)
         .frame(height: 30)
         .frame(maxWidth: 320)
-        .background(isSelected ? Color(nsColor: .controlBackgroundColor) : (isHovering ? Color.primary.opacity(0.04) : .clear))
-        .overlay(alignment: .top) {
-            if isSelected { Rectangle().fill(Color.accentColor).frame(height: 2) }
-        }
-        .overlay(alignment: .trailing) { Divider() }
+        .background(isSelected ? Color(nsColor: .windowBackgroundColor) : (isHovering ? Color.primary.opacity(0.05) : .clear))
+        .overlay(alignment: .trailing) { Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1) }
         .contentShape(Rectangle())
         .onTapGesture(perform: select)
         .onHover { isHovering = $0 }

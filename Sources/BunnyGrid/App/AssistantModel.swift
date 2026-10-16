@@ -188,6 +188,7 @@ final class AssistantModel {
     /// Starts a request from the toolbar (e.g. "Fill with AI") with the table chip on.
     func ask(_ prompt: String, includeTable: Bool) {
         app?.showAssistant = true
+        app?.rightPane = .ai
         self.includeTable = includeTable
         draft = prompt
         send()

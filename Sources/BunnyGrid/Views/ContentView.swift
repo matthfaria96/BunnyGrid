@@ -19,13 +19,15 @@ struct ContentView: View {
                     .frame(minWidth: 420, maxWidth: .infinity)
                     .layoutPriority(1)
                 if app.showAssistant {
-                    AssistantPanel()
-                        .frame(minWidth: 280, idealWidth: app.assistant.isExpanded ? 560 : 330, maxWidth: app.assistant.isExpanded ? 900 : 520)
+                    RightPane()
+                        .frame(minWidth: 260, idealWidth: app.assistant.isExpanded ? 560 : 290, maxWidth: app.assistant.isExpanded ? 900 : 520)
                 }
             }
             Divider()
             StatusBar()
         }
+        // The chrome draws its own title row beside the traffic lights.
+        .ignoresSafeArea(.container, edges: .top)
         .navigationTitle(app.windowTitle)
         .sheet(item: $app.draft) { draft in
             ConnectionEditorView(draft: draft)
@@ -55,6 +57,62 @@ struct StatusBar: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
+        if app.selectedTab == nil {
+            // Objects tab: a single centered summary, as Navicat shows it.
+            ZStack {
+                Text(summary)
+                HStack {
+                    Spacer()
+                    paneToggles
+                }
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(.secondary)
+            .frame(height: 24)
+            .background(.bar)
+        } else {
+            segments
+        }
+    }
+
+    private var paneToggles: some View {
+        HStack(spacing: 2) {
+            IconButton(systemImage: "sidebar.left", help: "Show/Hide Navigation Pane", isOn: app.showNavigator) {
+                app.showNavigator.toggle()
+            }
+            IconButton(systemImage: "sidebar.right", help: "Show/Hide Information Pane", isOn: app.showAssistant) {
+                app.showAssistant.toggle()
+            }
+        }
+        .padding(.horizontal, 6)
+    }
+
+    /// "1 Connection in My Connections", "2 Tables in main", …
+    private var summary: String {
+        func plural(_ count: Int, _ noun: String) -> String { "\(count) \(noun)\(count == 1 ? "" : "s")" }
+        switch app.navSelection {
+        case .group(let group):
+            return "\(plural(app.connections.filter { $0.group == group }.count, "Connection")) in \(group)"
+        case .connection(let id):
+            if let session = app.sessions[id], session.isConnected {
+                return "\(plural(session.databases.count, "Database")) in \(session.config.displayName)"
+            }
+            return "\(plural(app.connections.count, "Connection")) in My Connections"
+        case .database(let id, let db), .schema(let id, let db, _), .category(let id, let db, _, _), .object(let id, let db, _), .savedQuery(let id, let db, _):
+            guard let context = app.sessions[id]?.context(db) else { return "" }
+            let schema = context.usesSchemas ? app.currentSchema : nil
+            let place = schema.map { "\(db).\($0)" } ?? db
+            if app.objectCategory == .queries {
+                return "\(plural(app.savedQueries(connectionID: id, database: db).count, "Query")) in \(place)"
+            }
+            let count = context.objects(in: schema, category: app.objectCategory)?.count ?? 0
+            return "\(plural(count, app.objectCategory.noun)) in \(place)"
+        default:
+            return app.connections.isEmpty ? "" : "\(plural(app.connections.count, "Connection")) in My Connections"
+        }
+    }
+
+    private var segments: some View {
         HStack(spacing: 0) {
             Text(sql)
                 .lineLimit(1)
@@ -76,15 +134,7 @@ struct StatusBar: View {
                 }
                 .frame(minWidth: 110)
             }
-            HStack(spacing: 2) {
-                IconButton(systemImage: "sidebar.left", help: "Show/Hide Navigation Pane", isOn: app.showNavigator) {
-                    app.showNavigator.toggle()
-                }
-                IconButton(systemImage: "sidebar.right", help: "Show/Hide AI Assistant", isOn: app.showAssistant) {
-                    app.showAssistant.toggle()
-                }
-            }
-            .padding(.horizontal, 6)
+            paneToggles
         }
         .font(.system(size: 11.5))
         .foregroundStyle(.secondary)

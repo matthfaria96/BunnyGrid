@@ -39,6 +39,7 @@ struct BunnyGridApp: App {
                 .onChange(of: appearance) { _, value in AppearancePreference(rawValue: value)?.apply() }
         }
         .defaultSize(width: 1440, height: 860)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Connection…") { model.newConnection() }

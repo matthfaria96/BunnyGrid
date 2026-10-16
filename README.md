@@ -74,7 +74,7 @@ Dados do usuário:
 - chave da API do Claude: Keychain, serviço `app.bunnygrid.anthropic`
 - senhas: Keychain, serviço `app.bunnygrid.connections`
 
-## O que já funciona (v0.6)
+## O que já funciona (v0.7)
 
 A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nada da arte do Navicat é usado):
 
@@ -88,6 +88,7 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - rodapé: + − ✓ ✗ ↻ ■, primeira/anterior/página/próxima/última, registros por página (1000 por padrão), buscar no grid, Grid View / **Form View**
 - **Aba de consulta**: editor com realce, autocomplete, histórico e exportação. **⌘S salva a consulta** na pasta Queries do banco (com nome); ⌘S de novo atualiza.
 - **Design Table / New Table**: grade de campos (nome, tipo com sugestões do banco, Not Null, chave, Default), abas Fields / Indexes / SQL Preview. Salvar gera `CREATE TABLE` ou `ALTER TABLE` (remover, renomear, mudar tipo/nulo/default, adicionar campo, renomear tabela) e roda numa transação no PostgreSQL e no SQLite. O que o banco não suporta (ex.: mudar tipo no SQLite, trocar a chave primária) é avisado antes de salvar.
+- **Visual do Navicat para macOS**: janela sem barra de título com o título ao lado dos botões da janela, barra de ícones ilustrados (mosaicos com gradiente e selos), controle **View** e avatar; **painel de navegação translúcido** (desfoque do que está atrás da janela, como no Finder); painel direito com abas **ⓘ Info** (cartão da conexão, banco ou tabela) e **AI**; aba Objects com barra de ícones, modo lista/grade e colunas Rows, Data Length, Engine, Created Date e Modified Date; resumo centralizado na barra de status; menu de contexto da conexão (estrela, cor, grupos, executar arquivo SQL…). Bancos são identificados por mosaicos com monograma (Pg, My, Ma, Sq), sem logotipos de terceiros.
 - **Aparência** (Settings → General): Sistema, Claro ou Escuro. O tema claro é o do modelo do Navicat.
 - **Table Profile ▾**: salva e reaplica filtro, ordenação, colunas ocultas e máscaras de uma tabela.
 - **Data Profiling**: por coluna, registros, nulos (com medidor de preenchimento), distintos, mínimo, máximo, média e os valores mais frequentes em barras.

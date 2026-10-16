@@ -10,6 +10,8 @@ struct ObjectsView: View {
     @State private var pendingDrop: DatabaseObject?
     @State private var querySelection: Set<UUID> = []
     @State private var statistics: [String: TableStatistics] = [:]
+    @State private var statisticsVersion = 0
+    @AppStorage("objectsGridMode") private var gridMode = false
 
     private var context: DatabaseContext? { app.currentContext }
     private var schema: String? { context?.usesSchemas == true ? app.currentSchema : nil }
@@ -48,66 +50,70 @@ struct ObjectsView: View {
         objects.first { selection.contains($0.id) }
     }
 
+    /// Navicat's icon-only object toolbar: open, design, new, delete | import, export | refresh, then view mode and search.
     private var toolbar: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 4) {
             if connectionSession != nil {
-                ToolbarChip(title: "Open Database", systemImage: "cylinder.fill", tint: .green, isEnabled: !selection.isEmpty) {
-                    openSelectedDatabases()
-                }
-                ToolbarChip(title: "New Database", systemImage: "plus.circle", tint: .green,
-                            comingSoon: "Create a database with its character set and collation.")
+                ToolIcon("folder", .blue, "Open Database", isEnabled: !selection.isEmpty) { openSelectedDatabases() }
+                ToolIcon("plus.circle", .green, "New Database — coming soon", isEnabled: false) {}
             } else if category == .queries {
                 let selected = selectedSavedQuery
-                ToolbarChip(title: "Open Query", systemImage: "arrow.up.forward.square", tint: .orange, isEnabled: selected != nil) {
+                ToolIcon("folder", .blue, "Open Query", isEnabled: selected != nil) {
                     if let selected, let context { app.openSavedQuery(selected, in: context) }
                 }
-                ToolbarChip(title: "New Query", systemImage: "plus.square", tint: .orange, isEnabled: context != nil) {
-                    app.openQuery(in: context)
-                }
-                ToolbarChip(title: "Delete Query", systemImage: "minus.square", tint: .red, isEnabled: selected != nil) {
+                ToolIcon("plus.circle", .green, "New Query", isEnabled: context != nil) { app.openQuery(in: context) }
+                ToolIcon("minus.circle", .red, "Delete Query", isEnabled: selected != nil) {
                     for id in querySelection { app.deleteSavedQuery(id) }
                     querySelection = []
                 }
             } else {
                 let noun = category.noun
                 let canOpen = selectedObject != nil && category.objectKind != .routine && category.objectKind != nil
-                ToolbarChip(title: "Open \(noun)", systemImage: "arrow.up.forward.square", tint: .blue, isEnabled: canOpen) {
-                    if let object = selectedObject { open(object) }
-                }
                 let isTables = category == .tables
                 let writable = context?.driver.config.readOnly == false
-                ToolbarChip(title: "Design \(noun)", systemImage: "pencil.and.ruler", tint: .blue, isEnabled: isTables && selectedObject != nil) {
+                ToolIcon("folder", .blue, "Open \(noun)", isEnabled: canOpen) {
+                    if let object = selectedObject { open(object) }
+                }
+                ToolIcon("pencil", .blue, "Design \(noun)", isEnabled: isTables && selectedObject != nil) {
                     if let object = selectedObject, let context { app.openDesign(table: object, in: context) }
                 }
-                ToolbarChip(title: "New \(noun)", systemImage: "plus.square", tint: .green, isEnabled: isTables && writable && context != nil) {
+                ToolIcon("plus.circle", .green, "New \(noun)", isEnabled: isTables && writable && context != nil) {
                     if let context { app.openDesign(table: nil, in: context) }
                 }
-                ToolbarChip(title: "Delete \(noun)", systemImage: "minus.square", tint: .red,
-                            isEnabled: selectedObject != nil && [.tables, .views, .materializedViews].contains(category) && context?.driver.config.readOnly == false) {
+                ToolIcon("minus.circle", .red, "Delete \(noun)",
+                         isEnabled: selectedObject != nil && [.tables, .views, .materializedViews].contains(category) && writable) {
                     pendingDrop = selectedObject
                 }
-                Divider().frame(height: 16)
-                ToolbarChip(title: "Import Wizard", systemImage: "square.and.arrow.down", tint: .teal,
-                            isEnabled: isTables && writable && selectedObject != nil) {
+                Divider().frame(height: 18).padding(.horizontal, 6)
+                ToolIcon("square.and.arrow.down", .green, "Import Wizard", isEnabled: isTables && writable && selectedObject != nil) {
                     if let object = selectedObject, let context { app.importTarget = ImportTarget(context: context, object: object) }
                 }
-                ToolbarChip(title: "Export Wizard", systemImage: "square.and.arrow.up", tint: .teal,
-                            comingSoon: "Export several tables at once to CSV, JSON, SQL or Excel. Today you can export one table from its Export button.")
+                ToolIcon("square.and.arrow.up", .orange, "Export Wizard — coming soon. Use a table's Export button for now.", isEnabled: false) {}
+            }
+            Divider().frame(height: 18).padding(.horizontal, 6)
+            ToolIcon("arrow.clockwise", .secondary, "Refresh", isEnabled: context != nil || connectionSession != nil) {
+                Task {
+                    if let session = connectionSession { await session.refreshDatabases() }
+                    if let context { await context.loadObjects(schema: schema, force: true) }
+                    statisticsVersion += 1
+                }
             }
             Spacer()
+            ToolIcon("list.bullet", gridMode ? .secondary : .accentColor, "List", isEnabled: true) { gridMode = false }
+            ToolIcon("square.grid.3x3", gridMode ? .accentColor : .secondary, "Grid", isEnabled: true) { gridMode = true }
+            Divider().frame(height: 18).padding(.horizontal, 6)
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search", text: $search).textFieldStyle(.plain)
             }
-            .font(.system(size: 12))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .frame(width: 180)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Color(nsColor: .controlBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color(nsColor: .separatorColor)))
+            .font(.system(size: 13))
+            .padding(.horizontal, 9)
+            .frame(width: 200, height: 26)
+            .background(Capsule().fill(Color.primary.opacity(0.07)))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06)))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .frame(height: 38)
     }
 
     @ViewBuilder
@@ -167,6 +173,10 @@ struct ObjectsView: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                     .task { await context.loadObjects(schema: schema) }
             } else {
+                ZStack {
+                if gridMode {
+                    ObjectTiles(objects: objects, selection: $selection, tint: category.tint) { open($0) }
+                } else {
                 // Statistics travel inside the row values: SwiftUI's Table doesn't redraw cells for outside state.
                 Table(objects.map { ObjectRow(object: $0, stats: statistics[$0.name]) }, selection: $selection) {
                     TableColumn("Name") { row in
@@ -197,12 +207,20 @@ struct ObjectsView: View {
                         Text(row.stats?.engine ?? row.object.schema ?? context.name).foregroundStyle(.secondary)
                     }
                     .width(min: 70, ideal: 110)
+                    TableColumn("Created Date") { row in
+                        Text(row.stats?.created ?? "").foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .width(min: 90, ideal: 140)
+                    TableColumn("Modified Date") { row in
+                        Text(row.stats?.modified ?? "").foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .width(min: 90, ideal: 140)
                     TableColumn("Comment") { row in
                         Text(row.stats?.comment ?? "").foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
                 .tableStyle(.inset(alternatesRowBackgrounds: false))
-                .task(id: "\(context.session?.id.uuidString ?? "")/\(context.name)/\(schema ?? "")/\(category.rawValue)") {
+                .task(id: "\(context.session?.id.uuidString ?? "")/\(context.name)/\(schema ?? "")/\(category.rawValue)/\(statisticsVersion)") {
                     statistics = (try? await context.driver.tableStatistics(schema: context.usesSchemas ? schema : (context.kind == .sqlite ? nil : context.name))) ?? [:]
                 }
                 .contextMenu(forSelectionType: String.self) { ids in
@@ -224,18 +242,23 @@ struct ObjectsView: View {
                 } primaryAction: { ids in
                     if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
                 }
-                .overlay {
-                    if objects.isEmpty {
-                        Text(search.isEmpty ? "No \(category.rawValue.lowercased())" : "No matches").foregroundStyle(.tertiary)
-                    }
+                }
+                if objects.isEmpty {
+                    Text(search.isEmpty ? "No \(category.rawValue.lowercased())" : "No matches").foregroundStyle(.tertiary)
+                }
                 }
             }
         } else {
-            Color(nsColor: .controlBackgroundColor)
-                .overlay {
-                    Text(app.connections.isEmpty ? "Create a connection with the Connection button." : "Open a connection in the navigator.")
-                        .foregroundStyle(.tertiary)
-                }
+            // Nothing selected: an empty list with just its column headers, like Navicat.
+            Table([DatabaseRow]()) {
+                TableColumn("Name") { Text($0.name) }
+                TableColumn("Rows") { _ in Text("") }
+                TableColumn("Data Length") { _ in Text("") }
+                TableColumn("Engine") { _ in Text("") }
+                TableColumn("Created Date") { _ in Text("") }
+                TableColumn("Modified Date") { _ in Text("") }
+            }
+            .tableStyle(.inset(alternatesRowBackgrounds: false))
         }
     }
 
@@ -276,6 +299,74 @@ struct ObjectsView: View {
             } catch {
                 app.alertMessage = error.localizedDescription
             }
+        }
+    }
+}
+
+/// Small icon button of the Objects toolbar.
+private struct ToolIcon: View {
+    let systemImage: String
+    let tint: Color
+    let help: String
+    let isEnabled: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    init(_ systemImage: String, _ tint: Color, _ help: String, isEnabled: Bool, action: @escaping () -> Void) {
+        self.systemImage = systemImage
+        self.tint = tint
+        self.help = help
+        self.isEnabled = isEnabled
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(isEnabled ? tint : Color.secondary.opacity(0.35))
+                .frame(width: 28, height: 26)
+                .background(RoundedRectangle(cornerRadius: 6).fill(isHovering && isEnabled ? Color.primary.opacity(0.08) : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .onHover { isHovering = $0 }
+        .help(help)
+    }
+}
+
+/// Grid view of the Objects tab: one tile per object.
+private struct ObjectTiles: View {
+    let objects: [DatabaseObject]
+    @Binding var selection: Set<String>
+    let tint: Color
+    let open: (DatabaseObject) -> Void
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 8)], spacing: 8) {
+                ForEach(objects) { object in
+                    let isSelected = selection.contains(object.id)
+                    VStack(spacing: 6) {
+                        ToolbarGlyph(systemImage: object.kind == .routine ? "function" : (object.kind == .table ? "tablecells" : "eyeglasses"),
+                                     style: .tile([tint.opacity(0.75), tint]), size: 40)
+                        Text(object.name)
+                            .font(.system(size: 12))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(isSelected ? .white : .primary)
+                            .padding(.horizontal, 4)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(isSelected ? Color.accentColor : .clear))
+                    }
+                    .frame(width: 100, height: 92)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? Color.primary.opacity(0.08) : .clear))
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { open(object) }
+                    .simultaneousGesture(TapGesture().onEnded { selection = [object.id] })
+                }
+            }
+            .padding(12)
         }
     }
 }

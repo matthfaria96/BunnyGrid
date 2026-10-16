@@ -24,6 +24,14 @@ final class AppModel {
     private(set) var savedQueries: [SavedQuery] = []
     private(set) var favorites: [FavoriteObject] = []
     private(set) var tableProfiles: [TableProfile] = []
+    /// Connections starred from the navigator ("Add Star").
+    private(set) var starredConnections: Set<UUID> = Set((UserDefaults.standard.stringArray(forKey: "starredConnections") ?? []).compactMap(UUID.init))
+    /// Connection waiting for a group name ("Manage Group → New Group…").
+    var groupingConnection: UUID?
+    /// Which tab the right pane shows.
+    var rightPane: RightPane = .info
+
+    enum RightPane: String { case info, ai }
     var favoritesOnly = false
     /// Query tab waiting for a name in the Save Query sheet.
     var namingQuery: QueryTabModel?
@@ -424,6 +432,43 @@ final class AppModel {
 
     private func persistSavedQueries() {
         do { try savedQueryStore.save(savedQueries) } catch { alertMessage = "Could not save queries: \(error.localizedDescription)" }
+    }
+
+    // MARK: - Connection organization
+
+    func toggleStar(_ id: UUID) {
+        if starredConnections.contains(id) { starredConnections.remove(id) } else { starredConnections.insert(id) }
+        UserDefaults.standard.set(starredConnections.map(\.uuidString), forKey: "starredConnections")
+    }
+
+    func setColor(_ color: ConnectionColor, for id: UUID) {
+        guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
+        connections[index].color = color
+        persist()
+    }
+
+    func move(_ id: UUID, toGroup group: String?) {
+        guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
+        let name = group?.trimmingCharacters(in: .whitespaces)
+        connections[index].group = (name?.isEmpty ?? true) ? nil : name
+        if let name = connections[index].group { expanded.insert(.group(name)) }
+        persist()
+    }
+
+    /// Opens a .sql file in a new query tab on the connection's first open database and runs it.
+    func executeSQLFile(connectionID: UUID) {
+        guard let context = sessions[connectionID]?.contexts.values.first else {
+            alertMessage = "Open a database on this connection first."
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "sql") ?? .plainText, .plainText]
+        panel.allowsOtherFileTypes = true
+        guard panel.runModal() == .OK, let url = panel.url,
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        openQuery(text: text, in: context)
+        selectedQueryTab?.title = url.deletingPathExtension().lastPathComponent
+        selectedQueryTab?.run()
     }
 
     // MARK: - Table profiles

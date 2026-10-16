@@ -17,7 +17,6 @@ struct AssistantPanel: View {
             Composer()
                 .padding(8)
         }
-        .background(Color(nsColor: .textBackgroundColor))
     }
 
     // MARK: Header
@@ -74,10 +73,6 @@ struct AssistantPanel: View {
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
-            IconButton(systemImage: assistant.isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-                       help: assistant.isExpanded ? "Narrow" : "Widen", tint: .accentColor) {
-                assistant.isExpanded.toggle()
-            }
         }
         .padding(.horizontal, 10)
         .frame(height: 34)

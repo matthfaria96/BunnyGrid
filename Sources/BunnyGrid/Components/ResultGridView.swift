@@ -165,14 +165,15 @@ struct ResultGridView: NSViewRepresentable {
         /// Width that fits the header and the widest of the first `sample` values, measured with the grid font.
         private func estimatedWidth(column: Int, title: String, type: String?, sample: Int = 60, cap: CGFloat = 360) -> CGFloat {
             let headerFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
-            var width = (title as NSString).size(withAttributes: [.font: headerFont]).width + 28
-            if let type { width = max(width, (type as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width + 34) }
+            // Header: 6pt inset each side plus room for the sort indicator; type line adds the glyph.
+            var width = (title as NSString).size(withAttributes: [.font: headerFont]).width + 34
+            if let type { width = max(width, (type as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width + 50) }
             for row in rows.prefix(sample) where row.indices.contains(column) {
                 let text = row[column].isNull ? "(Null)" : row[column].displayString
-                width = max(width, (text as NSString).size(withAttributes: [.font: Self.font]).width + 16)
+                width = max(width, (text as NSString).size(withAttributes: [.font: Self.font]).width + 22)
                 if width >= cap { break }
             }
-            return min(cap, max(60, ceil(width)))
+            return min(cap, max(72, ceil(width)))
         }
 
         /// Double-clicking a header divider fits the column to its content.

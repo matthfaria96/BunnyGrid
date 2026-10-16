@@ -31,12 +31,16 @@ public struct TableStatistics: Sendable, Equatable {
     public var sizeBytes: Int?
     public var comment: String?
     public var engine: String?
+    public var created: String?
+    public var modified: String?
 
-    public init(rows: Int? = nil, sizeBytes: Int? = nil, comment: String? = nil, engine: String? = nil) {
+    public init(rows: Int? = nil, sizeBytes: Int? = nil, comment: String? = nil, engine: String? = nil, created: String? = nil, modified: String? = nil) {
         self.rows = rows
         self.sizeBytes = sizeBytes
         self.comment = comment
         self.engine = engine
+        self.created = created
+        self.modified = modified
     }
 }
 

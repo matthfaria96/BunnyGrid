@@ -120,11 +120,11 @@ public actor MySQLDriver: DatabaseDriver {
 
     public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] {
         let result = try await executeStatement("""
-            SELECT TABLE_NAME, TABLE_ROWS, DATA_LENGTH + INDEX_LENGTH, TABLE_COMMENT, ENGINE
+            SELECT TABLE_NAME, TABLE_ROWS, DATA_LENGTH + INDEX_LENGTH, TABLE_COMMENT, ENGINE, CREATE_TIME, UPDATE_TIME
               FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(dialect.quoteLiteral(schema ?? config.database))
             """)
         var stats: [String: TableStatistics] = [:]
-        for row in result.rows where row.count == 5 {
+        for row in result.rows where row.count == 7 {
             func int(_ value: CellValue) -> Int? {
                 switch value {
                 case .integer(let v): Int(v)
@@ -134,7 +134,9 @@ public actor MySQLDriver: DatabaseDriver {
             }
             let comment = row[3].isNull || row[3].displayString.isEmpty ? nil : row[3].displayString
             stats[row[0].displayString] = TableStatistics(rows: int(row[1]), sizeBytes: int(row[2]), comment: comment,
-                                                          engine: row[4].isNull ? nil : row[4].displayString)
+                                                          engine: row[4].isNull ? nil : row[4].displayString,
+                                                          created: row[5].isNull ? nil : row[5].displayString,
+                                                          modified: row[6].isNull ? nil : row[6].displayString)
         }
         return stats
     }
