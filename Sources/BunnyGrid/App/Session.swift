@@ -163,6 +163,14 @@ final class Session: Identifiable {
 
     func context(_ name: String) -> DatabaseContext? { contexts[name] }
 
+    /// A new, unconnected driver for `database`, for work that needs its own connection
+    /// (a table tab's manual transaction).
+    func makeDedicatedDriver(database: String) -> any DatabaseDriver {
+        var databaseConfig = config
+        if config.kind == .postgresql { databaseConfig.database = database }
+        return DriverFactory.make(config: databaseConfig, password: password)
+    }
+
     /// Opens a database (idempotent). PostgreSQL needs a connection per database;
     /// other engines reuse the server connection.
     @discardableResult
@@ -366,7 +374,7 @@ enum WorkspaceTab: Identifiable {
 
     @MainActor var hasUnsavedChanges: Bool {
         switch self {
-        case .table(let model): model.hasChanges
+        case .table(let model): model.hasChanges || model.isInTransaction
         case .query(let model): model.savedQueryID != nil && model.isDirty
         case .design(let model): model.hasChanges
         }
@@ -377,6 +385,10 @@ enum WorkspaceTab: Identifiable {
     }
 
     @MainActor func cancel() {
-        if case .query(let model) = self { model.cancel() }
+        switch self {
+        case .query(let model): model.cancel()
+        case .table(let model): model.abandonTransaction()
+        case .design: break
+        }
     }
 }

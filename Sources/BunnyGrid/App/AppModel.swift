@@ -28,6 +28,8 @@ final class AppModel {
     var namingQuery: QueryTabModel?
     /// Table the Import Wizard sheet imports into.
     var importTarget: ImportTarget?
+    /// Table the Data Generation sheet fills.
+    var generationTarget: ImportTarget?
 
     // Navigator
     var navSelection: NavNode?
@@ -567,7 +569,7 @@ final class AppModel {
                 navSelection = .object(id, database, object)
                 openTable(object, in: context)
                 #if DEBUG
-                if let tab = selectedTableTab, CommandLine.arguments.contains("--demo-edits") || CommandLine.arguments.contains("--focus-cell") {
+                if let tab = selectedTableTab, ["--demo-edits", "--focus-cell", "--begin-transaction", "--generate"].contains(where: CommandLine.arguments.contains) {
                     await tab.loadIfNeeded()
                     if CommandLine.arguments.contains("--demo-edits") {
                         tab.setValue(.text("Edited name"), row: 1, column: 1)
@@ -575,6 +577,13 @@ final class AppModel {
                         tab.addRow()
                         tab.setValue(.text("New customer"), row: tab.page?.rows.count ?? 0, column: 1)
                         tab.scroll(toRow: 0)
+                    }
+                    if CommandLine.arguments.contains("--begin-transaction") {
+                        await tab.beginTransaction(session: sessions[id])
+                        tab.setValue(.text("9.99"), row: 0, column: 4)
+                    }
+                    if CommandLine.arguments.contains("--generate") {
+                        generationTarget = ImportTarget(context: context, object: object)
                     }
                     if CommandLine.arguments.contains("--focus-cell") {
                         tab.focusedCell = GridCell(row: 4, column: 2)

@@ -78,13 +78,14 @@ extension DatabaseDriver {
 
     /// Applies grid changes in one transaction. Rolls back everything if any statement fails
     /// or if an UPDATE/DELETE does not hit exactly one row (the row changed or vanished meanwhile).
-    /// Returns the statements that were committed.
+    /// With `inOpenTransaction`, the caller owns BEGIN/COMMIT (manual "Begin Transaction" mode) and
+    /// a failure is reported without rolling back. Returns the statements that ran.
     @discardableResult
-    public func applyChanges(_ changes: [RowChange], table: String, schema: String?) async throws -> [String] {
+    public func applyChanges(_ changes: [RowChange], table: String, schema: String?, inOpenTransaction: Bool = false) async throws -> [String] {
         guard !changes.isEmpty else { return [] }
         if config.readOnly { throw DatabaseError.readOnly }
         let statements = changes.map { dialect.sql(for: $0, table: table, schema: schema) }
-        _ = try await executeStatement(dialect.beginTransaction)
+        if !inOpenTransaction { _ = try await executeStatement(dialect.beginTransaction) }
         do {
             for (change, statement) in zip(changes, statements) {
                 let result = try await executeStatement(statement)
@@ -93,9 +94,9 @@ extension DatabaseDriver {
                         "Expected to change 1 row but changed \(affected). Nothing was saved; reload the table and try again.\n\(statement)")
                 }
             }
-            _ = try await executeStatement("COMMIT")
+            if !inOpenTransaction { _ = try await executeStatement("COMMIT") }
         } catch {
-            _ = try? await executeStatement("ROLLBACK")
+            if !inOpenTransaction { _ = try? await executeStatement("ROLLBACK") }
             throw error
         }
         return statements

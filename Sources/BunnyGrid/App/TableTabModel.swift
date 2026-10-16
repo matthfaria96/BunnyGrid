@@ -36,7 +36,12 @@ final class TableTabModel: Identifiable {
 
     let id = UUID()
     let object: DatabaseObject
-    private let driver: any DatabaseDriver
+    private let baseDriver: any DatabaseDriver
+    /// The tab's own connection while "Begin Transaction" is active.
+    private var transactionDriver: (any DatabaseDriver)?
+    private var driver: any DatabaseDriver { transactionDriver ?? baseDriver }
+    var isInTransaction: Bool { transactionDriver != nil }
+    private(set) var transactionError: String?
     @ObservationIgnored private weak var context: DatabaseContext?
     let location: String
     let connectionID: UUID?
@@ -83,7 +88,7 @@ final class TableTabModel: Identifiable {
     init(object: DatabaseObject, context: DatabaseContext) {
         self.object = object
         self.context = context
-        self.driver = context.driver
+        self.baseDriver = context.driver
         self.location = context.location(schema: object.schema)
         self.connectionID = context.session?.id
         self.databaseName = context.name
@@ -387,12 +392,79 @@ final class TableTabModel: Identifiable {
         isSaving = true
         defer { isSaving = false }
         do {
-            let statements = try await driver.applyChanges(pendingChanges(), table: object.name, schema: object.schema)
+            let statements = try await driver.applyChanges(pendingChanges(), table: object.name, schema: object.schema, inOpenTransaction: isInTransaction)
             for statement in statements { record(statement + ";") }
             await reload()
         } catch {
             saveError = error.localizedDescription
             record(pendingSQL, error: error.localizedDescription)
+        }
+    }
+}
+
+// MARK: - Manual transaction
+
+extension TableTabModel {
+    /// Whether this tab can open its own transaction: editable, and not an in-memory SQLite database
+    /// (a second connection would see a different database).
+    var canBeginTransaction: Bool {
+        guard !isInTransaction, isEditable else { return false }
+        return !(kind == .sqlite && driver.config.filePath.isEmpty)
+    }
+
+    /// Opens a dedicated connection and runs BEGIN; applied edits stay uncommitted until Commit.
+    func beginTransaction(session: Session?) async {
+        guard canBeginTransaction, let session else { return }
+        let dedicated = session.makeDedicatedDriver(database: databaseName)
+        do {
+            try await dedicated.connect()
+            _ = try await dedicated.executeTimed(dedicated.dialect.beginTransaction)
+            transactionDriver = dedicated
+            transactionError = nil
+            await reload()
+        } catch {
+            await dedicated.disconnect()
+            transactionError = error.localizedDescription
+        }
+    }
+
+    /// Applies pending grid edits inside the transaction, then commits.
+    func commitTransaction() async {
+        guard let dedicated = transactionDriver else { return }
+        if hasChanges {
+            await applyChanges()
+            guard saveError == nil else { return }
+        }
+        do {
+            _ = try await dedicated.executeTimed("COMMIT")
+            await endTransaction()
+        } catch {
+            transactionError = error.localizedDescription
+        }
+    }
+
+    func rollbackTransaction() async {
+        guard let dedicated = transactionDriver else { return }
+        _ = try? await dedicated.executeStatement("ROLLBACK")
+        discardChanges()
+        await endTransaction()
+    }
+
+    private func endTransaction() async {
+        let dedicated = transactionDriver
+        transactionDriver = nil
+        transactionError = nil
+        await dedicated?.disconnect()
+        await reload()
+    }
+
+    /// Closing the tab: roll back and drop the connection without waiting.
+    func abandonTransaction() {
+        guard let dedicated = transactionDriver else { return }
+        transactionDriver = nil
+        Task {
+            _ = try? await dedicated.executeStatement("ROLLBACK")
+            await dedicated.disconnect()
         }
     }
 }

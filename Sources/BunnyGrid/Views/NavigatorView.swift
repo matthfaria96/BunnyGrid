@@ -257,6 +257,7 @@ private struct NavContextMenu: View {
                 Button("Design Table") { app.openDesign(table: object, in: context) }
                 if !context.driver.config.readOnly {
                     Button("Import Wizard…") { app.importTarget = ImportTarget(context: context, object: object) }
+                    Button("Data Generation…") { app.generationTarget = ImportTarget(context: context, object: object) }
                 }
             }
             if object.kind != .routine {

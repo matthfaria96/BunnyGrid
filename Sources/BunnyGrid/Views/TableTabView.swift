@@ -54,7 +54,19 @@ struct TableTabView: View {
         HStack(alignment: .top, spacing: 8) {
             FlowLayout(spacing: 12, lineSpacing: 4) {
                 ToolbarChip(title: "Table Profile", systemImage: "tablecells.badge.ellipsis", tint: .blue, isEnabled: false, showsMenuIndicator: true) {}
-                ToolbarChip(title: "Begin Transaction", systemImage: "arrow.triangle.branch", tint: .gray, isEnabled: false) {}
+                if model.isInTransaction {
+                    ToolbarChip(title: "Commit", systemImage: "checkmark.seal.fill", tint: .green, help: "Apply pending edits and commit the transaction") {
+                        Task { await model.commitTransaction() }
+                    }
+                    ToolbarChip(title: "Rollback", systemImage: "arrow.uturn.backward.circle.fill", tint: .red, help: "Undo everything since Begin Transaction") {
+                        Task { await model.rollbackTransaction() }
+                    }
+                } else {
+                    ToolbarChip(title: "Begin Transaction", systemImage: "arrow.triangle.branch", tint: .orange, isEnabled: model.canBeginTransaction,
+                                help: model.canBeginTransaction ? "Edit inside a transaction on this tab's own connection; commit or roll back later" : "Begin Transaction needs an editable table") {
+                        Task { await model.beginTransaction(session: model.connectionID.flatMap { app.sessions[$0] }) }
+                    }
+                }
                 ToolbarChip(title: "Cell Editor", systemImage: "square.and.pencil", tint: .orange, isOn: model.showCellEditor) {
                     model.showCellEditor.toggle()
                 }
@@ -83,7 +95,12 @@ struct TableTabView: View {
                 }
                 ExportChip(columns: model.page?.columns ?? [], rows: model.page?.rows ?? [], suggestedName: model.object.name)
                     .disabled(model.page == nil)
-                ToolbarChip(title: "Data Generation", systemImage: "wand.and.stars", tint: .purple, isEnabled: false) {}
+                ToolbarChip(title: "Data Generation", systemImage: "wand.and.stars", tint: .purple,
+                            isEnabled: model.object.kind == .table && model.readOnlyReason == nil && !model.isInTransaction) {
+                    if let context = app.currentContextFor(model) {
+                        app.generationTarget = ImportTarget(context: context, object: model.object)
+                    }
+                }
                 ToolbarChip(title: "Data Masking", systemImage: "theatermasks", tint: .indigo, isEnabled: false) {}
                 ToolbarChip(title: "Create BI Workspace", systemImage: "chart.pie", tint: .pink, isEnabled: false) {}
             }
@@ -196,6 +213,13 @@ private struct GridFooter: View {
             IconButton(systemImage: "arrow.clockwise", help: "Refresh (⌘R)", isEnabled: !model.hasChanges) { model.requestReload() }
             IconButton(systemImage: "stop.fill", help: "Stop", isEnabled: model.isLoading) { model.stopLoading() }
 
+            if model.isInTransaction {
+                Divider().frame(height: 14).padding(.horizontal, 4)
+                Label("In transaction", systemImage: "arrow.triangle.branch")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .help("Applied edits are not visible to other connections until you Commit")
+            }
             if model.hasChanges {
                 Divider().frame(height: 14).padding(.horizontal, 4)
                 Button("\(model.changeCount) pending change\(model.changeCount == 1 ? "" : "s")") { showingSQLPreview = true }

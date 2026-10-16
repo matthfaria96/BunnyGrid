@@ -194,6 +194,60 @@ struct PostgresIntegrationTests {
         }
     }
 
+    @Test func manualTransactionIsIsolatedUntilCommit() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.executeStatement("CREATE TABLE \(schema).t (id serial PRIMARY KEY, v text)")
+            let dedicated = try await PG.driver()
+            _ = try await dedicated.executeStatement("BEGIN")
+            try await dedicated.applyChanges([.insert(values: [ColumnValue("v", .text("pending"))])], table: "t", schema: schema, inOpenTransaction: true)
+            #expect(try await dedicated.countRows(table: "t", schema: schema) == 1)
+            #expect(try await driver.countRows(table: "t", schema: schema) == 0, "other connections don't see uncommitted rows")
+            _ = try await dedicated.executeStatement("COMMIT")
+            #expect(try await driver.countRows(table: "t", schema: schema) == 1)
+            await dedicated.disconnect()
+        }
+    }
+
+    @Test func designerIndexesOnRealTable() async throws {
+        try await withSchema { driver, schema in
+            let dialect = SQLDialect(kind: .postgresql)
+            _ = try await driver.executeStatement("CREATE TABLE \(schema).t (id serial PRIMARY KEY, email text, city text)")
+            var design = try await driver.listIndexes(table: "t", schema: schema).map(IndexDesign.init)
+            design.append(IndexDesign(name: "t_email_key", columns: ["email"], unique: true))
+            design.append(IndexDesign(name: "t_city_idx", columns: ["city", "email"]))
+            for statement in try dialect.alterIndexes(table: "t", schema: schema, original: try await driver.listIndexes(table: "t", schema: schema), design: design) {
+                _ = try await driver.executeStatement(statement)
+            }
+            var after = try await driver.listIndexes(table: "t", schema: schema)
+            #expect(after.contains { $0.name == "t_email_key" && $0.unique })
+            #expect(after.contains { $0.name == "t_city_idx" && $0.columns == ["city", "email"] })
+            // Remove one again.
+            let trimmed = after.map(IndexDesign.init).filter { $0.name != "t_city_idx" }
+            for statement in try dialect.alterIndexes(table: "t", schema: schema, original: after, design: trimmed) {
+                _ = try await driver.executeStatement(statement)
+            }
+            after = try await driver.listIndexes(table: "t", schema: schema)
+            #expect(!after.contains { $0.name == "t_city_idx" })
+            #expect(after.contains { $0.primary })
+        }
+    }
+
+    @Test func generatedDataInsertsIntoPostgres() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.executeStatement("""
+                CREATE TABLE \(schema).people (id serial PRIMARY KEY, full_name varchar(12) NOT NULL, email text, active bool,
+                  score numeric(4,2), born date, created_at timestamptz DEFAULT now(), ref uuid)
+                """)
+            let columns = try await driver.listColumns(table: "people", schema: schema)
+            let plan = columns.map { (name: $0.name, generator: ValueGenerator.suggested(for: $0)) }
+            #expect(plan.first { $0.name == "id" }?.generator == .skip)
+            #expect(plan.first { $0.name == "created_at" }?.generator == .skip)
+            let types = Dictionary(columns.map { ($0.name, $0.dataType) }, uniquingKeysWith: { first, _ in first })
+            try await driver.applyChanges(ValueGenerator.rows(count: 500, columns: plan, types: types, seed: 11), table: "people", schema: schema)
+            #expect(try await driver.countRows(table: "people", schema: schema) == 500)
+        }
+    }
+
     @Test func readOnlyConnectionsRejectWrites() async throws {
         let driver = try await PG.driver(readOnly: true)
         await #expect(throws: DatabaseError.self) { try await driver.execute("CREATE TABLE should_not_exist (x int)") }

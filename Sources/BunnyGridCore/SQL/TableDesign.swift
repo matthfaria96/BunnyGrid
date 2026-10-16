@@ -32,6 +32,26 @@ public struct ColumnDesign: Hashable, Identifiable, Sendable {
     }
 }
 
+/// One row of the designer's Indexes tab. `originalName` is nil for an index the user added.
+public struct IndexDesign: Hashable, Identifiable, Sendable {
+    public var id = UUID()
+    public var originalName: String?
+    public var name: String
+    public var columns: [String]
+    public var unique: Bool
+
+    public init(originalName: String? = nil, name: String, columns: [String], unique: Bool = false) {
+        self.originalName = originalName
+        self.name = name
+        self.columns = columns
+        self.unique = unique
+    }
+
+    public init(_ index: TableIndex) {
+        self.init(originalName: index.name, name: index.name, columns: index.columns, unique: index.unique)
+    }
+}
+
 public enum TableDesignError: LocalizedError, Equatable, Sendable {
     case invalid(String)
     case unsupported(String)
@@ -88,6 +108,43 @@ extension SQLDialect {
         let keys = columns.filter(\.isPrimaryKey).map { quoteIdentifier($0.name) }
         if !keys.isEmpty { parts.append("  PRIMARY KEY (\(keys.joined(separator: ", ")))") }
         return "CREATE TABLE \(qualifiedName(table: name, schema: schema)) (\n\(parts.joined(separator: ",\n"))\n)"
+    }
+
+    public func createIndex(_ index: IndexDesign, table: String, schema: String?) throws -> String {
+        guard !index.name.trimmingCharacters(in: .whitespaces).isEmpty else { throw TableDesignError.invalid("Every index needs a name.") }
+        guard !index.columns.isEmpty else { throw TableDesignError.invalid("Index “\(index.name)” needs at least one field.") }
+        let columns = index.columns.map(quoteIdentifier).joined(separator: ", ")
+        // PostgreSQL and SQLite put indexes in the table's schema; only the table is qualified.
+        return "CREATE \(index.unique ? "UNIQUE " : "")INDEX \(quoteIdentifier(index.name)) ON \(qualifiedName(table: table, schema: schema)) (\(columns))"
+    }
+
+    public func dropIndex(named name: String, table: String, schema: String?) -> String {
+        switch kind {
+        case .mysql, .mariadb: "DROP INDEX \(quoteIdentifier(name)) ON \(qualifiedName(table: table, schema: schema))"
+        case .postgresql: "DROP INDEX \(qualifiedName(table: name, schema: schema))"
+        case .sqlite: "DROP INDEX \(quoteIdentifier(name))"
+        }
+    }
+
+    /// Drops removed or changed indexes, then creates new or changed ones. Primary-key indexes are left alone.
+    public func alterIndexes(table: String, schema: String?, original: [TableIndex], design: [IndexDesign]) throws -> [String] {
+        let originalsByName = Dictionary(original.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        var drops: [String] = []
+        var creates: [String] = []
+        let kept = Set(design.compactMap(\.originalName))
+        for index in original where !index.primary && !kept.contains(index.name) {
+            drops.append(dropIndex(named: index.name, table: table, schema: schema))
+        }
+        for index in design {
+            if let originalName = index.originalName, let before = originalsByName[originalName] {
+                guard !before.primary else { continue }
+                let changed = before.name != index.name || before.columns != index.columns || before.unique != index.unique
+                guard changed else { continue }
+                drops.append(dropIndex(named: originalName, table: table, schema: schema))
+            }
+            creates.append(try createIndex(index, table: table, schema: schema))
+        }
+        return drops + creates
     }
 
     /// Statements that turn `original` into `design`: drops, renames, changes, then additions.

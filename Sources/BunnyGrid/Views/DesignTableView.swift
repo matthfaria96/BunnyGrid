@@ -48,10 +48,18 @@ struct DesignTableView: View {
                 app.saveCurrent()
             }
             Divider().frame(height: 16)
-            ToolbarChip(title: "Add Field", systemImage: "plus.rectangle", tint: .green) { model.addField() }
-            ToolbarChip(title: "Insert Field", systemImage: "text.insert", tint: .green) { model.insertField() }
-            ToolbarChip(title: "Delete Field", systemImage: "minus.rectangle", tint: .red, isEnabled: model.selection != nil) { model.deleteField() }
-            ToolbarChip(title: "Primary Key", systemImage: "key.fill", tint: .yellow, isEnabled: model.selection != nil) { model.togglePrimaryKey() }
+            if model.section == .indexes {
+                ToolbarChip(title: "Add Index", systemImage: "plus.rectangle", tint: .green) { model.addIndex() }
+                ToolbarChip(title: "Delete Index", systemImage: "minus.rectangle", tint: .red,
+                            isEnabled: model.indexSelection.flatMap { id in model.indexDesigns.first { $0.id == id } }.map { !model.isPrimaryIndex($0) } ?? false) {
+                    model.deleteIndex()
+                }
+            } else {
+                ToolbarChip(title: "Add Field", systemImage: "plus.rectangle", tint: .green) { model.addField() }
+                ToolbarChip(title: "Insert Field", systemImage: "text.insert", tint: .green) { model.insertField() }
+                ToolbarChip(title: "Delete Field", systemImage: "minus.rectangle", tint: .red, isEnabled: model.selection != nil) { model.deleteField() }
+                ToolbarChip(title: "Primary Key", systemImage: "key.fill", tint: .yellow, isEnabled: model.selection != nil) { model.togglePrimaryKey() }
+            }
             Spacer()
             HStack(spacing: 6) {
                 Text("Table name").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize()
@@ -166,16 +174,63 @@ struct DesignTableView: View {
 
     // MARK: Indexes
 
-    @ViewBuilder
+    private func indexBinding<Value>(_ id: IndexDesign.ID, _ keyPath: WritableKeyPath<IndexDesign, Value>) -> Binding<Value> {
+        Binding(
+            get: { model.indexDesigns.first { $0.id == id }?[keyPath: keyPath] ?? IndexDesign(name: "", columns: [])[keyPath: keyPath] },
+            set: { value in
+                if let index = model.indexDesigns.firstIndex(where: { $0.id == id }) { model.indexDesigns[index][keyPath: keyPath] = value }
+            }
+        )
+    }
+
     private var indexes: some View {
-        if model.isNew {
-            ContentUnavailableView("Save the table first", systemImage: "list.number", description: Text("Indexes can be listed once the table exists."))
-        } else {
-            Table(model.indexes) {
-                TableColumn("Name", value: \.name)
-                TableColumn("Fields") { Text($0.columns.joined(separator: ", ")) }
-                TableColumn("Unique") { Text($0.unique ? "✓" : "") }.width(60)
-                TableColumn("Primary") { Text($0.primary ? "✓" : "") }.width(60)
+        Table(model.indexDesigns, selection: $model.indexSelection) {
+            TableColumn("Name") { index in
+                if model.isPrimaryIndex(index) {
+                    Label(index.name, systemImage: "key.fill").foregroundStyle(.secondary)
+                } else {
+                    TextField("", text: indexBinding(index.id, \.name)).textFieldStyle(.plain)
+                }
+            }
+            .width(min: 140, ideal: 200)
+            TableColumn("Fields") { index in
+                Menu {
+                    ForEach(model.columns.map(\.name), id: \.self) { column in
+                        Button {
+                            var columns = indexBinding(index.id, \.columns).wrappedValue
+                            if let position = columns.firstIndex(of: column) { columns.remove(at: position) } else { columns.append(column) }
+                            indexBinding(index.id, \.columns).wrappedValue = columns
+                        } label: {
+                            if index.columns.contains(column) { Label(column, systemImage: "checkmark") } else { Text(column) }
+                        }
+                    }
+                } label: {
+                    Text(index.columns.isEmpty ? "Choose fields" : index.columns.joined(separator: ", "))
+                        .foregroundStyle(index.columns.isEmpty ? .secondary : .primary)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .disabled(model.isPrimaryIndex(index))
+            }
+            TableColumn("Unique") { index in
+                Toggle("", isOn: indexBinding(index.id, \.unique))
+                    .toggleStyle(.checkbox)
+                    .labelsHidden()
+                    .disabled(model.isPrimaryIndex(index))
+            }
+            .width(60)
+            TableColumn("") { index in
+                if index.originalName == nil {
+                    Text("new").font(.system(size: 10)).foregroundStyle(.green)
+                } else if model.isPrimaryIndex(index) {
+                    Text("primary key").font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+            }
+            .width(80)
+        }
+        .overlay {
+            if model.indexDesigns.isEmpty {
+                Text("No indexes. Use Add Index to create one.").foregroundStyle(.tertiary)
             }
         }
     }

@@ -36,6 +36,9 @@ struct ContentView: View {
         .sheet(item: $app.importTarget) { target in
             ImportWizardView(target: target)
         }
+        .sheet(item: $app.generationTarget) { target in
+            DataGenerationView(target: target)
+        }
         .alert("BunnyGrid", isPresented: Binding(
             get: { app.alertMessage != nil },
             set: { if !$0 { app.alertMessage = nil } }
@@ -107,7 +110,7 @@ struct StatusBar: View {
 
     private var warning: String? {
         switch app.selectedTab {
-        case .table(let model): model.error ?? model.saveError ?? model.readOnlyReason
+        case .table(let model): model.transactionError ?? model.error ?? model.saveError ?? model.readOnlyReason
         case .query(let model): model.error
         case .design(let model): model.planError
         case nil: nil

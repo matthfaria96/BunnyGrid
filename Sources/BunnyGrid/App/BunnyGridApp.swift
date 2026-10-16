@@ -68,6 +68,19 @@ struct BunnyGridApp: App {
                     if let tab, let context = model.currentContextFor(tab) { model.importTarget = ImportTarget(context: context, object: tab.object) }
                 }
                 .disabled(tab?.object.kind != .table || tab?.readOnlyReason != nil)
+                Button("Data Generation…") {
+                    if let tab, let context = model.currentContextFor(tab) { model.generationTarget = ImportTarget(context: context, object: tab.object) }
+                }
+                .disabled(tab?.object.kind != .table || tab?.readOnlyReason != nil)
+                Divider()
+                Button("Begin Transaction") {
+                    if let tab { Task { await tab.beginTransaction(session: tab.connectionID.flatMap { model.sessions[$0] }) } }
+                }
+                .disabled(tab?.canBeginTransaction != true)
+                Button("Commit") { Task { await tab?.commitTransaction() } }
+                    .disabled(tab?.isInTransaction != true)
+                Button("Rollback") { Task { await tab?.rollbackTransaction() } }
+                    .disabled(tab?.isInTransaction != true)
             }
             CommandMenu("Favorites") {
                 let tab = model.selectedTableTab

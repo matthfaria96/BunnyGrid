@@ -37,7 +37,17 @@ BUNNYGRID_DATA_DIR=/tmp/bg build/BunnyGrid.app/Contents/MacOS/BunnyGrid \
   Resources/Samples/demo.sqlite --open-table customers --query "SELECT * FROM orders LIMIT 10"
 ```
 
-No build de debug: `--demo-edits` (com `--open-table`) cria alterações pendentes de exemplo, `--focus-cell` foca uma célula, `--show-objects` abre a aba Objects com a pasta Tables selecionada, `--design TABELA` abre o Design Table e `--new-table` abre o New Table.
+No build de debug: `--demo-edits` (com `--open-table`) cria alterações pendentes de exemplo, `--focus-cell` foca uma célula, `--show-objects` abre a aba Objects com a pasta Tables selecionada, `--design TABELA` abre o Design Table, `--new-table` abre o New Table, `--connect-first` abre a primeira conexão salva, `--begin-transaction` e `--generate` (com `--open-table`) abrem o modo de transação e a Data Generation.
+
+### Testes de integração com PostgreSQL
+
+Com um PostgreSQL acessível (ex.: `brew install postgresql@17 && brew services start postgresql@17`):
+
+```sh
+BUNNYGRID_PG_PORT=5432 BUNNYGRID_PG_USER=$USER BUNNYGRID_PG_PASSWORD= BUNNYGRID_PG_DATABASE=postgres swift test
+```
+
+Sem `BUNNYGRID_PG_PORT` esses testes são pulados. Cada teste cria e apaga um schema próprio.
 
 ## Estrutura
 
@@ -64,7 +74,7 @@ Dados do usuário:
 - chave da API do Claude: Keychain, serviço `app.bunnygrid.anthropic`
 - senhas: Keychain, serviço `app.bunnygrid.connections`
 
-## O que já funciona (v0.4)
+## O que já funciona (v0.5)
 
 A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nada da arte do Navicat é usado):
 
@@ -78,6 +88,9 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - rodapé: + − ✓ ✗ ↻ ■, primeira/anterior/página/próxima/última, registros por página (1000 por padrão), buscar no grid, Grid View / **Form View**
 - **Aba de consulta**: editor com realce, autocomplete, histórico e exportação. **⌘S salva a consulta** na pasta Queries do banco (com nome); ⌘S de novo atualiza.
 - **Design Table / New Table**: grade de campos (nome, tipo com sugestões do banco, Not Null, chave, Default), abas Fields / Indexes / SQL Preview. Salvar gera `CREATE TABLE` ou `ALTER TABLE` (remover, renomear, mudar tipo/nulo/default, adicionar campo, renomear tabela) e roda numa transação no PostgreSQL e no SQLite. O que o banco não suporta (ex.: mudar tipo no SQLite, trocar a chave primária) é avisado antes de salvar.
+- **Begin Transaction** (aba de tabela): abre uma conexão só da aba e executa `BEGIN`; as edições aplicadas ficam invisíveis para outras conexões até **Commit** (que aplica antes as edições pendentes) ou **Rollback**. Fechar a aba desfaz a transação.
+- **Data Generation**: gera registros realistas (nomes, e-mails, telefones, cidades, empresas, UUIDs, datas, números, textos…), com o gerador sugerido pelo nome e tipo de cada campo, chaves automáticas puladas, respeito a `numeric(p,s)`, `smallint` e `varchar(n)`, prévia reproduzível e inserção numa transação.
+- **Índices no Design Table**: criar, renomear, mudar campos/unicidade e remover índices (a chave primária fica protegida).
 - **Import Wizard**: importa CSV/TSV numa tabela, com detecção do delimitador, linha de cabeçalho, vazio → NULL, prévia e mapeamento automático por nome; tudo numa transação.
 - **Favorites**: favoritar tabelas/views (menu de contexto ou ⌘D), menu Favorites para abrir, e a estrela no rodapé do painel de navegação mostra só os favoritos.
 - **⌘S** salva o que a aba atual tiver: edições do grid, consulta ou design.

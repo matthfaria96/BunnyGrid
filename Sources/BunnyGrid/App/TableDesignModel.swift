@@ -26,6 +26,8 @@ final class TableDesignModel: Identifiable {
     var columns: [ColumnDesign] = []
     private(set) var originalColumns: [TableColumn] = []
     private(set) var indexes: [TableIndex] = []
+    var indexDesigns: [IndexDesign] = []
+    var indexSelection: IndexDesign.ID?
     var selection: ColumnDesign.ID?
     var section: Section = .fields
     private(set) var isLoading = false
@@ -71,6 +73,7 @@ final class TableDesignModel: Identifiable {
         originalColumns = (try? await driver.listColumns(table: originalName, schema: driverSchema)) ?? []
         indexes = (try? await driver.listIndexes(table: originalName, schema: driverSchema)) ?? []
         columns = originalColumns.map(ColumnDesign.init)
+        indexDesigns = indexes.map(IndexDesign.init)
     }
 
     /// The statements Save would run, or why the design can't be saved.
@@ -78,6 +81,7 @@ final class TableDesignModel: Identifiable {
         Result {
             if isNew {
                 return [try dialect.createTable(name: tableName, schema: driverSchema, columns: columns)]
+                    + (try dialect.alterIndexes(table: tableName, schema: driverSchema, original: [], design: indexDesigns))
             }
             var statements = try dialect.alterTable(name: originalName ?? tableName, schema: driverSchema, original: originalColumns, design: columns)
             if let originalName, tableName != originalName, !tableName.isEmpty {
@@ -86,6 +90,8 @@ final class TableDesignModel: Identifiable {
                     : "ALTER TABLE \(dialect.qualifiedName(table: originalName, schema: driverSchema)) RENAME TO \(dialect.quoteIdentifier(tableName))"
                 statements.append(renamed)
             }
+            let finalName = tableName.isEmpty ? (originalName ?? tableName) : tableName
+            statements += try dialect.alterIndexes(table: finalName, schema: driverSchema, original: indexes, design: indexDesigns)
             return statements
         }
     }
@@ -128,6 +134,28 @@ final class TableDesignModel: Identifiable {
         guard let id = selection, let index = columns.firstIndex(where: { $0.id == id }) else { return }
         columns[index].isPrimaryKey.toggle()
         if columns[index].isPrimaryKey { columns[index].nullable = false }
+    }
+
+    func addIndex() {
+        let base = (tableName.isEmpty ? "table" : tableName) + "_idx"
+        var name = base
+        var n = 1
+        while indexDesigns.contains(where: { $0.name == name }) { n += 1; name = "\(base)\(n)" }
+        let columnName = selection.flatMap { id in columns.first { $0.id == id }?.name } ?? columns.first?.name
+        let index = IndexDesign(name: name, columns: columnName.map { [$0] } ?? [])
+        indexDesigns.append(index)
+        indexSelection = index.id
+    }
+
+    func deleteIndex() {
+        guard let id = indexSelection, let index = indexDesigns.firstIndex(where: { $0.id == id }) else { return }
+        indexDesigns.remove(at: index)
+        indexSelection = indexDesigns.indices.contains(index) ? indexDesigns[index].id : indexDesigns.last?.id
+    }
+
+    func isPrimaryIndex(_ index: IndexDesign) -> Bool {
+        guard let name = index.originalName else { return false }
+        return indexes.first { $0.name == name }?.primary == true
     }
 
     private func uniqueName() -> String {
