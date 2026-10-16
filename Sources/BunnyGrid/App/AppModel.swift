@@ -23,6 +23,7 @@ final class AppModel {
     private(set) var history: [QueryHistoryEntry] = []
     private(set) var savedQueries: [SavedQuery] = []
     private(set) var favorites: [FavoriteObject] = []
+    private(set) var tableProfiles: [TableProfile] = []
     var favoritesOnly = false
     /// Query tab waiting for a name in the Save Query sheet.
     var namingQuery: QueryTabModel?
@@ -40,12 +41,18 @@ final class AppModel {
     private(set) var tabs: [WorkspaceTab] = []
     /// nil selects the fixed "Objects" tab.
     var selectedTabID: UUID?
+    /// Tab waiting for "discard unsaved changes?" confirmation.
+    var tabPendingClose: WorkspaceTab?
     var objectCategory: ObjectCategory = .tables
     private var queryCounter = 0
 
-    // Panes
-    var showNavigator = true
-    var showAssistant = true
+    // Panes (remembered between launches)
+    var showNavigator = UserDefaults.standard.object(forKey: "showNavigator") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showNavigator, forKey: "showNavigator") }
+    }
+    var showAssistant = UserDefaults.standard.object(forKey: "showAssistant") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showAssistant, forKey: "showAssistant") }
+    }
 
     let assistant: AssistantModel
 
@@ -54,6 +61,7 @@ final class AppModel {
     @ObservationIgnored private let keychain: KeychainStore
     @ObservationIgnored private let savedQueryStore = JSONListStore<SavedQuery>(fileURL: AppModel.dataDirectory.appending(path: "queries.json"))
     @ObservationIgnored private let favoriteStore = JSONListStore<FavoriteObject>(fileURL: AppModel.dataDirectory.appending(path: "favorites.json"))
+    @ObservationIgnored private let profileStore = JSONListStore<TableProfile>(fileURL: AppModel.dataDirectory.appending(path: "table-profiles.json"))
 
     init(
         store: ConnectionStore = ConnectionStore(fileURL: AppModel.dataDirectory.appending(path: "connections.json")),
@@ -72,6 +80,7 @@ final class AppModel {
         history = (try? historyStore.load()) ?? []
         savedQueries = (try? savedQueryStore.load()) ?? []
         favorites = (try? favoriteStore.load()) ?? []
+        tableProfiles = (try? profileStore.load()) ?? []
         for group in Set(connections.compactMap(\.group)) { expanded.insert(.group(group)) }
         assistant.app = self
         openLaunchArguments()
@@ -417,6 +426,26 @@ final class AppModel {
         do { try savedQueryStore.save(savedQueries) } catch { alertMessage = "Could not save queries: \(error.localizedDescription)" }
     }
 
+    // MARK: - Table profiles
+
+    func profiles(for tab: TableTabModel) -> [TableProfile] {
+        tableProfiles.filter {
+            $0.connectionID == tab.connectionID && $0.database == tab.databaseName && $0.schema == tab.object.schema && $0.table == tab.object.name
+        }
+    }
+
+    func saveProfile(_ profile: TableProfile) {
+        tableProfiles.removeAll { $0.connectionID == profile.connectionID && $0.database == profile.database
+            && $0.schema == profile.schema && $0.table == profile.table && $0.name == profile.name }
+        tableProfiles.append(profile)
+        try? profileStore.save(tableProfiles)
+    }
+
+    func deleteProfile(_ id: UUID) {
+        tableProfiles.removeAll { $0.id == id }
+        try? profileStore.save(tableProfiles)
+    }
+
     // MARK: - Favorites
 
     func isFavorite(_ object: DatabaseObject, connectionID: UUID, database: String) -> Bool {
@@ -451,6 +480,27 @@ final class AppModel {
             guard context.isOpen else { return }
             openTable(favorite.object, in: context)
         }
+    }
+
+    /// Closes a tab, asking first when it holds unsaved work.
+    func requestClose(_ tab: WorkspaceTab) {
+        if tab.hasUnsavedChanges { tabPendingClose = tab } else { closeTab(tab.id) }
+    }
+
+    /// ⌘W: close the selected tab; with only the Objects tab showing, close the window.
+    func closeSelectedTabOrWindow() {
+        if let tab = selectedTab {
+            requestClose(tab)
+        } else {
+            NSApp.keyWindow?.performClose(nil)
+        }
+    }
+
+    func selectAdjacentTab(_ offset: Int) {
+        // Objects (nil) is position 0, followed by the open tabs.
+        let order: [UUID?] = [nil] + tabs.map { Optional($0.id) }
+        guard let current = order.firstIndex(of: selectedTabID) else { return }
+        selectedTabID = order[(current + offset + order.count) % order.count]
     }
 
     func closeTab(_ id: UUID) {
@@ -569,7 +619,7 @@ final class AppModel {
                 navSelection = .object(id, database, object)
                 openTable(object, in: context)
                 #if DEBUG
-                if let tab = selectedTableTab, ["--demo-edits", "--focus-cell", "--begin-transaction", "--generate"].contains(where: CommandLine.arguments.contains) {
+                if let tab = selectedTableTab, ["--demo-edits", "--focus-cell", "--begin-transaction", "--generate", "--profile"].contains(where: CommandLine.arguments.contains) {
                     await tab.loadIfNeeded()
                     if CommandLine.arguments.contains("--demo-edits") {
                         tab.setValue(.text("Edited name"), row: 1, column: 1)
@@ -581,6 +631,9 @@ final class AppModel {
                     if CommandLine.arguments.contains("--begin-transaction") {
                         await tab.beginTransaction(session: sessions[id])
                         tab.setValue(.text("9.99"), row: 0, column: 4)
+                    }
+                    if CommandLine.arguments.contains("--profile") {
+                        tab.showProfiling = true
                     }
                     if CommandLine.arguments.contains("--generate") {
                         generationTarget = ImportTarget(context: context, object: object)

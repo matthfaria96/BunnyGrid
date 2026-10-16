@@ -22,6 +22,8 @@ struct ResultGridView: NSViewRepresentable {
     var onHeaderClick: ((String) -> Void)?
     var editing: GridEditing?
     var focusedCell: GridCell?
+    /// Columns that can't be edited inline (e.g. masked ones).
+    var lockedColumns: Set<Int> = []
     var onFocusChange: ((GridCell?) -> Void)?
     var onSelectionChange: ((IndexSet) -> Void)?
     var scrollRequest: GridScrollRequest?
@@ -33,7 +35,7 @@ struct ResultGridView: NSViewRepresentable {
         tableView.style = .plain
         tableView.usesAlternatingRowBackgroundColors = false
         tableView.gridStyleMask = [.solidVerticalGridLineMask, .solidHorizontalGridLineMask]
-        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.35)
+        tableView.gridColor = .gridColor
         tableView.allowsMultipleSelection = true
         tableView.allowsColumnReordering = true
         tableView.allowsColumnResizing = true
@@ -79,6 +81,7 @@ struct ResultGridView: NSViewRepresentable {
         private var onFocusChange: ((GridCell?) -> Void)?
         private var onSelectionChange: ((IndexSet) -> Void)?
         private var lastScrollRequest: GridScrollRequest?
+        private var lockedColumns: Set<Int> = []
 
         static let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
         private static let cellID = NSUserInterfaceItemIdentifier("GridCell")
@@ -95,10 +98,12 @@ struct ResultGridView: NSViewRepresentable {
             onFocusChange = view.onFocusChange
             onSelectionChange = view.onSelectionChange
             editing = view.editing
+            let lockedChanged = view.lockedColumns != lockedColumns
+            lockedColumns = view.lockedColumns
             let typesChanged = view.columnTypes != columnTypes
             let columnsChanged = view.columns != columns || typesChanged
             // Reload only on real changes: an unrelated SwiftUI update must not end an in-progress cell edit.
-            let contentChanged = columnsChanged || view.rows != rows || view.editing?.revision != revision
+            let contentChanged = columnsChanged || lockedChanged || view.rows != rows || view.editing?.revision != revision
             columns = view.columns
             rows = view.rows
             columnTypes = view.columnTypes
@@ -136,9 +141,9 @@ struct ResultGridView: NSViewRepresentable {
 
             let marker = NSTableColumn(identifier: Self.markerID)
             marker.title = ""
-            marker.width = 16
-            marker.minWidth = 16
-            marker.maxWidth = 16
+            marker.width = 14
+            marker.minWidth = 14
+            marker.maxWidth = 14
             marker.resizingMask = []
             marker.headerCell = GridHeaderCell(textCell: "")
             tableView.addTableColumn(marker)
@@ -157,10 +162,53 @@ struct ResultGridView: NSViewRepresentable {
             tableView.scrollRowToVisible(0)
         }
 
-        private func estimatedWidth(column: Int, title: String, type: String?) -> CGFloat {
-            let sample = rows.prefix(50).map { $0.indices.contains(column) ? $0[column].displayString.count : 0 }
-            let chars = max(title.count + 2, (type?.count ?? 0) + 4, sample.max() ?? 0)
-            return min(360, max(80, CGFloat(chars) * 7.6 + 18))
+        /// Width that fits the header and the widest of the first `sample` values, measured with the grid font.
+        private func estimatedWidth(column: Int, title: String, type: String?, sample: Int = 60, cap: CGFloat = 360) -> CGFloat {
+            let headerFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            var width = (title as NSString).size(withAttributes: [.font: headerFont]).width + 28
+            if let type { width = max(width, (type as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width + 34) }
+            for row in rows.prefix(sample) where row.indices.contains(column) {
+                let text = row[column].isNull ? "(Null)" : row[column].displayString
+                width = max(width, (text as NSString).size(withAttributes: [.font: Self.font]).width + 16)
+                if width >= cap { break }
+            }
+            return min(cap, max(60, ceil(width)))
+        }
+
+        /// Double-clicking a header divider fits the column to its content.
+        func tableView(_ tableView: NSTableView, sizeToFitWidthOfColumn columnIndex: Int) -> CGFloat {
+            let column = tableView.tableColumns[columnIndex]
+            guard let index = Int(column.identifier.rawValue) else { return column.width }
+            return estimatedWidth(column: index, title: column.title, type: columnTypes[column.title], sample: 1000, cap: 800)
+        }
+
+        // MARK: Keyboard
+
+        /// ← / → move the focused cell between visible columns.
+        func moveFocus(by delta: Int) {
+            guard let tableView else { return }
+            let visible = tableView.tableColumns.filter { !$0.isHidden }.compactMap { Int($0.identifier.rawValue) }
+            guard !visible.isEmpty else { return }
+            let row = focusedCell?.row ?? max(tableView.selectedRow, 0)
+            let current = focusedCell.flatMap { visible.firstIndex(of: $0.column) } ?? (delta > 0 ? -1 : visible.count)
+            let next = visible[min(max(current + delta, 0), visible.count - 1)]
+            setFocus(GridCell(row: row, column: next), notify: true)
+            if let position = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == String(next) }) {
+                tableView.scrollColumnToVisible(position)
+            }
+        }
+
+        /// Return edits the focused cell; typing a character starts editing with that character.
+        @discardableResult
+        func beginEditingFocused(with text: String? = nil) -> Bool {
+            guard let tableView, let cell = focusedCell, canEdit(row: cell.row, column: cell.column),
+                  let position = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == String(cell.column) }) else { return false }
+            tableView.editColumn(position, row: cell.row, with: nil, select: true)
+            if let text, let editor = tableView.currentEditor() {
+                editor.string = text
+                editor.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+            }
+            return true
         }
 
         private func updateSortIndicators(_ tableView: NSTableView, sort: OrderBy?) {
@@ -189,7 +237,7 @@ struct ResultGridView: NSViewRepresentable {
 
         /// Inline editing handles single-line text; long values go through the Cell Editor.
         private func canEdit(row: Int, column: Int) -> Bool {
-            guard isEditable, state(row: row, column: column) != .deleted else { return false }
+            guard isEditable, !lockedColumns.contains(column), state(row: row, column: column) != .deleted else { return false }
             let value = value(row: row, column: column)
             if case .blob = value { return false }
             return !value.displayString.contains("\n")
@@ -233,11 +281,20 @@ struct ResultGridView: NSViewRepresentable {
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
             guard let tableColumn else { return nil }
-            let field = tableView.makeView(withIdentifier: Self.cellID, owner: nil) as? NSTextField ?? makeField()
             if tableColumn.identifier == Self.markerID {
-                configureMarker(field, row: row)
-                return field
+                let marker = tableView.makeView(withIdentifier: Self.markerID, owner: nil) as? RowMarkerView ?? {
+                    let view = RowMarkerView()
+                    view.identifier = Self.markerID
+                    return view
+                }()
+                marker.mark = switch state(row: row, column: 0) {
+                case .inserted, .defaultValue: .inserted
+                case .deleted: .deleted
+                default: focusedCell?.row == row ? .current : .none
+                }
+                return marker
             }
+            let field = tableView.makeView(withIdentifier: Self.cellID, owner: nil) as? NSTextField ?? makeField()
             guard let column = Int(tableColumn.identifier.rawValue) else { return nil }
             let value = value(row: row, column: column)
             let state = state(row: row, column: column)
@@ -269,21 +326,6 @@ struct ResultGridView: NSViewRepresentable {
             field.backgroundColor = isFocused ? .controlAccentColor : .clear
             field.isEditable = canEdit(row: row, column: column)
             return field
-        }
-
-        private func configureMarker(_ field: NSTextField, row: Int) {
-            let marker: (String, NSColor) = switch state(row: row, column: 0) {
-            case .inserted, .defaultValue: ("+", .systemGreen)
-            case .deleted: ("−", .systemRed)
-            default: focusedCell?.row == row ? ("▸", .controlAccentColor) : ("", .clear)
-            }
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = .center
-            field.attributedStringValue = NSAttributedString(string: marker.0, attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .bold), .foregroundColor: marker.1, .paragraphStyle: paragraph,
-            ])
-            field.drawsBackground = false
-            field.isEditable = false
         }
 
         private func makeField() -> NSTextField {
@@ -446,12 +488,27 @@ final class GridTableView: NSTableView {
     }
 
     override func keyDown(with event: NSEvent) {
-        // Delete / forward delete mark the selected rows for deletion.
-        if let coordinator, coordinator.isEditable, event.keyCode == 51 || event.keyCode == 117 {
+        guard let coordinator else { return super.keyDown(with: event) }
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option])
+        switch event.keyCode {
+        case 51 where coordinator.isEditable, 117 where coordinator.isEditable:
+            // Delete / forward delete mark the selected rows for deletion.
             coordinator.deleteSelectedRows()
-            return
+        case 123 where modifiers.isEmpty:
+            coordinator.moveFocus(by: -1)
+        case 124 where modifiers.isEmpty:
+            coordinator.moveFocus(by: 1)
+        case 36 where modifiers.isEmpty, 76 where modifiers.isEmpty:
+            if !coordinator.beginEditingFocused() { super.keyDown(with: event) }
+        default:
+            // Typing a printable character starts editing the focused cell, as in a spreadsheet.
+            if modifiers.isEmpty, let characters = event.characters, characters.count == 1,
+               let scalar = characters.unicodeScalars.first, !CharacterSet.controlCharacters.contains(scalar),
+               scalar.value < 0xF700, coordinator.beginEditingFocused(with: characters) {
+                return
+            }
+            super.keyDown(with: event)
         }
-        super.keyDown(with: event)
     }
 }
 
@@ -492,6 +549,37 @@ final class GridHeaderView: NSTableHeaderView {
         rect.origin.y = bounds.minY
         rect.size.height = bounds.height
         return rect
+    }
+}
+
+/// The gray gutter left of the data: a blue bar on the current row, + / − for new and deleted rows (Navicat's record selector).
+final class RowMarkerView: NSView {
+    enum Mark { case none, current, inserted, deleted }
+
+    var mark: Mark = .none {
+        didSet { if mark != oldValue { needsDisplay = true } }
+    }
+
+    static let gutterColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 0.19, alpha: 1) : NSColor(white: 0.95, alpha: 1)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Self.gutterColor.setFill()
+        bounds.fill()
+        switch mark {
+        case .none:
+            break
+        case .current:
+            NSColor.controlAccentColor.setFill()
+            NSRect(x: bounds.maxX - 4, y: bounds.minY + 1, width: 3, height: bounds.height - 2).fill()
+        case .inserted, .deleted:
+            let glyph = mark == .inserted ? "+" : "−"
+            let color: NSColor = mark == .inserted ? .systemGreen : .systemRed
+            let text = NSAttributedString(string: glyph, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold), .foregroundColor: color])
+            let size = text.size()
+            text.draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2))
+        }
     }
 }
 

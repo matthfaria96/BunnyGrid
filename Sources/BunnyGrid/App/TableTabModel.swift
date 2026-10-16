@@ -53,6 +53,9 @@ final class TableTabModel: Identifiable {
     var showCellEditor = false
     var showHistory = false
     var hiddenColumns: Set<String> = []
+    /// Data Masking rules by column name; masked values show (and export) masked.
+    var masks: [String: MaskRule] = [:]
+    var showProfiling = false
     /// The cell the user clicked last, in `displayRows` coordinates.
     var focusedCell: GridCell?
     private(set) var log: [LogEntry] = []
@@ -284,7 +287,7 @@ final class TableTabModel: Identifiable {
         edits.keys.filter { !deletedRows.contains($0) }.count + insertedRows.count + deletedRows.count
     }
 
-    /// Page rows with edits applied, followed by inserted rows.
+    /// Page rows with edits applied, followed by inserted rows, with masks applied.
     var displayRows: [[CellValue]] {
         guard let page else { return [] }
         var rows = page.rows
@@ -292,7 +295,48 @@ final class TableTabModel: Identifiable {
             for (column, value) in values { rows[row][column] = value }
         }
         rows += insertedRows.map { values in page.columns.indices.map { values[$0] ?? .null } }
-        return rows
+        return applyMasks(rows)
+    }
+
+    /// Indexes of masked columns, which the grid won't edit inline.
+    var maskedColumnIndexes: Set<Int> {
+        guard let page else { return [] }
+        return Set(page.columns.indices.filter { (masks[page.columns[$0]] ?? .none) != .none })
+    }
+
+    /// The loaded page as exports should see it: masks applied, pending edits not.
+    var exportRows: [[CellValue]] {
+        applyMasks(page?.rows ?? [])
+    }
+
+    private func applyMasks(_ rows: [[CellValue]]) -> [[CellValue]] {
+        guard let page, masks.values.contains(where: { $0 != .none }) else { return rows }
+        let rules = page.columns.map { masks[$0] ?? .none }
+        return rows.map { row in row.enumerated().map { index, value in index < rules.count ? rules[index].apply(to: value) : value } }
+    }
+
+    // MARK: - Table Profile
+
+    /// The current filter, sort, hidden columns and masks as a named profile.
+    func makeProfile(named name: String) -> TableProfile? {
+        guard let connectionID else { return nil }
+        return TableProfile(
+            connectionID: connectionID, database: databaseName, schema: object.schema, table: object.name, name: name,
+            filter: appliedFilter, sortColumn: orderBy?.column, sortDescending: orderBy?.direction == .descending,
+            hiddenColumns: hiddenColumns.sorted(), masks: masks.filter { $0.value != .none }
+        )
+    }
+
+    func apply(_ profile: TableProfile) async {
+        guard !hasChanges else { return }
+        filterText = profile.filter
+        appliedFilter = profile.filter
+        orderBy = profile.sortColumn.map { OrderBy(column: $0, direction: profile.sortDescending ? .descending : .ascending) }
+        hiddenColumns = Set(profile.hiddenColumns)
+        masks = profile.masks
+        showFilterBar = showFilterBar || !profile.filter.isEmpty
+        offset = 0
+        await reload()
     }
 
     func cellState(row: Int, column: Int) -> GridCellState {
@@ -306,7 +350,7 @@ final class TableTabModel: Identifiable {
     }
 
     func setValue(_ value: CellValue, row: Int, column: Int) {
-        guard isEditable, let page else { return }
+        guard isEditable, let page, !maskedColumnIndexes.contains(column) else { return }
         if row >= page.rows.count {
             insertedRows[row - page.rows.count][column] = value
         } else {

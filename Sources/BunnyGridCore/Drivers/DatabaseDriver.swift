@@ -36,10 +36,15 @@ public protocol DatabaseDriver: AnyObject, Sendable {
 
     /// Runs exactly one statement.
     func executeStatement(_ sql: String) async throws -> QueryResult
+
+    /// Row estimates, sizes and comments for the Objects tab, keyed by table name.
+    func tableStatistics(schema: String?) async throws -> [String: TableStatistics]
 }
 
 extension DatabaseDriver {
     public var dialect: SQLDialect { SQLDialect(kind: config.kind) }
+
+    public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] { [:] }
 
     /// Runs a script statement by statement and returns one result per statement.
     public func execute(_ script: String) async throws -> [QueryResult] {

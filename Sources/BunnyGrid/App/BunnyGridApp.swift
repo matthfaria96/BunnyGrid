@@ -1,16 +1,42 @@
 import AppKit
 import SwiftUI
 
+/// Window appearance chosen in Settings; "system" follows macOS.
+enum AppearancePreference: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    @MainActor func apply() {
+        NSApp.appearance = switch self {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 @main
 struct BunnyGridApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
+    @AppStorage("appearance") private var appearance = AppearancePreference.system.rawValue
 
     var body: some Scene {
         Window("BunnyGrid", id: "main") {
             ContentView()
                 .environment(model)
                 .frame(minWidth: 1100, minHeight: 680)
+                .onAppear { AppearancePreference(rawValue: appearance)?.apply() }
+                .onChange(of: appearance) { _, value in AppearancePreference(rawValue: value)?.apply() }
         }
         .defaultSize(width: 1440, height: 860)
         .commands {
@@ -25,6 +51,8 @@ struct BunnyGridApp: App {
                     .keyboardShortcut("o")
             }
             CommandGroup(replacing: .saveItem) {
+                Button(model.selectedTab == nil ? "Close Window" : "Close Tab") { model.closeSelectedTabOrWindow() }
+                    .keyboardShortcut("w")
                 Button("Save") { model.saveCurrent() }
                     .keyboardShortcut("s")
                     .disabled(!model.canSaveCurrent)
@@ -34,6 +62,11 @@ struct BunnyGridApp: App {
                     .keyboardShortcut("1", modifiers: [.command, .option])
                 Button(model.showAssistant ? "Hide AI Assistant" : "Show AI Assistant") { model.showAssistant.toggle() }
                     .keyboardShortcut("2", modifiers: [.command, .option])
+                Divider()
+                Button("Show Next Tab") { model.selectAdjacentTab(1) }
+                    .keyboardShortcut(.tab, modifiers: .control)
+                Button("Show Previous Tab") { model.selectAdjacentTab(-1) }
+                    .keyboardShortcut(.tab, modifiers: [.control, .shift])
                 Divider()
             }
             CommandMenu("Table") {

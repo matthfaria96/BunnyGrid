@@ -4,10 +4,30 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
+            GeneralSettings()
+                .tabItem { Label("General", systemImage: "gearshape") }
             AISettings()
                 .tabItem { Label("AI Assistant", systemImage: "sparkle") }
         }
         .frame(width: 520)
+    }
+}
+
+private struct GeneralSettings: View {
+    @AppStorage("appearance") private var appearance = AppearancePreference.system.rawValue
+
+    var body: some View {
+        Form {
+            Picker("Appearance", selection: $appearance) {
+                ForEach(AppearancePreference.allCases) { Text($0.title).tag($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            Text("Light matches Navicat's default look; System follows macOS.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .formStyle(.grouped)
+        .padding(.vertical, 8)
     }
 }
 

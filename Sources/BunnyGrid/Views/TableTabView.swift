@@ -6,6 +6,9 @@ struct TableTabView: View {
     @Bindable var model: TableTabModel
     @State private var showingColumns = false
     @State private var showingSQLPreview = false
+    @State private var showingMasking = false
+    @State private var namingProfile = false
+    @State private var profileName = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,6 +41,22 @@ struct TableTabView: View {
             }
         }
         .task { await model.loadIfNeeded() }
+        .sheet(isPresented: $model.showProfiling) {
+            if let context = app.currentContextFor(model) {
+                DataProfilingView(model: model, driver: context.driver, driverSchema: context.usesSchemas ? model.object.schema : (context.kind == .sqlite ? nil : context.name))
+            }
+        }
+        .alert("Save Table Profile", isPresented: $namingProfile) {
+            TextField("Profile name", text: $profileName)
+            Button("Save") {
+                let name = profileName.trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty, let profile = model.makeProfile(named: name) { app.saveProfile(profile) }
+                profileName = ""
+            }
+            Button("Cancel", role: .cancel) { profileName = "" }
+        } message: {
+            Text("Saves the current filter, sort, hidden columns and masks.")
+        }
         .alert("Changes Not Saved", isPresented: Binding(
             get: { model.saveError != nil },
             set: { if !$0 { model.saveError = nil } }
@@ -53,7 +72,7 @@ struct TableTabView: View {
     private var toolbar: some View {
         HStack(alignment: .top, spacing: 8) {
             FlowLayout(spacing: 12, lineSpacing: 4) {
-                ToolbarChip(title: "Table Profile", systemImage: "tablecells.badge.ellipsis", tint: .blue, isEnabled: false, showsMenuIndicator: true) {}
+                TableProfileMenu(model: model, namingProfile: $namingProfile)
                 if model.isInTransaction {
                     ToolbarChip(title: "Commit", systemImage: "checkmark.seal.fill", tint: .green, help: "Apply pending edits and commit the transaction") {
                         Task { await model.commitTransaction() }
@@ -86,14 +105,16 @@ struct TableTabView: View {
                         includeTable: true
                     )
                 }
-                ToolbarChip(title: "Data Profiling", systemImage: "chart.bar.doc.horizontal", tint: .green, isEnabled: false) {}
+                ToolbarChip(title: "Data Profiling", systemImage: "chart.bar.doc.horizontal", tint: .green, isEnabled: !model.columns.isEmpty) {
+                    model.showProfiling = true
+                }
                 ToolbarChip(title: "Import", systemImage: "square.and.arrow.down", tint: .teal,
                             isEnabled: model.object.kind == .table && model.readOnlyReason == nil) {
                     if let context = app.currentContextFor(model) {
                         app.importTarget = ImportTarget(context: context, object: model.object)
                     }
                 }
-                ExportChip(columns: model.page?.columns ?? [], rows: model.page?.rows ?? [], suggestedName: model.object.name)
+                ExportChip(columns: model.page?.columns ?? [], rows: model.exportRows, suggestedName: model.object.name)
                     .disabled(model.page == nil)
                 ToolbarChip(title: "Data Generation", systemImage: "wand.and.stars", tint: .purple,
                             isEnabled: model.object.kind == .table && model.readOnlyReason == nil && !model.isInTransaction) {
@@ -101,8 +122,13 @@ struct TableTabView: View {
                         app.generationTarget = ImportTarget(context: context, object: model.object)
                     }
                 }
-                ToolbarChip(title: "Data Masking", systemImage: "theatermasks", tint: .indigo, isEnabled: false) {}
-                ToolbarChip(title: "Create BI Workspace", systemImage: "chart.pie", tint: .pink, isEnabled: false) {}
+                ToolbarChip(title: "Data Masking", systemImage: "theatermasks", tint: .indigo,
+                            isOn: model.masks.values.contains { $0 != .none }, isEnabled: model.page != nil) {
+                    showingMasking = true
+                }
+                .popover(isPresented: $showingMasking, arrowEdge: .bottom) { DataMaskingPopover(model: model) }
+                ToolbarChip(title: "Create BI Workspace", systemImage: "chart.pie", tint: .pink,
+                            comingSoon: "Turn this table into charts and dashboards.")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -167,6 +193,7 @@ struct TableTabView: View {
                             onToggleDelete: { model.toggleDelete($0) }
                         ) : nil,
                         focusedCell: model.focusedCell,
+                        lockedColumns: model.maskedColumnIndexes,
                         onFocusChange: { model.focusedCell = $0 },
                         onSelectionChange: { model.selectedRows = $0 },
                         scrollRequest: model.scrollRequest
@@ -180,6 +207,50 @@ struct TableTabView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// "Table Profile ▾": apply, save and delete saved views of this table.
+private struct TableProfileMenu: View {
+    @Environment(AppModel.self) private var app
+    let model: TableTabModel
+    @Binding var namingProfile: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        let profiles = app.profiles(for: model)
+        Menu {
+            if profiles.isEmpty { Text("No saved profiles") }
+            ForEach(profiles) { profile in
+                Button(profile.name) { Task { await model.apply(profile) } }
+            }
+            Divider()
+            Button("Save Current as Profile…") { namingProfile = true }
+            if !profiles.isEmpty {
+                Menu("Delete Profile") {
+                    ForEach(profiles) { profile in
+                        Button(profile.name, role: .destructive) { app.deleteProfile(profile.id) }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "tablecells.badge.ellipsis").foregroundStyle(.blue).frame(width: 16)
+                Text("Table Profile")
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+            }
+            .font(.system(size: 12.5))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 5).fill(isHovering ? Color.primary.opacity(0.07) : .clear))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { isHovering = $0 }
+        .help("Saved filters, sorts, columns and masks for this table")
+        .disabled(model.hasChanges)
     }
 }
 

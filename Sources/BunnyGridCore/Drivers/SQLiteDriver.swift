@@ -89,6 +89,16 @@ public actor SQLiteDriver: DatabaseDriver {
         return indexes
     }
 
+    /// SQLite keeps no row estimates; exact counts are cheap for the small files it usually holds.
+    public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] {
+        var stats: [String: TableStatistics] = [:]
+        for object in try await listObjects(schema: nil) where object.kind == .table {
+            let count = try? await executeStatement("SELECT COUNT(*) FROM \(dialect.quoteIdentifier(object.name))").rows.first?.first
+            if case .integer(let n) = count { stats[object.name] = TableStatistics(rows: Int(n)) }
+        }
+        return stats
+    }
+
     public func executeStatement(_ sql: String) async throws -> QueryResult {
         guard let db else { throw DatabaseError.notConnected }
         var stmt: OpaquePointer?

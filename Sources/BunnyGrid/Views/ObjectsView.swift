@@ -9,6 +9,7 @@ struct ObjectsView: View {
     @State private var selection: Set<String> = []
     @State private var pendingDrop: DatabaseObject?
     @State private var querySelection: Set<UUID> = []
+    @State private var statistics: [String: TableStatistics] = [:]
 
     private var context: DatabaseContext? { app.currentContext }
     private var schema: String? { context?.usesSchemas == true ? app.currentSchema : nil }
@@ -53,7 +54,8 @@ struct ObjectsView: View {
                 ToolbarChip(title: "Open Database", systemImage: "cylinder.fill", tint: .green, isEnabled: !selection.isEmpty) {
                     openSelectedDatabases()
                 }
-                ToolbarChip(title: "New Database", systemImage: "plus.circle", tint: .green, isEnabled: false) {}
+                ToolbarChip(title: "New Database", systemImage: "plus.circle", tint: .green,
+                            comingSoon: "Create a database with its character set and collation.")
             } else if category == .queries {
                 let selected = selectedSavedQuery
                 ToolbarChip(title: "Open Query", systemImage: "arrow.up.forward.square", tint: .orange, isEnabled: selected != nil) {
@@ -89,7 +91,8 @@ struct ObjectsView: View {
                             isEnabled: isTables && writable && selectedObject != nil) {
                     if let object = selectedObject, let context { app.importTarget = ImportTarget(context: context, object: object) }
                 }
-                ToolbarChip(title: "Export Wizard", systemImage: "square.and.arrow.up", tint: .teal, isEnabled: false) {}
+                ToolbarChip(title: "Export Wizard", systemImage: "square.and.arrow.up", tint: .teal,
+                            comingSoon: "Export several tables at once to CSV, JSON, SQL or Excel. Today you can export one table from its Export button.")
             }
             Spacer()
             HStack(spacing: 4) {
@@ -120,6 +123,7 @@ struct ObjectsView: View {
                 }
                 .width(90)
             }
+            .tableStyle(.inset(alternatesRowBackgrounds: false))
             .contextMenu(forSelectionType: String.self) { _ in } primaryAction: { ids in
                 selection = ids
                 openSelectedDatabases()
@@ -144,6 +148,7 @@ struct ObjectsView: View {
                         .font(.system(size: 11, design: .monospaced))
                 }
             }
+            .tableStyle(.inset(alternatesRowBackgrounds: false))
             .contextMenu(forSelectionType: UUID.self) { ids in
                 Button("Open Query") { openQueries(ids, queries: queries, in: context) }
                 Button("Delete Query", role: .destructive) { for id in ids { app.deleteSavedQuery(id) } }
@@ -162,22 +167,43 @@ struct ObjectsView: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                     .task { await context.loadObjects(schema: schema) }
             } else {
-                Table(objects, selection: $selection) {
-                    TableColumn("Name") { object in
+                // Statistics travel inside the row values: SwiftUI's Table doesn't redraw cells for outside state.
+                Table(objects.map { ObjectRow(object: $0, stats: statistics[$0.name]) }, selection: $selection) {
+                    TableColumn("Name") { row in
+                        let object = row.object
                         Label {
                             Text(object.name)
+                            if let connectionID = context.session?.id, app.isFavorite(object, connectionID: connectionID, database: context.name) {
+                                Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow)
+                            }
                         } icon: {
                             Image(systemName: object.kind.systemImage).foregroundStyle(category.tint)
                         }
                     }
-                    TableColumn(context.usesSchemas ? "Schema" : "Database") { object in
-                        Text(object.schema ?? context.name).foregroundStyle(.secondary)
+                    .width(min: 160, ideal: 240)
+                    TableColumn("Rows") { row in
+                        Text(row.stats?.rows.map { $0.formatted() } ?? "")
+                            .monospacedDigit()
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     }
-                    .width(min: 80, ideal: 140)
-                    TableColumn("Type") { object in
-                        Text(category.noun).foregroundStyle(.secondary)
+                    .width(min: 60, ideal: 90)
+                    TableColumn("Data Length") { row in
+                        Text(row.stats?.sizeBytes.flatMap { $0 > 0 ? ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) : nil } ?? "")
+                            .monospacedDigit()
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     }
-                    .width(min: 60, ideal: 120)
+                    .width(min: 70, ideal: 100)
+                    TableColumn(context.kind == .mysql || context.kind == .mariadb ? "Engine" : (context.usesSchemas ? "Schema" : "Database")) { row in
+                        Text(row.stats?.engine ?? row.object.schema ?? context.name).foregroundStyle(.secondary)
+                    }
+                    .width(min: 70, ideal: 110)
+                    TableColumn("Comment") { row in
+                        Text(row.stats?.comment ?? "").foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                .tableStyle(.inset(alternatesRowBackgrounds: false))
+                .task(id: "\(context.session?.id.uuidString ?? "")/\(context.name)/\(schema ?? "")/\(category.rawValue)") {
+                    statistics = (try? await context.driver.tableStatistics(schema: context.usesSchemas ? schema : (context.kind == .sqlite ? nil : context.name))) ?? [:]
                 }
                 .contextMenu(forSelectionType: String.self) { ids in
                     if let object = objects.first(where: { ids.contains($0.id) }), let connectionID = context.session?.id {
@@ -252,6 +278,12 @@ struct ObjectsView: View {
             }
         }
     }
+}
+
+private struct ObjectRow: Identifiable {
+    let object: DatabaseObject
+    let stats: TableStatistics?
+    var id: String { object.id }
 }
 
 private struct DatabaseRow: Identifiable {

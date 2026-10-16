@@ -47,10 +47,16 @@ struct ToolbarChip: View {
     var isEnabled = true
     var help: String?
     var showsMenuIndicator = false
-    let action: () -> Void
+    /// For features not built yet: looks enabled, and a click explains instead of acting.
+    var comingSoon: String?
+    var action: () -> Void = {}
+    @State private var isHovering = false
+    @State private var showingSoon = false
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            if comingSoon != nil { showingSoon = true } else { action() }
+        } label: {
             HStack(spacing: 4) {
                 Image(systemName: systemImage)
                     .symbolRenderingMode(.hierarchical)
@@ -65,12 +71,31 @@ struct ToolbarChip: View {
             .font(.system(size: 12.5))
             .padding(.horizontal, 5)
             .padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 5).fill(isOn ? Color.accentColor.opacity(0.16) : .clear))
+            .background(RoundedRectangle(cornerRadius: 5).fill(
+                isOn ? Color.accentColor.opacity(0.16) : (isHovering && isEnabled ? Color.primary.opacity(0.07) : .clear)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
-        .help(help ?? (isEnabled ? title : "\(title) — coming soon"))
+        .onHover { isHovering = $0 }
+        .help(help ?? title)
+        .popover(isPresented: $showingSoon, arrowEdge: .bottom) { ComingSoonNote(title: title, detail: comingSoon ?? "") }
+    }
+}
+
+/// Popover for toolbar items whose feature isn't built yet.
+struct ComingSoonNote: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(title, systemImage: "hammer").font(.headline)
+            Text(detail).font(.callout).foregroundStyle(.secondary)
+            Text("Coming in a future version of BunnyGrid.").font(.caption).foregroundStyle(.tertiary)
+        }
+        .padding()
+        .frame(width: 260, alignment: .leading)
     }
 }
 
@@ -82,15 +107,23 @@ struct BigToolbarButton: View {
     var isSelected = false
     var isEnabled = true
     var help: String?
-    let action: () -> Void
+    var comingSoon: String?
+    var action: () -> Void = {}
+    @State private var isHovering = false
+    @State private var showingSoon = false
 
     var body: some View {
-        Button(action: action) {
-            BigToolbarLabel(title: title, systemImage: systemImage, colors: colors, isSelected: isSelected, isEnabled: isEnabled)
+        Button {
+            if comingSoon != nil { showingSoon = true } else { action() }
+        } label: {
+            BigToolbarLabel(title: title, systemImage: systemImage, colors: colors, isSelected: isSelected,
+                            isEnabled: isEnabled, isHovering: isHovering && isEnabled)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
-        .help(help ?? (isEnabled ? title : "\(title) — coming soon"))
+        .onHover { isHovering = $0 }
+        .help(help ?? title)
+        .popover(isPresented: $showingSoon, arrowEdge: .bottom) { ComingSoonNote(title: title, detail: comingSoon ?? "") }
     }
 }
 
@@ -101,6 +134,7 @@ struct BigToolbarLabel: View {
     var isSelected = false
     var isEnabled = true
     var showsMenuIndicator = false
+    var isHovering = false
 
     var body: some View {
         VStack(spacing: 3) {
@@ -123,7 +157,8 @@ struct BigToolbarLabel: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .frame(minWidth: 62)
-        .background(RoundedRectangle(cornerRadius: 6).fill(isSelected ? Color.accentColor.opacity(0.18) : .clear))
+        .background(RoundedRectangle(cornerRadius: 6).fill(
+            isSelected ? Color.accentColor.opacity(0.18) : (isHovering ? Color.primary.opacity(0.07) : .clear)))
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(isSelected ? Color.accentColor.opacity(0.35) : .clear))
         .contentShape(Rectangle())
     }
@@ -137,6 +172,7 @@ struct IconButton: View {
     var tint: Color = .secondary
     var isEnabled = true
     let action: () -> Void
+    @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
@@ -144,11 +180,13 @@ struct IconButton: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(isOn ? Color.accentColor : (isEnabled ? tint : Color.secondary.opacity(0.4)))
                 .frame(width: 22, height: 20)
-                .background(RoundedRectangle(cornerRadius: 4).fill(isOn ? Color.accentColor.opacity(0.15) : .clear))
+                .background(RoundedRectangle(cornerRadius: 4).fill(
+                    isOn ? Color.accentColor.opacity(0.15) : (isHovering && isEnabled ? Color.primary.opacity(0.08) : .clear)))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
+        .onHover { isHovering = $0 }
         .help(help)
     }
 }

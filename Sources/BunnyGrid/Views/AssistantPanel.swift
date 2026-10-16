@@ -17,7 +17,7 @@ struct AssistantPanel: View {
             Composer()
                 .padding(8)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color(nsColor: .textBackgroundColor))
     }
 
     // MARK: Header

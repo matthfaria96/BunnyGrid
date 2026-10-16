@@ -39,25 +39,21 @@ struct MainToolbar: View {
                 objectButton(.materializedViews, "Materialized View", "eyeglasses", [.orange])
             }
             objectButton(.functions, "Function", "function", [.indigo])
-            BigToolbarButton(title: "Role", systemImage: "person.fill", colors: [.orange], isEnabled: false) {}
-            Menu {
-                Text("Triggers, sequences, types and other objects are coming soon")
-            } label: {
-                BigToolbarLabel(title: "Others", systemImage: "wrench.and.screwdriver.fill", colors: [.blue, .gray], isEnabled: false, showsMenuIndicator: true)
-            }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .disabled(true)
+            BigToolbarButton(title: "Role", systemImage: "person.fill", colors: [.orange],
+                             comingSoon: "Manage users, roles and privileges on the server.")
+            BigToolbarButton(title: "Others", systemImage: "wrench.and.screwdriver.fill", colors: [.blue, .gray],
+                             comingSoon: "Triggers, sequences, types, events and other objects.")
 
             separator
 
             objectButton(.queries, "Query", "doc.text.magnifyingglass", [.orange])
             objectButton(.backups, "Backup", "clock.arrow.circlepath", [.gray])
-            BigToolbarButton(title: "Automation", systemImage: "gearshape.2.fill", colors: [.teal], isEnabled: false) {}
-            BigToolbarButton(title: "Model", systemImage: "square.grid.3x3.topleft.filled", colors: [.orange], isEnabled: false) {}
-            BigToolbarButton(title: "BI", systemImage: "chart.bar.fill", colors: [.pink], isEnabled: false) {}
+            BigToolbarButton(title: "Automation", systemImage: "gearshape.2.fill", colors: [.teal],
+                             comingSoon: "Batch jobs that run queries, exports and backups on a schedule.")
+            BigToolbarButton(title: "Model", systemImage: "square.grid.3x3.topleft.filled", colors: [.orange],
+                             comingSoon: "ER diagrams, reverse engineering and model-to-database sync.")
+            BigToolbarButton(title: "BI", systemImage: "chart.bar.fill", colors: [.pink],
+                             comingSoon: "Charts and dashboards built from your queries.")
 
             Spacer(minLength: 12)
 

@@ -36,10 +36,35 @@ struct NavigatorView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(Color(nsColor: .controlBackgroundColor))
             .environment(\.defaultMinListRowHeight, 22)
+            .onKeyPress(.return) {
+                guard let node = app.navSelection else { return .ignored }
+                withAnimation(.easeInOut(duration: 0.18)) { app.activate(node) }
+                return .handled
+            }
+            .onKeyPress(.rightArrow) {
+                guard let node = app.navSelection, isExpandable(node), !app.expanded.contains(node) else { return .ignored }
+                withAnimation(.easeInOut(duration: 0.18)) { app.setExpanded(node, true) }
+                return .handled
+            }
+            .onKeyPress(.leftArrow) {
+                guard let node = app.navSelection, app.expanded.contains(node) else { return .ignored }
+                withAnimation(.easeInOut(duration: 0.18)) { app.setExpanded(node, false) }
+                return .handled
+            }
 
             Divider()
             NavigatorSearchBar()
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func isExpandable(_ node: NavNode) -> Bool {
+        switch node {
+        case .object, .savedQuery, .cloudInfo: false
+        default: true
         }
     }
 
@@ -158,7 +183,7 @@ private struct NavRowView: View {
             Group {
                 if row.isExpandable {
                     Button {
-                        app.setExpanded(row.node, !row.isExpanded)
+                        withAnimation(.easeInOut(duration: 0.18)) { app.setExpanded(row.node, !row.isExpanded) }
                     } label: {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 9, weight: .bold))
@@ -197,7 +222,9 @@ private struct NavRowView: View {
         .font(.system(size: 13))
         .padding(.leading, CGFloat(row.depth) * 14)
         .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture(count: 2).onEnded { app.activate(row.node) })
+        .simultaneousGesture(TapGesture(count: 2).onEnded {
+            withAnimation(.easeInOut(duration: 0.18)) { app.activate(row.node) }
+        })
         .contextMenu { NavContextMenu(node: row.node) }
     }
 }

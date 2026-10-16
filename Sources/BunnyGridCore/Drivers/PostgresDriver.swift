@@ -160,6 +160,30 @@ public actor PostgresDriver: DatabaseDriver {
         }
     }
 
+    public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] {
+        let result = try await executeStatement("""
+            SELECT c.relname, c.reltuples::bigint, pg_total_relation_size(c.oid), obj_description(c.oid, 'pg_class')
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = \(dialect.quoteLiteral(schema ?? "public")) AND c.relkind IN ('r', 'p', 'm', 'v', 'f')
+            """)
+        var stats: [String: TableStatistics] = [:]
+        for row in result.rows where row.count == 4 {
+            var rows: Int?
+            if case .integer(let estimate) = row[1], estimate >= 0 { rows = Int(estimate) }
+            var size: Int?
+            if case .integer(let bytes) = row[2] { size = Int(bytes) }
+            stats[row[0].displayString] = TableStatistics(rows: rows, sizeBytes: size, comment: row[3].isNull ? nil : row[3].displayString)
+        }
+        // Tables never analyzed have no estimate (-1); count the small ones exactly, as an estimate would be.
+        for (name, stat) in stats where stat.rows == nil && (stat.sizeBytes ?? 0) > 0 && (stat.sizeBytes ?? 0) < 32 * 1024 * 1024 {
+            if let value = try? await executeStatement("SELECT COUNT(*) FROM \(dialect.qualifiedName(table: name, schema: schema ?? "public"))").rows.first?.first,
+               case .integer(let count) = value {
+                stats[name]?.rows = Int(count)
+            }
+        }
+        return stats
+    }
+
     public func executeStatement(_ sql: String) async throws -> QueryResult {
         guard let connection else { throw DatabaseError.notConnected }
         do {

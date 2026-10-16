@@ -12,7 +12,8 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 | ✅ 0.3 | IA | AI Assistant com a API do Claude, contexto de tabela/schema, Fill with AI | Navicat AI Assistant |
 | ✅ 0.4 | Estrutura e dados | Design/New Table, Import Wizard (CSV), consultas salvas (pasta Queries), Favorites, ⌘S unificado | Navicat |
 | ✅ 0.5 | Dados e estrutura | Begin Transaction (conexão própria por aba), Data Generation, índices no designer, testes de integração com PostgreSQL | Navicat |
-| 0.6 | Próximos | Chaves estrangeiras no designer, Table Profile (filtros salvos), Export Wizard (vários objetos), túnel SSH, testes de integração com MySQL | Navicat |
+| ✅ 0.6 | Design e experiência | Tema claro, grid e navegação no visual do Navicat, Table Profile, Data Profiling, Data Masking, estatísticas na aba Objects, abas persistentes, teclado no grid e na árvore | Navicat |
+| 0.7 | Próximos | Chaves estrangeiras no designer, Table Profile (filtros salvos), Export Wizard (vários objetos), túnel SSH, testes de integração com MySQL | Navicat |
 | 0.3 | Editor SQL | Consultas salvas, formatação, executar o comando sob o cursor, EXPLAIN | Navicat "Query Editor" |
 | 0.3 | Edição | Editor de valor para textos longos, JSON e blobs (inline só aceita uma linha), duplicar linha | Navicat "Cell Editors" |
 | 0.3 | Conectividade | Túnel SSH (Citadel, puro Swift), SSL com verificação e certificados de cliente, socket Unix | `tunnel.ts` |

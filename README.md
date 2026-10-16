@@ -74,7 +74,7 @@ Dados do usuário:
 - chave da API do Claude: Keychain, serviço `app.bunnygrid.anthropic`
 - senhas: Keychain, serviço `app.bunnygrid.connections`
 
-## O que já funciona (v0.5)
+## O que já funciona (v0.6)
 
 A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nada da arte do Navicat é usado):
 
@@ -88,6 +88,12 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - rodapé: + − ✓ ✗ ↻ ■, primeira/anterior/página/próxima/última, registros por página (1000 por padrão), buscar no grid, Grid View / **Form View**
 - **Aba de consulta**: editor com realce, autocomplete, histórico e exportação. **⌘S salva a consulta** na pasta Queries do banco (com nome); ⌘S de novo atualiza.
 - **Design Table / New Table**: grade de campos (nome, tipo com sugestões do banco, Not Null, chave, Default), abas Fields / Indexes / SQL Preview. Salvar gera `CREATE TABLE` ou `ALTER TABLE` (remover, renomear, mudar tipo/nulo/default, adicionar campo, renomear tabela) e roda numa transação no PostgreSQL e no SQLite. O que o banco não suporta (ex.: mudar tipo no SQLite, trocar a chave primária) é avisado antes de salvar.
+- **Aparência** (Settings → General): Sistema, Claro ou Escuro. O tema claro é o do modelo do Navicat.
+- **Table Profile ▾**: salva e reaplica filtro, ordenação, colunas ocultas e máscaras de uma tabela.
+- **Data Profiling**: por coluna, registros, nulos (com medidor de preenchimento), distintos, mínimo, máximo, média e os valores mais frequentes em barras.
+- **Data Masking**: mascara colunas no grid e nas exportações (total, parcial, e-mail, últimos 4 dígitos); colunas mascaradas não são editáveis e o banco não é alterado.
+- **Aba Objects** com Rows, Data Length, Engine (MySQL) e Comment.
+- **Fluidez**: abas mantêm rolagem, seleção e texto ao alternar; ← → movem a célula em foco, Return ou digitar começa a editar; duplo clique na divisória do cabeçalho ajusta a coluna; Return / ← / → na árvore abrem, recolhem e expandem com animação; ⌘W fecha a aba, ⌃Tab / ⌃⇧Tab trocam de aba; os painéis lembram se estavam abertos.
 - **Begin Transaction** (aba de tabela): abre uma conexão só da aba e executa `BEGIN`; as edições aplicadas ficam invisíveis para outras conexões até **Commit** (que aplica antes as edições pendentes) ou **Rollback**. Fechar a aba desfaz a transação.
 - **Data Generation**: gera registros realistas (nomes, e-mails, telefones, cidades, empresas, UUIDs, datas, números, textos…), com o gerador sugerido pelo nome e tipo de cada campo, chaves automáticas puladas, respeito a `numeric(p,s)`, `smallint` e `varchar(n)`, prévia reproduzível e inserção numa transação.
 - **Índices no Design Table**: criar, renomear, mudar campos/unicidade e remover índices (a chave primária fica protegida).

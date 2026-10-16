@@ -248,6 +248,21 @@ struct PostgresIntegrationTests {
         }
     }
 
+    @Test func tableStatisticsForObjectsTab() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.execute("""
+                CREATE TABLE \(schema).t (id int);
+                INSERT INTO \(schema).t SELECT generate_series(1, 300);
+                COMMENT ON TABLE \(schema).t IS 'Three hundred rows';
+                ANALYZE \(schema).t
+                """)
+            let stats = try await driver.tableStatistics(schema: schema)
+            #expect(stats["t"]?.rows == 300)
+            #expect((stats["t"]?.sizeBytes ?? 0) > 0)
+            #expect(stats["t"]?.comment == "Three hundred rows")
+        }
+    }
+
     @Test func readOnlyConnectionsRejectWrites() async throws {
         let driver = try await PG.driver(readOnly: true)
         await #expect(throws: DatabaseError.self) { try await driver.execute("CREATE TABLE should_not_exist (x int)") }

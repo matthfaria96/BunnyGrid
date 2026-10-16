@@ -9,16 +9,20 @@ struct WorkspaceView: View {
         VStack(spacing: 0) {
             TabBar()
             Divider()
-            Group {
-                switch app.selectedTab {
-                case .table(let model):
-                    TableTabView(model: model).id(model.id)
-                case .query(let model):
-                    QueryTabView(model: model).id(model.id)
-                case .design(let model):
-                    DesignTableView(model: model).id(model.id)
-                case nil:
-                    ObjectsView()
+            // Every tab stays alive so switching back keeps its scroll position, selection and editor state.
+            // Hidden tabs are disabled so their keyboard shortcuts (⌘↩, ⌘R…) don't fire.
+            ZStack {
+                ObjectsView()
+                    .opacity(app.selectedTabID == nil ? 1 : 0)
+                    .allowsHitTesting(app.selectedTabID == nil)
+                    .disabled(app.selectedTabID != nil)
+                ForEach(app.tabs) { tab in
+                    let isActive = tab.id == app.selectedTabID
+                    TabContent(tab: tab)
+                        .opacity(isActive ? 1 : 0)
+                        .allowsHitTesting(isActive)
+                        .disabled(!isActive)
+                        .accessibilityHidden(!isActive)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -26,9 +30,20 @@ struct WorkspaceView: View {
     }
 }
 
+private struct TabContent: View {
+    let tab: WorkspaceTab
+
+    var body: some View {
+        switch tab {
+        case .table(let model): TableTabView(model: model)
+        case .query(let model): QueryTabView(model: model)
+        case .design(let model): DesignTableView(model: model)
+        }
+    }
+}
+
 private struct TabBar: View {
     @Environment(AppModel.self) private var app
-    @State private var pendingClose: WorkspaceTab?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -43,7 +58,7 @@ private struct TabBar: View {
                         closable: true,
                         hasUnsavedChanges: tab.hasUnsavedChanges,
                         select: { app.selectedTabID = tab.id },
-                        close: { requestClose(tab) }
+                        close: { app.requestClose(tab) }
                     )
                 }
             }
@@ -51,18 +66,14 @@ private struct TabBar: View {
         .frame(height: 30)
         .background(Color(nsColor: .windowBackgroundColor))
         .confirmationDialog(
-            "Close “\(pendingClose?.title ?? "")” and discard its unsaved changes?",
-            isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } })
+            "Close “\(app.tabPendingClose?.title ?? "")” and discard its unsaved changes?",
+            isPresented: Binding(get: { app.tabPendingClose != nil }, set: { if !$0 { app.tabPendingClose = nil } })
         ) {
             Button("Discard Changes", role: .destructive) {
-                if let tab = pendingClose { app.closeTab(tab.id) }
-                pendingClose = nil
+                if let tab = app.tabPendingClose { app.closeTab(tab.id) }
+                app.tabPendingClose = nil
             }
         }
-    }
-
-    private func requestClose(_ tab: WorkspaceTab) {
-        if tab.hasUnsavedChanges { pendingClose = tab } else { app.closeTab(tab.id) }
     }
 }
 
