@@ -34,10 +34,11 @@ struct QueryBuilderSheet: View {
                 VSplitView {
                     QueryBuilderCanvas(model: model).frame(minHeight: 180, idealHeight: 300)
                     HSplitView {
-                        ScrollView([.vertical, .horizontal]) {
+                        // Vertical only: the clause chips wrap to the pane's width, as in Navicat's grammar editor.
+                        ScrollView(.vertical) {
                             QueryBuilderClauses(model: model)
                                 .padding(12)
-                                .frame(minWidth: 560, alignment: .topLeading)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
                         }
                         .defaultScrollAnchor(.topLeading)
                         .frame(minWidth: 320)
@@ -48,7 +49,7 @@ struct QueryBuilderSheet: View {
             }
             Divider()
             HStack {
-                Text("\(model.query.tables.count) table(s), \(model.query.joins.count) join(s)").font(.caption).foregroundStyle(.secondary)
+                Text("\(Self.count(model.query.tables.count, "table")), \(Self.count(model.query.joins.count, "join"))").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -63,6 +64,8 @@ struct QueryBuilderSheet: View {
         }
         .frame(minWidth: 900, idealWidth: 1100, minHeight: 620, idealHeight: 760)
     }
+
+    private static func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
 
     private var objectList: some View {
         VStack(spacing: 0) {
@@ -96,8 +99,10 @@ struct QueryBuilderSheet: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             Divider()
-            ScrollView([.vertical, .horizontal]) {
+            // Long lines wrap instead of being clipped.
+            ScrollView(.vertical) {
                 Text(model.sql)
+                    .fixedSize(horizontal: false, vertical: true)
                     .font(.system(size: 12, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -201,11 +206,12 @@ struct QueryBuilderClauses: View {
         Menu {
             items()
         } label: {
-            Text(title).font(.system(size: 12, design: .monospaced))
+            Text(title).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
+        .help(title)
         .padding(.horizontal, 6)
         .frame(height: 22)
         .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.12)))
@@ -469,7 +475,9 @@ struct QueryBuilderFlow: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let layout = arrange(bounds.width, subviews)
         for (subview, point) in zip(subviews, layout.points) {
-            subview.place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y), proposal: .unspecified)
+            // A piece wider than the row (a long JOIN chip) is capped to it instead of running past the edge.
+            subview.place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y),
+                          proposal: ProposedViewSize(width: min(subview.sizeThatFits(.unspecified).width, bounds.width), height: nil))
         }
     }
 
@@ -477,7 +485,8 @@ struct QueryBuilderFlow: Layout {
         var points: [CGPoint] = []
         var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
         for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
+            var size = subview.sizeThatFits(.unspecified)
+            if width.isFinite, size.width > width { size = subview.sizeThatFits(ProposedViewSize(width: width, height: nil)) }
             if x > 0, x + size.width > width {
                 x = 0
                 y += line + spacing

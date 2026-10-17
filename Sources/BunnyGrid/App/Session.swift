@@ -45,7 +45,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
 
     static func categories(for kind: DatabaseKind) -> [ObjectCategory] {
         switch kind {
-        case .postgresql: allCases
+        case .postgresql: allCases.filter { $0 != .gridFS }  // GridFS is MongoDB-only
         case .mysql, .mariadb, .sqlserver: [.tables, .views, .functions, .queries, .backups]
         case .sqlite: [.tables, .views, .queries, .backups]
         case .redis: []

@@ -299,7 +299,7 @@ struct CollectionTabView: View {
             Button { Task { await model.reload() } } label: { Image(systemName: "arrow.clockwise") }.help("Refresh")
             if model.isLoading { ProgressView().controlSize(.small) }
             Spacer()
-            Text(model.recordText).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(model.recordText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             Spacer()
             Button { model.goToPage(0) } label: { Image(systemName: "backward.end") }.disabled(model.page == 0)
             Button { model.goToPage(model.page - 1) } label: { Image(systemName: "chevron.left") }.disabled(model.page == 0)
