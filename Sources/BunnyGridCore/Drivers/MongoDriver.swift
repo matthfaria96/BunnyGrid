@@ -388,6 +388,9 @@ public actor MongoDriver: DocumentDatabaseDriver {
             var entry = TableStatistics(rows: stats["count"]?.intValue, sizeBytes: stats["size"]?.intValue)
             entry.engine = info.kind == .timeseries ? "time series" : nil
             entry.hasIndexes = (stats["nindexes"]?.intValue ?? 0) > 0
+            entry.indexCount = stats["nindexes"]?.intValue
+            entry.storageBytes = stats["storageSize"]?.intValue
+            entry.averageObjectBytes = stats["avgObjSize"]?.intValue
             result[info.name] = entry
         }
         return result

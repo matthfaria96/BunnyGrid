@@ -87,11 +87,29 @@ final class AppModel {
     private var queryCounter = 0
 
     // Panes (remembered between launches)
-    var showNavigator = UserDefaults.standard.object(forKey: "showNavigator") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(showNavigator, forKey: "showNavigator") }
+    var showNavigator = AppModel.savedPane("showNavigator") {
+        didSet { AppModel.savePane(showNavigator, "showNavigator") }
     }
-    var showAssistant = UserDefaults.standard.object(forKey: "showAssistant") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(showAssistant, forKey: "showAssistant") }
+    var showAssistant = AppModel.savedPane("showAssistant") {
+        didSet { AppModel.savePane(showAssistant, "showAssistant") }
+    }
+
+    /// Debug captures (`--window-size`) neither read nor write the remembered panes, so one capture can't hide
+    /// the panes of the next, nor change what the user's own launches restore.
+    private static var panesArePersisted: Bool {
+        #if DEBUG
+        !CommandLine.arguments.contains("--window-size")
+        #else
+        true
+        #endif
+    }
+
+    private static func savedPane(_ key: String) -> Bool {
+        panesArePersisted ? UserDefaults.standard.object(forKey: key) as? Bool ?? true : true
+    }
+
+    private static func savePane(_ value: Bool, _ key: String) {
+        if panesArePersisted { UserDefaults.standard.set(value, forKey: key) }
     }
 
     let assistant: AssistantModel

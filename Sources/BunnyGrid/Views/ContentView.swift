@@ -18,7 +18,7 @@ struct ContentView: View {
                         .frame(minWidth: 200, idealWidth: 240, maxWidth: 480)
                 }
                 WorkspaceView()
-                    .frame(minWidth: 360, maxWidth: .infinity)
+                    .frame(minWidth: 360, idealWidth: 2000, maxWidth: .infinity)
                     .layoutPriority(1)
                 if app.showAssistant {
                     RightPane()
@@ -71,6 +71,7 @@ struct ContentView: View {
         #if DEBUG
         .task {
             if CommandLine.arguments.contains("--settings") { openSettings() }
+            DebugMenus.popConnectionMenuIfRequested()
             // `--window-size 1037x695` matches the window to a reference capture.
             if let index = CommandLine.arguments.firstIndex(of: "--window-size"), CommandLine.arguments.indices.contains(index + 1) {
                 let parts = CommandLine.arguments[index + 1].split(separator: "x").compactMap { Double($0) }

@@ -45,7 +45,9 @@ final class BIWorkspaceModel: DocumentTab, Identifiable {
     var kindName: String { "BI Workspace" }
     var hasUnsavedChanges: Bool { false }
     var recordText: String {
-        "\(workspace.sources.count) data source(s), \(workspace.charts.count) chart(s), \(workspace.dashboards.count) dashboard(s)"
+        func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+        return [count(workspace.sources.count, "data source"), count(workspace.charts.count, "chart"),
+                count(workspace.dashboards.count, "dashboard")].joined(separator: ", ")
     }
     var attachmentText: String {
         var lines = ["BI workspace \(workspace.name)"]

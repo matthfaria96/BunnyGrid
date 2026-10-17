@@ -48,7 +48,8 @@ struct BIDashboardView: View {
                     }
                 }
             }
-            .background(Color(nsColor: .underPageBackgroundColor))
+            // The window's own tone: underPageBackgroundColor reads as a heavy grey in light mode.
+            .background(Color(nsColor: .windowBackgroundColor))
             .overlay { if isTargeted { RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor, lineWidth: 2).padding(4) } }
             .dropDestination(for: String.self) { payloads, _ in
                 let ids = payloads.compactMap { $0.hasPrefix("bi-chart:") ? UUID(uuidString: String($0.dropFirst(9))) : nil }

@@ -383,22 +383,24 @@ private struct NavContextMenu: View {
             Divider()
             Button(app.starredConnections.contains(id) ? "Remove Star" : "Add Star") { app.toggleStar(id) }
             // "Color:" with the swatches inline, as in Navicat's menu.
-            ControlGroup {
-                ForEach(ConnectionColor.allCases) { color in
-                    Button {
-                        app.setColor(color, for: id)
-                    } label: {
-                        Label {
-                            Text(color == .none ? "None" : color.rawValue.capitalized)
-                        } icon: {
-                            Image(nsImage: ColorSwatch.image(color, selected: app.connection(id: id)?.color == color))
+            Section("Color:") {
+                ControlGroup {
+                    ForEach(ConnectionColor.allCases) { color in
+                        Button {
+                            app.setColor(color, for: id)
+                        } label: {
+                            Label {
+                                Text(color == .none ? "None" : color.rawValue.capitalized)
+                            } icon: {
+                                Image(nsImage: ColorSwatch.image(color, selected: app.connection(id: id)?.color == color))
+                            }
                         }
                     }
+                } label: {
+                    Text("Color:")
                 }
-            } label: {
-                Text("Color:")
+                .controlGroupStyle(.palette)
             }
-            .controlGroupStyle(.palette)
             Divider()
             Menu("Manage Group") {
                 Button("New Group…") { app.groupingConnection = id }

@@ -187,6 +187,13 @@ struct ObjectsView: View {
                     statistics = (try? await context.driver.tableStatistics(schema: driverSchema)) ?? [:]
                 }
             }
+        } else if let redis = app.redisSelection {
+            // Redis has no object list: keys live in the navigator and open in their own tabs.
+            ContentUnavailableView {
+                Label("db\(redis.database)", systemImage: "key.horizontal")
+            } description: {
+                Text("Keys are listed in the navigation pane. Double-click one to open it, or use Key and Console in the toolbar.")
+            }
         } else {
             // Nothing selected: an empty list with just its column headers, like Navicat.
             ObjectListTable(columns: ["Name", "Rows", "Data Length", "Engine", "Created Date", "Modified Date"].map {
@@ -197,8 +204,34 @@ struct ObjectsView: View {
 
     /// The object list: SQLite shows Name, Root Page, Has Indexes, Has Triggers (as Navicat does); servers show
     /// Rows, Data Length, Engine, dates, Collation and Comment.
+    /// Navicat for MongoDB: Documents, Size, Storage Size, Indexes and Avg. Object Size per collection.
+    private func collectionList(context: DatabaseContext) -> some View {
+        func bytes(_ value: Int?) -> String {
+            value.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? ""
+        }
+        let columns = [ObjectListColumn(title: "Name", width: 200, minWidth: 120),
+                       ObjectListColumn(title: "Documents", width: 90, trailing: true),
+                       ObjectListColumn(title: "Size", width: 90, trailing: true),
+                       ObjectListColumn(title: "Storage Size", width: 100, trailing: true),
+                       ObjectListColumn(title: "Indexes", width: 70, trailing: true),
+                       ObjectListColumn(title: "Avg. Object Size", width: 120, trailing: true)]
+        let rows = objects.map { object -> ObjectListRow in
+            let stats = statistics[object.name]
+            return ObjectListRow(id: object.id, icon: object.kind.iconName,
+                                 cells: [object.name, stats?.rows.map { $0.formatted() } ?? "", bytes(stats?.sizeBytes),
+                                         bytes(stats?.storageBytes), stats?.indexCount.map(String.init) ?? "", bytes(stats?.averageObjectBytes)])
+        }
+        return ObjectListTable(columns: columns, rows: rows, selection: $selection, onOpen: { ids in
+            if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
+        }, autosaveName: "objects-mongodb")
+        .contextMenu {
+            if let object = selectedObject { ObjectActionItems(object: object, context: context) }
+        }
+    }
+
     private func objectList(context: DatabaseContext) -> some View {
         let isSQLite = context.kind == .sqlite
+        if context.kind.isDocumentStore { return AnyView(collectionList(context: context)) }
         let columns: [ObjectListColumn] = isSQLite
             ? [ObjectListColumn(title: "Name", width: 190, minWidth: 120), ObjectListColumn(title: "Root Page", width: 95),
                ObjectListColumn(title: "Has Indexes", width: 97), ObjectListColumn(title: "Has Triggers", width: 97),
@@ -225,7 +258,7 @@ struct ObjectsView: View {
             return ObjectListRow(id: object.id, icon: object.kind.iconName, cells: cells, starred: starred,
                                  secondaryColumns: isSQLite ? [] : [3, 4, 5, 6, 7])
         }
-        return ObjectListTable(columns: columns, rows: rows, selection: $selection, onOpen: { ids in
+        return AnyView(ObjectListTable(columns: columns, rows: rows, selection: $selection, onOpen: { ids in
             if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
         }, autosaveName: "objects-\(context.kind.rawValue)")
         .contextMenu {
@@ -239,6 +272,7 @@ struct ObjectsView: View {
                 ObjectActionItems(object: object, context: context)
             }
         }
+        )
     }
 
     private var selectedSavedQuery: SavedQuery? {

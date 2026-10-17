@@ -134,8 +134,20 @@ struct MainToolbar: View {
         }
     }
 
+    /// The object type the toolbar highlights: the Objects tab's category, or the kind of the open tab
+    /// (a table or design → Table, a view → View, a query → Query); none for other tabs (BI, Automation, …).
+    private var highlightedCategory: ObjectCategory? {
+        switch app.selectedTab {
+        case nil: app.objectCategory
+        case .table(let model): model.object.kind == .view ? .views : .tables
+        case .design: .tables
+        case .query: .queries
+        default: nil
+        }
+    }
+
     private func objectButton(_ category: ObjectCategory, _ title: String, _ icon: String) -> some View {
-        ChromeButton(title: title, isSelected: app.objectCategory == category, help: "Show \(category.rawValue)") {
+        ChromeButton(title: title, isSelected: highlightedCategory == category, help: "Show \(category.rawValue)") {
             app.showCategory(category)
         } glyph: {
             AppIcon(name: icon, size: 32)
