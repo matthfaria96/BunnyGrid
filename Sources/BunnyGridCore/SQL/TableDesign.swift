@@ -83,6 +83,7 @@ extension SQLDialect {
         case .sqlserver:
             ["int", "bigint", "smallint", "tinyint", "bit", "decimal(18,2)", "money", "float", "nvarchar(255)", "nvarchar(max)",
              "varchar(255)", "nchar(10)", "date", "datetime2(7)", "datetimeoffset(7)", "time(7)", "uniqueidentifier", "varbinary(max)", "xml"]
+        case .redis: []
         }
     }
 
@@ -145,6 +146,7 @@ extension SQLDialect {
         case .mysql, .mariadb, .sqlserver, .mongodb: "DROP INDEX \(quoteIdentifier(name)) ON \(qualifiedName(table: table, schema: schema))"
         case .postgresql: "DROP INDEX \(qualifiedName(table: name, schema: schema))"
         case .sqlite: "DROP INDEX \(quoteIdentifier(name))"
+        case .redis: ""
         }
     }
 
@@ -223,6 +225,7 @@ extension SQLDialect {
                 }
             case .sqlite:
                 throw TableDesignError.unsupported("SQLite can't change the type, NOT NULL or default of “\(column.name)”. Recreate the table to change it.")
+            case .redis: throw DatabaseError.unsupported("Tables")
             }
         }
 

@@ -271,6 +271,7 @@ extension ERModel {
             case "uuid": return "uniqueidentifier"
             default: return trimmed
             }
+        case .redis: return trimmed
         }
     }
 }

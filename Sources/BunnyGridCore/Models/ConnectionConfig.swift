@@ -7,6 +7,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
     case mysql
     case mariadb
     case sqlserver
+    case redis
     case mongodb
 
     public var id: String { rawValue }
@@ -18,6 +19,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .mysql: "MySQL"
         case .mariadb: "MariaDB"
         case .sqlserver: "SQL Server"
+        case .redis: "Redis"
         case .mongodb: "MongoDB"
         }
     }
@@ -28,6 +30,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .postgresql: 5432
         case .mysql, .mariadb: 3306
         case .sqlserver: 1433
+        case .redis: 6379
         case .mongodb: 27017
         }
     }
@@ -59,6 +62,8 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         }
     }
 
+    /// Key-value engines browse keys instead of tables (`KeyValueDatabaseDriver`).
+    public var isKeyValue: Bool { self == .redis }
     /// Document stores (MongoDB): collections of documents instead of SQL tables; the driver also
     /// implements `DocumentDatabaseDriver`.
     public var isDocumentStore: Bool { self == .mongodb }

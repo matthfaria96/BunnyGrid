@@ -433,6 +433,7 @@ struct DesignTableView: View {
                     Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
                     Toggle("WITHOUT ROWID", isOn: $model.sqliteOptions.withoutRowID).toggleStyle(.checkbox)
                 }
+            case .redis: EmptyView()
             case .mongodb:
                 EmptyView()
             }
@@ -633,6 +634,7 @@ private struct FieldProperties: View {
         switch model.kind {
         case .sqlite: ["Collate", "Not Null ON CONFLICT", "Generated Type", "Generated Value"]
         case .postgresql, .sqlserver: ["Comment", "Collation"]
+        case .redis: []
         case .mysql, .mariadb, .mongodb: ["Comment", "Character Set", "Collation"]
         }
     }

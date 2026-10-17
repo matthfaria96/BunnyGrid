@@ -846,13 +846,13 @@ final class GridHeaderCell: NSTableHeaderCell {
         var x = inset.minX
         let typeY = cellFrame.minY + 21
         if let symbol = NSImage(systemSymbolName: Self.symbolName(for: typeName), accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular).applying(.init(hierarchicalColor: .secondaryLabelColor))) {
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular).applying(.init(hierarchicalColor: .systemBlue))) {
             symbol.draw(in: NSRect(x: x, y: typeY + 1, width: 11, height: 11), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             x += 15
         }
         NSAttributedString(string: typeName, attributes: [
             .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .foregroundColor: NSColor.systemBlue,
         ]).draw(with: NSRect(x: x, y: typeY, width: inset.maxX - x - 10, height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 
@@ -866,7 +866,7 @@ final class GridHeaderCell: NSTableHeaderCell {
         if ["blob", "bytea", "binary", "image"].contains(where: t.contains) { return "doc" }
         if t.contains("uuid") { return "key" }
         if ["geometry", "point", "polygon", "geography"].contains(where: t.contains) { return "map" }
-        return "textformat"
+        return "textformat.abc"
     }
 }
 

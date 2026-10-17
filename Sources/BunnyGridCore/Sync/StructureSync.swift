@@ -144,6 +144,8 @@ public struct StructureComparison: Sendable {
         var keys: [String] = []
 
         switch target.kind {
+        case .redis:
+            throw DatabaseError.unsupported("Structure synchronization")
         case .sqlite:
             let addable = diff.addedColumns.allSatisfy { !$0.isPrimaryKey && ($0.nullable || !$0.defaultValue.trimmingCharacters(in: .whitespaces).isEmpty) }
             let needsRebuild = !diff.droppedColumns.isEmpty || !diff.changedColumns.isEmpty || diff.primaryKeyChanged || !addable

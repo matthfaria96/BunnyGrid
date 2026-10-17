@@ -39,7 +39,7 @@ public struct UserDraft: Sendable {
 
 /// Server users and roles (Navicat's "User" button). SQLite has none.
 extension SQLDialect {
-    public var supportsUsers: Bool { kind != .sqlite }
+    public var supportsUsers: Bool { kind != .sqlite && kind != .redis }
 
     public var listUsersSQL: String? {
         switch kind {
@@ -54,7 +54,7 @@ extension SQLDialect {
              WHERE p.type IN ('S', 'U', 'G', 'E', 'X') AND p.name NOT LIKE '##%'
              ORDER BY p.name
             """
-        case .sqlite: nil
+        case .sqlite, .redis: nil
         }
     }
 
@@ -123,7 +123,7 @@ extension SQLDialect {
             if draft.createDatabases { statements.append("ALTER SERVER ROLE [dbcreator] ADD MEMBER \(quoteIdentifier(name))") }
             if !draft.canLogin { statements.append("ALTER LOGIN \(quoteIdentifier(name)) DISABLE") }
             return statements
-        case .sqlite:
+        case .sqlite, .redis:
             throw DatabaseError.unsupported("Users")
         }
     }
@@ -153,6 +153,7 @@ extension SQLDialect {
               FROM information_schema.role_table_grants WHERE grantee = \(quoteLiteral(user.name))
              GROUP BY table_schema, table_name ORDER BY 1
             """
+        case .sqlite, .redis: nil
         case .mysql, .mariadb, .mongodb: "SHOW GRANTS FOR \(account(user.name, host: user.host))"
         case .sqlserver:
             """
@@ -164,7 +165,7 @@ extension SQLDialect {
               JOIN sys.server_principals u ON u.principal_id = p.grantee_principal_id WHERE u.name = \(quoteLiteral(user.name))
             ORDER BY 1, 2
             """
-        case .sqlite: nil
+        case .sqlite, .redis: nil
         }
     }
 
@@ -193,6 +194,7 @@ extension SQLDialect {
         case .sqlite:
             [("Indexes", "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index' ORDER BY tbl_name, name"),
              ("Triggers", "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY tbl_name, name")]
+        case .redis: []
         }
     }
 }

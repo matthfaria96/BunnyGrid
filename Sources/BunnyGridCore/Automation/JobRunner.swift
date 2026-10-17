@@ -172,6 +172,7 @@ public actor JobRunner {
         case .sqlserver: settings.target.schema ?? "dbo"
         case .mysql, .mariadb, .mongodb: settings.target.database
         case .sqlite: nil
+        case .redis: nil
         }
         let all = try await driver.listObjects(schema: listSchema).filter { $0.kind != .routine }
         let wanted = Set(settings.objects.map(\.name))
@@ -210,6 +211,7 @@ public actor JobRunner {
             case .sqlserver: target.schema ?? "dbo"
             case .mysql, .mariadb, .mongodb: target.database
             case .sqlite: nil
+            case .redis: nil
             }
         }
         let sourceSchema = schema(sourceConfig, settings.source)

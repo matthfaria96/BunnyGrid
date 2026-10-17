@@ -513,6 +513,8 @@ final class AssistantModel {
                 content = tab.attachmentText
             case .model(let model):
                 content = "ER model of \(model.displayName):\n" + model.generateSQL(for: model.kind, selectedOnly: false, includeDrop: false)
+            case .redis(let model):
+                content = "Redis \(model.kindName.lowercased()): \(model.title)\n\(model.statusText)"
             }
             attachments.removeAll { $0.kind == .tab && $0.name == tab.title }
             attachments.append(AIAttachment(kind: .tab, name: tab.title, content: content))

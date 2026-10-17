@@ -33,6 +33,7 @@ public enum ConnectionURI {
         case "mariadb": kind = .mariadb
         case "sqlite", "file": kind = .sqlite
         case "sqlserver", "mssql": kind = .sqlserver
+        case "redis", "rediss": kind = .redis
         default: throw ParseError.unsupportedScheme(scheme)
         }
 
@@ -74,6 +75,11 @@ public enum ConnectionURI {
         )
         if !files.isEmpty { config.ssl = files }
         config.socketPath = socketPath
+        if kind == .redis {
+            // rediss:// is Redis over TLS; the path is the database index.
+            config.tls = scheme == "rediss" ? .require : (query["ssl"].map(tlsMode) ?? .disable)
+            if let db = query["db"], !db.isEmpty { config.database = db }
+        }
         return Parsed(config: config, password: components.password?.removingPercentEncoding)
     }
 
@@ -99,6 +105,15 @@ public enum ConnectionURI {
         let postgres = config.kind == .postgresql
         var components = URLComponents()
         components.scheme = postgres ? "postgresql" : config.kind.rawValue
+        if config.kind == .redis {
+            components.scheme = config.tls.isEnforced ? "rediss" : "redis"
+            components.host = config.host
+            components.port = config.port
+            if !config.username.isEmpty { components.user = config.username }
+            if let password, !password.isEmpty { components.password = password }
+            components.path = config.database.isEmpty ? "" : "/" + config.database
+            return components.string ?? ""
+        }
         components.host = config.host
         components.port = config.port
         if !config.username.isEmpty { components.user = config.username }

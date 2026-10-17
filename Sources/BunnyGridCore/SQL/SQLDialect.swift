@@ -16,6 +16,7 @@ public struct SQLDialect: Sendable {
             "[" + name.replacingOccurrences(of: "]", with: "]]") + "]"
         case .postgresql, .sqlite, .mongodb:
             "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        case .redis: RedisCommandLine.quote(Data(name.utf8))
         }
     }
 
@@ -131,6 +132,7 @@ public struct SQLDialect: Sendable {
         return switch kind {
         case .sqlserver: Self.showplanPrefix + "\n" + statement
         case .sqlite: "EXPLAIN QUERY PLAN " + statement
+        case .redis: statement
         case .postgresql: "EXPLAIN (FORMAT JSON) " + statement
         case .mysql, .mariadb: "EXPLAIN FORMAT=JSON " + statement
         case .mongodb: statement

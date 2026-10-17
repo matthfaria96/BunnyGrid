@@ -81,6 +81,7 @@ final class TableDesignModel: Identifiable {
             let idType = switch context.kind {
             case .sqlite: "INTEGER"
             case .postgresql: "serial"
+            case .redis: ""
             case .mysql, .mariadb, .mongodb: "int"
             case .sqlserver: "int IDENTITY(1,1)"
             }
@@ -98,6 +99,7 @@ final class TableDesignModel: Identifiable {
         case .postgresql, .sqlserver: schema
         case .mysql, .mariadb, .mongodb: databaseName
         case .sqlite: nil
+        case .redis: nil
         }
     }
 
@@ -185,6 +187,7 @@ final class TableDesignModel: Identifiable {
                 .filter { !["information_schema", "performance_schema", "mysql", "sys"].contains($0) }
         case .sqlite:
             referenceSchemas = []
+        case .redis: referenceSchemas = []
         }
         await loadReferenceTables(schema: defaultReferenceSchema)
     }
@@ -210,6 +213,7 @@ final class TableDesignModel: Identifiable {
         case .mysql, .mariadb, .mongodb: "CREATE TRIGGER \(name) BEFORE INSERT ON \(table)\nFOR EACH ROW\nSET NEW.created_at = NOW()"
         case .postgresql: "CREATE TRIGGER \(name) BEFORE UPDATE ON \(table)\nFOR EACH ROW EXECUTE FUNCTION function_name()"
         case .sqlserver: "CREATE TRIGGER \(dialect.qualifiedName(table: name, schema: driverSchema)) ON \(table)\nAFTER UPDATE\nAS\nBEGIN\n  SET NOCOUNT ON;\n  -- statements\nEND"
+        case .redis: ""
         }
         newTriggers.append(template)
     }
@@ -275,6 +279,7 @@ final class TableDesignModel: Identifiable {
                         EXEC sys.sp_updateextendedproperty N'MS_Description', \(dialect.quoteLiteral(comment)), \(level) \
                         ELSE EXEC sys.sp_addextendedproperty N'MS_Description', \(dialect.quoteLiteral(comment)), \(level)
                         """)
+                case .redis: break
                 }
             }
             if (kind == .mysql || kind == .mariadb), !engine.isEmpty, engine != originalEngine {

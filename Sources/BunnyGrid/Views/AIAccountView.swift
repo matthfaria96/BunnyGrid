@@ -63,7 +63,7 @@ struct AccountBadge: View {
     var body: some View {
         @Bindable var app = app
         Button { app.showingAccountMenu.toggle() } label: {
-            ProfileAvatarWithPlatform(size: 30)
+            ProfileAvatarWithPlatform(size: 26)
                 .padding(3)
                 .glassBackground(in: Circle(), interactive: true)
                 .scaleEffect(isHovering ? 1.05 : 1)

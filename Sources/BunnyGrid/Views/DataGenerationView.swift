@@ -118,6 +118,7 @@ struct DataGenerationView: View {
         case .postgresql, .sqlserver: target.object.schema
         case .mysql, .mariadb, .mongodb: target.context.name
         case .sqlite: nil
+        case .redis: nil
         }
     }
 

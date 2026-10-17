@@ -25,6 +25,7 @@ extension SQLDialect {
              "DELETE FROM sqlite_sequence WHERE name = \(quoteLiteral(object.name))"]
         case .postgresql: ["TRUNCATE TABLE \(qualifiedName(object)) RESTART IDENTITY"]
         case .mysql, .mariadb, .sqlserver, .mongodb: ["TRUNCATE TABLE \(qualifiedName(object))"]
+        case .redis: []
         }
     }
 
@@ -40,6 +41,7 @@ extension SQLDialect {
         case .sqlserver:
             // sp_rename takes the new name bare: it stays in the object's schema.
             "EXEC sp_rename \(quoteLiteral(qualifiedName(object))), \(quoteLiteral(newName))"
+        case .redis: "RENAME \(object.name) \(newName)"
         }
     }
 
@@ -64,6 +66,7 @@ extension DatabaseDriver {
         let d = dialect
         var statements: [String]
         switch config.kind {
+        case .redis: throw DatabaseError.unsupported("Duplicating tables")
         case .postgresql:
             statements = ["CREATE TABLE \(d.qualifiedName(table: newName, schema: source.schema)) (LIKE \(d.qualifiedName(source)) INCLUDING ALL)"]
         case .mysql, .mariadb, .mongodb:

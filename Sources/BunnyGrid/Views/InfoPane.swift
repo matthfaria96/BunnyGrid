@@ -14,6 +14,8 @@ struct RightPane: View {
         case .table: panes += [.ddl, .field]
         case .query: panes += [.snippets, .identifiers]
         case .design: panes += [.ddl]
+        case .model: break
+        case .redis: break
         case .model, .document: break
         case nil: break
         }
@@ -324,6 +326,7 @@ private struct ObjectInfo: View {
         case .postgresql, .sqlserver: return object.schema
         case .mysql, .mariadb, .mongodb: return context.name
         case .sqlite: return nil
+        case .redis: return nil
         }
     }
 

@@ -48,6 +48,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
         case .postgresql: allCases
         case .mysql, .mariadb, .sqlserver: [.tables, .views, .functions, .queries, .backups]
         case .sqlite: [.tables, .views, .queries, .backups]
+        case .redis: []
         case .mongodb: [.tables, .views, .gridFS, .indexes, .queries]
         }
     }
@@ -56,6 +57,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
     static func toolbarCategories(for kind: DatabaseKind?) -> [ObjectCategory] {
         switch kind {
         case .sqlite: [.tables, .views, .indexes, .triggers]
+        case .redis: []
         case .postgresql: [.tables, .views, .materializedViews, .functions]
         default: [.tables, .views, .functions]
         }
@@ -74,9 +76,14 @@ enum NavNode: Hashable {
     case category(UUID, String, String?, ObjectCategory)
     case object(UUID, String, DatabaseObject)
     case savedQuery(UUID, String, UUID)
+    /// Redis key folder (database index, prefix with the trailing separator), key, and the Load More row.
+    case redisFolder(UUID, Int, String)
+    case redisKey(UUID, Int, String)
+    case redisMore(UUID, Int)
 
     var connectionID: UUID? {
         switch self {
+        case .redisFolder(let id, _, _), .redisKey(let id, _, _), .redisMore(let id, _): id
         case .connection(let id), .database(let id, _), .schema(let id, _, _),
              .category(let id, _, _, _), .object(let id, _, _), .savedQuery(let id, _, _): id
         default: nil
@@ -86,6 +93,7 @@ enum NavNode: Hashable {
     var databaseName: String? {
         switch self {
         case .database(_, let db), .schema(_, let db, _), .category(_, let db, _, _), .object(_, let db, _), .savedQuery(_, let db, _): db
+        case .redisFolder(_, let db, _), .redisKey(_, let db, _), .redisMore(_, let db): "db\(db)"
         default: nil
         }
     }
@@ -121,6 +129,8 @@ final class Session: Identifiable {
     private(set) var serverVersion = ""
     private(set) var databases: [String] = []
     private(set) var contexts: [String: DatabaseContext] = [:]
+    /// Key browser of a Redis connection (nil for SQL engines).
+    private(set) var redis: RedisBrowserModel?
     @ObservationIgnored var onQueryExecuted: ((QueryHistoryEntry) -> Void)?
 
     init(config: ConnectionConfig, keychain: KeychainStore) {
@@ -159,8 +169,11 @@ final class Session: Identifiable {
             try await Self.runInitialQueries(config, on: driver)
             serverVersion = (try? await driver.serverVersion()) ?? ""
             databases = config.kind == .sqlite ? ["main"] : try await driver.listDatabases()
+            if let kv = driver as? RedisDriver { redis = RedisBrowserModel(driver: kv, session: self); await redis?.refreshKeyspace() }
             state = .connected
-            if config.kind == .sqlite {
+            if config.kind.isKeyValue {
+                // Redis databases are opened by the key browser, not as SQL contexts.
+            } else if config.kind == .sqlite {
                 openDatabase("main")
             } else if !config.database.isEmpty, databases.contains(config.database) {
                 openDatabase(config.database)
@@ -196,6 +209,13 @@ final class Session: Identifiable {
 
     func context(_ name: String) -> DatabaseContext? { contexts[name] }
 
+    /// SQLite's "Attach Database…": ATTACH the file under `alias` and list it beside main.
+    func attachSQLiteDatabase(path: String, alias: String) async throws {
+        guard let sqlite = driver as? SQLiteDriver else { return }
+        try await sqlite.attach(path: path, as: alias)
+        databases = try await driver.listDatabases().filter { $0 != "temp" }
+    }
+
     /// A new, unconnected driver for `database`, for work that needs its own connection
     /// (a table tab's manual transaction, a query editor). On MySQL it connects with `database` as the
     /// default database, so unqualified names in the editor resolve there.
@@ -204,6 +224,7 @@ final class Session: Identifiable {
         switch config.kind {
         case .postgresql, .mysql, .mariadb, .sqlserver, .mongodb: databaseConfig.database = database
         case .sqlite: break
+        case .redis: break
         }
         return DriverFactory.make(config: databaseConfig, secrets: secrets)
     }
@@ -299,7 +320,9 @@ final class DatabaseContext: Identifiable {
         switch kind {
         case .postgresql, .sqlserver: schema
         case .mysql, .mariadb, .mongodb: name
-        case .sqlite: nil
+        // Attached SQLite databases are addressed as `alias.table`; main stays unqualified.
+        case .sqlite: name == "main" ? nil : name
+        case .redis: nil
         }
     }
 
@@ -379,10 +402,12 @@ enum WorkspaceTab: Identifiable {
     case query(QueryTabModel)
     case design(TableDesignModel)
     case model(ModelTabModel)
+    case redis(RedisTabModel)
     case document(any DocumentTab)
 
     var id: UUID {
         switch self {
+        case .redis(let model): model.id
         case .table(let model): model.id
         case .query(let model): model.id
         case .design(let model): model.id
@@ -398,6 +423,7 @@ enum WorkspaceTab: Identifiable {
         case .query(let model): "\(model.title)\(model.location)"
         case .design(let model): "\(model.displayName)\(model.location)"
         case .model(let model): "Model \(model.location)"
+        case .redis(let model): model.title
         case .document(let tab): tab.title
         }
     }
@@ -409,6 +435,7 @@ enum WorkspaceTab: Identifiable {
         case .query: "Query"
         case .design: "Table Design"
         case .model: "Model"
+        case .redis(let model): model.kindName
         case .document(let tab): tab.kindName
         }
     }
@@ -420,6 +447,7 @@ enum WorkspaceTab: Identifiable {
         case .query: "query"
         case .design: "table"
         case .model: "model"
+        case .redis(let model): model.iconName
         case .document(let tab): tab.systemImage
         }
     }
@@ -430,6 +458,7 @@ enum WorkspaceTab: Identifiable {
         case .query(let model): model.connectionID
         case .design(let model): model.connectionID
         case .model(let model): model.connectionID
+        case .redis(let model): model.connectionID
         case .document(let tab): tab.connectionID
         }
     }
@@ -441,6 +470,7 @@ enum WorkspaceTab: Identifiable {
         case .query(let model): model.isDirty && (model.savedQueryID != nil || (AppOptions.shared.values.askToSaveNewQueries && !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
         case .design(let model): model.hasChanges
         case .model: false
+        case .redis(let model): model.hasUnsavedChanges
         case .document(let tab): tab.hasUnsavedChanges
         }
     }
@@ -454,6 +484,7 @@ enum WorkspaceTab: Identifiable {
         case .query(let model): model.close()
         case .table(let model): model.abandonTransaction()
         case .design, .model: break
+        case .redis(let model): model.close()
         case .document(let tab): tab.cancel()
         }
     }

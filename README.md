@@ -1,7 +1,7 @@
 # BunnyGrid
 
 Cliente de bancos de dados nativo para macOS, em Swift e SwiftUI.
-Conecta em **SQLite, PostgreSQL, MySQL, MariaDB, SQL Server (e Azure SQL) e MongoDB**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
+Conecta em **SQLite, PostgreSQL, MySQL, MariaDB, SQL Server (e Azure SQL), MongoDB e Redis**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
 
 Referências:
 - **Beekeeper Studio**: arquitetura (contrato de driver, fluxo conexão → árvore → abas). Usado só como referência; nenhum código foi copiado (veja [Licenças](#licenças)).
@@ -102,18 +102,22 @@ docker rm -f bg-mssql
 
 `BUNNYGRID_MSSQL_HOST` e `BUNNYGRID_MSSQL_USER` (padrão `sa`) mudam o destino. O login precisa de CREATE DATABASE: cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MSSQL_PORT` esses testes são pulados; os testes do protocolo (`TDSProtocolTests`) rodam sempre, com bytes de exemplo.
 
-### Testes de integração com MongoDB
-
-Com um `mongod` acessível (ex.: `brew install mongodb-community`). No macOS o `--fork` não é aceito; rode em segundo plano:
+### Testes de integração com Redis
 
 ```sh
+redis-server --port 63791 --dir /tmp/bg-redis --requirepass segredo --daemonize yes
+BUNNYGRID_REDIS_PORT=63791 BUNNYGRID_REDIS_PASSWORD=segredo swift test --filter Redis
+redis-cli -p 63791 -a segredo shutdown nosave
+```
+
+Usa o db 9 e chaves `bunnygrid-test:*`. Opcionais: `BUNNYGRID_REDIS_TLS_PORT` + `BUNNYGRID_REDIS_TLS_CA` (e `_TLS_CERT` / `_TLS_KEY` para certificado de cliente) para um `redis-server --tls-port`, e `BUNNYGRID_REDIS_SOCKET` para socket Unix. O caminho do socket precisa ter menos de 104 caracteres (limite do macOS); um link simbólico curto para o socket serve. Com o módulo RedisJSON carregado (`--loadmodule …/rejson.so`, incluído no `redis` do Homebrew) o teste de JSON também roda.
+### Testes de integração com MongoDB
+Com um `mongod` acessível (ex.: `brew install mongodb-community`). No macOS o `--fork` não é aceito; rode em segundo plano:
 mongod --dbpath /tmp/bg-mongo --port 27071 --bind_ip 127.0.0.1 --logpath /tmp/bg-mongo.log &
 BUNNYGRID_MONGO_PORT=27071 swift test --filter Mongo
 # Com autenticação (mongod --auth e um usuário root em admin; opcionalmente outro criado com mechanisms: ["SCRAM-SHA-1"]):
 BUNNYGRID_MONGO_PORT=27071 BUNNYGRID_MONGO_USER=bunny BUNNYGRID_MONGO_PASSWORD=… \
   BUNNYGRID_MONGO_SHA1_USER=sha1user BUNNYGRID_MONGO_SHA1_PASSWORD=… swift test --filter Mongo
-```
-
 Cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MONGO_PORT` esses testes são pulados. No build de debug, com `--connect-first` numa conexão MongoDB: `--open-collection NOME [--mongo-view grid|tree|json] [--mongo-filter '{…}'] [--edit-document]` abre o visualizador de coleção e `--mongo-shell 'db.c.find()' [--explain]` abre uma aba de shell e executa.
 
 No build de debug, `--edit-connection` abre o editor da primeira conexão salva (`-connectionTab ssl|ssh|advanced` escolhe a aba) e `--test-connection` roda o Test Connection ao abrir.
@@ -124,7 +128,8 @@ No build de debug, `--edit-connection` abre o editor da primeira conexão salva 
 Sources/
   BunnyGridCore/          núcleo sem UI (testável)
     Models/               ConnectionConfig, objetos, colunas, CellValue, QueryResult
-    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO), SQL Server (cliente TDS próprio em `Drivers/TDS`), MongoDB (cliente próprio)
+    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO), SQL Server (cliente TDS próprio em `Drivers/TDS`), MongoDB (cliente próprio), Redis (RedisDriver)
+    Redis/                cliente RESP2/RESP3 próprio em SwiftNIO, parser de linha de comando (aspas do redis-cli), KeyValueDatabaseDriver, árvore de pastas das chaves, INFO/CLIENT LIST/SLOWLOG
     Mongo/                BSON, OP_MSG sobre SwiftNIO, SCRAM, mongodb+srv (dnssd), parser do shell, DocumentDatabaseDriver, achatamento para o grid
     SQL/                  SQLDialect (aspas, SELECT paginado, EXPLAIN), SQLSplitter (divide scripts, comando sob o cursor) e QueryPlan (árvore do plano)
     Network/              túnel SSH (Citadel), host keys, configuração SSL e endpoint (TCP, socket ou túnel) usado pelos drivers
@@ -136,6 +141,7 @@ Sources/
   BunnyGrid/              app SwiftUI
     App/                  BunnyGridApp, AppModel (conexões e sessões), Session (árvore e abas)
     Views/                janela, barra lateral, editor de conexão, abas de tabela e de consulta
+    Redis/                navegador de chaves, visualizador por tipo, Console, Server Monitor, New Key
     Components/           ResultGridView (NSTableView) e SQLEditorView (NSTextView)
 Tests/BunnyGridCoreTests  splitter, dialeto e driver SQLite
 Resources/Samples         demo.sqlite para testes manuais
@@ -222,8 +228,9 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - Agendamentos rodam com o app fechado: salvar um agendamento ativo grava `~/Library/LaunchAgents/app.bunnygrid.job.<id>.plist` (`StartCalendarInterval`) e carrega com `launchctl bootstrap`; desligar o agendamento ou apagar o job faz `bootout` e remove o plist. O launchd executa `BunnyGrid --run-job <id> --scheduled`, modo headless do mesmo executável: lê conexões, consultas e jobs da pasta de dados, as senhas do Keychain, conecta pelo mesmo caminho (SSH, SSL, socket, Initial Queries), grava a execução e notifica. `SMAppService.agent` não foi usado porque só registra plists fixos dentro do bundle, sem horário por job.
   - Para testar sem tocar em `~/Library/LaunchAgents`: `BUNNYGRID_LAUNCH_AGENTS_DIR=<pasta>` grava os plists ali e não chama o launchctl. Rodar um job à mão: `BUNNYGRID_DATA_DIR=<pasta> build/BunnyGrid.app/Contents/MacOS/BunnyGrid --run-job <id>` (saída 0 = sucesso, 1 = falhou, 2 = job não encontrado). Flag de debug: `-automationPane steps|schedule|history`.
 - **Menus**: File, View (painéis), Table, Favorites (em breve), Tools.
+- **Redis** (como o Navicat for Redis): conexão → db0…db15 com o número de chaves (`INFO keyspace`) → chaves agrupadas em pastas pelo separador (`:` por padrão; menu do banco › Key Separator), carregadas aos poucos com `SCAN` (nunca `KEYS`) e Load More Keys. Filtro por padrão `MATCH` e por tipo acima da busca. Visualizador por tipo: string em texto, JSON (Beautify/Minify/validação) ou hex, carregar e salvar arquivo; hash, list, set, sorted set e stream em tabela com adicionar, editar (inclusive score), remover e filtrar; JSON do RedisJSON; TTL (EXPIRE/PERSIST), renomear (`RENAMENX`) e excluir; tamanho e `MEMORY USAGE` no rodapé. **New Key** para os sete tipos, com TTL. **Console** com conexão própria, prompt com o banco, histórico (↑/↓), respostas coloridas no formato do redis-cli e várias linhas de uma vez. **Server Monitor** com versão, uptime, clientes, memória, ops/s e hit rate, todas as seções do INFO, CLIENT LIST e SLOWLOG, com atualização automática. Conecta com senha ou usuário ACL (`HELLO 3`, com volta ao RESP2 e `AUTH` em servidores antigos), SSL (Require/Verify, CA e certificado de cliente), socket Unix, túnel SSH e URI `redis://` / `rediss://`. Serviços na nuvem compatíveis com Redis (ElastiCache, Memorystore, Azure Cache, Garnet, Redis Enterprise Cloud, ApsaraDB, DCS, TencentDB) usam o mesmo driver. Flags de debug (com `--connect-first` numa conexão Redis): `--redis-expand db0,user:`, `--redis-key CHAVE`, `--redis-console [COMANDOS]`, `--redis-server`, `--redis-new-key`.
 
 ## Licenças
 
 - **Beekeeper Studio Community** é GPL-3 (e `src-commercial/` tem licença comercial). Copiar ou traduzir o código dele para Swift faz do BunnyGrid uma obra derivada sob GPL-3. Até que se decida isso, o Beekeeper serve só como referência de arquitetura e comportamento.
-- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O MongoDB não usa o MongoKitten: o cliente é próprio (BSON + OP_MSG + SCRAM, ~2 mil linhas), sem pacotes novos, testado contra o MongoDB 9.0 (wire version 29). O SQL Server também usa um cliente próprio (TDS 7.4 sobre SwiftNIO; só acrescenta o produto NIOTLS do swift-nio), testado contra o SQL Server 2022 (16.0).
+- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O cliente Redis é código próprio sobre SwiftNIO (o RediStack não foi usado: só fala RESP2). O MongoDB não usa o MongoKitten: o cliente é próprio (BSON + OP_MSG + SCRAM, ~2 mil linhas), sem pacotes novos, testado contra o MongoDB 9.0 (wire version 29). O SQL Server também usa um cliente próprio (TDS 7.4 sobre SwiftNIO; só acrescenta o produto NIOTLS do swift-nio), testado contra o SQL Server 2022 (16.0).

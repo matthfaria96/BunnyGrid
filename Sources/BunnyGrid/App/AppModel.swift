@@ -68,6 +68,9 @@ final class AppModel {
     var syncWizard: SyncWizardRequest?
     /// Server whose User manager sheet is open.
     var usersSession: Session?
+    /// Redis New Key sheet and key deletion waiting for confirmation (Redis/RedisNavigator.swift).
+    var redisNewKey: RedisNewKeyTarget?
+    var redisPendingDelete: RedisPendingDelete?
 
     // Navigator
     var navSelection: NavNode?
@@ -128,6 +131,7 @@ final class AppModel {
         for group in Set(connections.compactMap(\.group)) { expanded.insert(.group(group)) }
         assistant.app = self
         openLaunchArguments()
+        runRedisLaunchFlags()
         // Plain launches restore the last session (Options › Tabs / Auto Recovery); launches with files or flags don't.
         if CommandLine.arguments.dropFirst().allSatisfy({ $0.hasPrefix("-NS") || $0.hasPrefix("-Apple") }) {
             restoreWorkspaceIfNeeded()
@@ -359,6 +363,8 @@ final class AppModel {
         switch node {
         case .connection(let id):
             connect(id)
+        case .database(let id, let db) where sessions[id]?.redis != nil:
+            if let index = RedisBrowserModel.index(of: db) { sessions[id]?.redis?.open(index) }
         case .database(let id, let db):
             sessions[id]?.openDatabase(db)
         case .schema(let id, let db, let schema):
@@ -381,6 +387,8 @@ final class AppModel {
         case .object(let id, let db, let object):
             guard object.kind != .routine, let context = sessions[id]?.context(db) else { return }
             openTable(object, in: context)
+        case .redisFolder, .redisKey, .redisMore:
+            activateRedis(node)
         case .savedQuery(let id, let db, let queryID):
             guard let context = sessions[id]?.context(db), let saved = savedQueries.first(where: { $0.id == queryID }) else { return }
             openSavedQuery(saved, in: context)
@@ -538,6 +546,8 @@ final class AppModel {
             }
         case .model(let model):
             model.savePositions()
+        case .redis(let model):
+            if case .key(let key) = model.content, key.hasUnsavedText { Task { await key.saveText() } }
         case .document(let tab):
             tab.save()
         case nil:
@@ -551,6 +561,7 @@ final class AppModel {
         case .query(let model): !model.text.isEmpty
         case .design(let model): model.hasChanges
         case .model: false
+        case .redis(let model): model.hasUnsavedChanges
         case .document(let tab): tab.canSave
         case nil: false
         }

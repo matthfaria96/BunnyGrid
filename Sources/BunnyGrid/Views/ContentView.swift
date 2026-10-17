@@ -15,14 +15,14 @@ struct ContentView: View {
             HSplitView {
                 if app.showNavigator {
                     NavigatorView()
-                        .frame(minWidth: 200, idealWidth: 260, maxWidth: 480)
+                        .frame(minWidth: 200, idealWidth: 240, maxWidth: 480)
                 }
                 WorkspaceView()
-                    .frame(minWidth: 420, maxWidth: .infinity)
+                    .frame(minWidth: 360, maxWidth: .infinity)
                     .layoutPriority(1)
                 if app.showAssistant {
                     RightPane()
-                        .frame(minWidth: 260, idealWidth: app.assistant.isExpanded ? 560 : 290, maxWidth: app.assistant.isExpanded ? 900 : 520)
+                        .frame(minWidth: app.assistant.isExpanded ? 560 : 345, idealWidth: app.assistant.isExpanded ? 560 : 345, maxWidth: app.assistant.isExpanded ? 900 : 600)
                 }
             }
             Divider()
@@ -184,6 +184,7 @@ struct StatusBar: View {
             return ["Number of Fields: \(model.columns.count)"]
         case .model(let model):
             return [model.summary]
+        case .redis(let model): return [model.statusText].filter { !$0.isEmpty }
         case .document(let tab):
             return [tab.recordText]
         case nil:
@@ -204,6 +205,7 @@ struct StatusBar: View {
         case .query(let model): model.lastSQL
         case .design(let model): model.statements.joined(separator: "; ")
         case .model: ""
+        case .redis: ""
         case .document(let tab): tab.lastStatement
         case nil: ""
         }
@@ -215,6 +217,7 @@ struct StatusBar: View {
         case .query(let model): model.error
         case .design(let model): model.planError
         case .model(let model): model.error
+        case .redis(let model): model.error
         case .document(let tab): tab.warning
         case nil: nil
         }
@@ -226,6 +229,7 @@ struct StatusBar: View {
         case .query(let model): model.selectedResult.map { "\($0.rows.count.formatted()) records" } ?? ""
         case .design(let model): model.columns.count == 1 ? "1 field" : "\(model.columns.count) fields"
         case .model(let model): model.summary
+        case .redis(let model): model.statusText
         case .document(let tab): tab.recordText
         case nil: app.currentContext.map { "\($0.objects(in: app.currentSchema, category: app.objectCategory)?.count ?? 0) \(app.objectCategory.rawValue.lowercased())" } ?? ""
         }

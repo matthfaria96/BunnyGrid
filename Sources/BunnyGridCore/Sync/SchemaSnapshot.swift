@@ -125,6 +125,7 @@ public struct SchemaSnapshot: Hashable, Sendable {
                let result = try? await driver.executeStatement(sql) {
                 auto.formUnion(result.rows.compactMap { $0.first?.displayString })
             }
+        case .redis: break
         }
         return TableSchema(name: name, columns: columns, primaryKey: primaryKey,
                            primaryKeyName: dialect.kind == .sqlite ? nil : primaryIndex?.name,
@@ -155,6 +156,7 @@ extension SQLDialect {
     public var maxParameters: Int {
         switch kind {
         case .sqlite: 32_000
+        case .redis: 0
         case .postgresql, .mysql, .mariadb, .mongodb: 65_000
         // sp_executesql takes at most 2100 parameters, two of them its own.
         case .sqlserver: 2_000

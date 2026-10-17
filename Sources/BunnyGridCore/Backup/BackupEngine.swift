@@ -64,6 +64,7 @@ public enum BackupEngine {
         case .sqlserver: schema ?? "dbo"
         case .mysql, .mariadb, .mongodb: schema ?? database
         case .sqlite: nil
+        case .redis: nil
         }
         let manifestSchema = connection.kind.hasSchemas ? listSchema : nil
         await progress("Reading the object list…")

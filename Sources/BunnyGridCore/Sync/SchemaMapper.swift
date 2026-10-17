@@ -60,6 +60,8 @@ public enum SchemaMapper {
             return ["int", "bigint", "smallint", "tinyint", "bit", "decimal", "numeric", "money", "smallmoney", "float", "real",
                     "varchar", "nvarchar", "char", "nchar", "text", "ntext", "varbinary", "binary", "image", "date", "time",
                     "datetime", "datetime2", "smalldatetime", "datetimeoffset", "uniqueidentifier", "xml", "sql_variant"].contains(base)
+        case .redis:
+            return false
         }
     }
 
@@ -80,6 +82,7 @@ public enum SchemaMapper {
             case .uuid: return "uniqueidentifier"
             case .json, .text, .other: return isKey ? "nvarchar(450)" : "nvarchar(max)"
             }
+        case .redis: return "text"
         case .sqlite:
             switch category {
             case .integer, .boolean: return "INTEGER"
@@ -199,6 +202,8 @@ public enum SchemaMapper {
         case .sqlite:
             return "INTEGER"
         case .mysql, .mariadb, .mongodb, .sqlserver:
+            return type
+        case .redis:
             return type
         }
     }
