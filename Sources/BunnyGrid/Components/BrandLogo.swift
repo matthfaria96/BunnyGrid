@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// A product or company mark for the connection-type picker. Logos come from Simple Icons (CC0, see
-/// Resources/Icons/brands/SOURCES.md) and are tinted with the official brand colour. Brands whose owners
-/// don't allow free use of their logo get a text tile in the brand colour instead. Logos belong to their
+/// A product or company mark for the connection-type picker. Logos come from Simple Icons (CC0) or the
+/// owner's own published files (see Resources/Icons/brands/SOURCES.md) and are tinted with the official
+/// brand colour. Brands whose owners don't allow logo use in third-party software get a text tile instead. Logos belong to their
 /// owners and are shown only to identify the product.
 enum Brand: Hashable {
     /// `brands/brand-<slug>.svg`, single-colour, tinted with `hex`.
@@ -41,7 +41,7 @@ extension ConnectionFamily {
         case .mysql: .logo(slug: "mysql", hex: 0x4479A1)
         case .postgresql: .logo(slug: "postgresql", hex: 0x4169E1)
         case .sqlserver: .monogram(short: "SQL", long: "SQL Server", hex: 0xCC2927)
-        case .oracle: .monogram(short: "O", long: "ORACLE", hex: 0xF80000)
+        case .oracle: .monogram(short: "O", long: "ORACLE", hex: 0xC74634)
         case .sqlite: .logo(slug: "sqlite", hex: 0x003B57)
         case .mariadb: .logo(slug: "mariadb", hex: 0x003545)
         case .mongodb: .logo(slug: "mongodb", hex: 0x47A248)
@@ -58,12 +58,12 @@ extension ConnectionVendor {
         case .fujitsu: .logo(slug: "fujitsu", hex: 0xFF0000)
         case .google: .logo(slug: "googlecloud", hex: 0x4285F4)
         case .microsoft: .monogram(short: "Az", long: "Azure", hex: 0x0078D4)
-        case .oracle: .monogram(short: "O", long: "ORACLE", hex: 0xF80000)
+        case .oracle: .monogram(short: "O", long: "ORACLE", hex: 0xC74634)
         case .alibaba: .logo(slug: "alibabacloud", hex: 0xFF6A00)
-        case .highgo: .monogram(short: "HG", long: "HighGo", hex: 0xC8102E)
+        case .highgo: .monogram(short: "HG", long: "HighGo", hex: 0xEC6C00)
         case .huawei: .logo(slug: "huawei", hex: 0xFF0000)
-        case .kingbase: .monogram(short: "K", long: "Kingbase", hex: 0xE60012)
-        case .oceanbase: .monogram(short: "OB", long: "OceanBase", hex: 0x006AFF)
+        case .kingbase: .logo(slug: "kingbase", hex: 0xC9151E)
+        case .oceanbase: .logo(slug: "oceanbase", hex: 0x0096FE)
         case .pingcap: .logo(slug: "tidb", hex: 0xDC150B)
         case .tencent: .monogram(short: "TC", long: "Tencent Cloud", hex: 0x0052D9)
         }
@@ -74,8 +74,8 @@ extension ConnectionType {
     /// The main mark: the product's own logo when it has one, else the vendor's, else the engine's.
     var brand: Brand {
         switch id {
-        case "ivorysql": .monogram(short: "Iv", long: "IvorySQL", hex: 0xE8A33D)
-        case "ms-garnet": .monogram(short: "G", long: "Garnet", hex: 0xBF1A24)
+        case "ivorysql": .logo(slug: "ivorysql", hex: 0xFBAF42)
+        case "ms-garnet": .monogram(short: "G", long: "Garnet", hex: 0x7A060C)
         default: vendor?.brand ?? family?.brand ?? .monogram(short: "?", long: "?", hex: 0x8E8E93)
         }
     }

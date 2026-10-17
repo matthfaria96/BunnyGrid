@@ -16,6 +16,9 @@ let package = Package(
         .package(url: "https://github.com/Wellz26/swift-nio-ssh.git", "0.3.4" ..< "0.4.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.81.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.27.0"),
+        // Auto-updates (MIT). Linked always but inert unless the release sets SUFeedURL + SUPublicEDKey
+        // (scripts/release.sh, BUNNYGRID_SPARKLE_FEED_URL / BUNNYGRID_SPARKLE_PUBLIC_KEY).
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.0"),
     ],
     targets: [
         .target(
@@ -35,8 +38,14 @@ let package = Package(
         ),
         .executableTarget(
             name: "BunnyGrid",
-            dependencies: ["BunnyGridCore"],
-            resources: [.copy("Resources/Icons")]
+            dependencies: [
+                "BunnyGridCore",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
+            resources: [.copy("Resources/Icons")],
+            // Sparkle.framework is embedded in Contents/Frameworks (scripts/bundle.sh, scripts/release.sh);
+            // SwiftPM's own @loader_path rpath keeps `swift run` working from the build directory.
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
         .testTarget(
             name: "BunnyGridCoreTests",
