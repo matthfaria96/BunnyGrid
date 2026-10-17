@@ -48,6 +48,8 @@ struct ObjectsView: View {
                 ToolIcon("plus.circle", .green, "New Database", isEnabled: connectionSession?.config.kind != .sqlite) {
                     app.creatingDatabaseFor = connectionSession?.id
                 }
+            } else if category == .backups {
+                BackupToolbarItems(context: context, schema: schema)
             } else if category == .queries {
                 let selected = selectedSavedQuery
                 ToolIcon("folder", .blue, "Open Query", isEnabled: selected != nil) {
@@ -130,7 +132,7 @@ struct ObjectsView: View {
                 }
                 .width(90)
             }
-            .tableStyle(.inset(alternatesRowBackgrounds: false))
+            .tableStyle(.inset(alternatesRowBackgrounds: false)).environment(\.defaultMinListRowHeight, 19)
             .contextMenu(forSelectionType: String.self) { _ in } primaryAction: { ids in
                 selection = ids
                 openSelectedDatabases()
@@ -155,7 +157,7 @@ struct ObjectsView: View {
                         .font(.system(size: 11, design: .monospaced))
                 }
             }
-            .tableStyle(.inset(alternatesRowBackgrounds: false))
+            .tableStyle(.inset(alternatesRowBackgrounds: false)).environment(\.defaultMinListRowHeight, 19)
             .contextMenu(forSelectionType: UUID.self) { ids in
                 Button("Open Query") { openQueries(ids, queries: queries, in: context) }
                 Button("Delete Query", role: .destructive) { for id in ids { app.deleteSavedQuery(id) } }
@@ -170,8 +172,10 @@ struct ObjectsView: View {
         } else if let context, category == .indexes || category == .triggers {
             IndexTriggerList(context: context, category: category, search: search)
         } else if let context {
-            if category.objectKind == nil {
-                ContentUnavailableView("No \(category.rawValue)", systemImage: category.systemImage, description: Text("Backups are coming soon."))
+            if category == .backups {
+                BackupListView(context: context, schema: schema, search: search)
+            } else if category.objectKind == nil {
+                ContentUnavailableView("No \(category.rawValue)", systemImage: category.systemImage)
             } else if context.objects(in: schema) == nil {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                     .task { await context.loadObjects(schema: schema) }
@@ -229,7 +233,7 @@ struct ObjectsView: View {
                         Text(row.stats?.comment ?? "").foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
-                .tableStyle(.inset(alternatesRowBackgrounds: false))
+                .tableStyle(.inset(alternatesRowBackgrounds: false)).environment(\.defaultMinListRowHeight, 19)
                 .task(id: "\(context.session?.id.uuidString ?? "")/\(context.name)/\(schema ?? "")/\(category.rawValue)/\(statisticsVersion)") {
                     statistics = (try? await context.driver.tableStatistics(schema: context.usesSchemas ? schema : (context.kind == .sqlite ? nil : context.name))) ?? [:]
                 }
@@ -261,7 +265,7 @@ struct ObjectsView: View {
                 TableColumn("Created Date") { _ in Text("") }
                 TableColumn("Modified Date") { _ in Text("") }
             }
-            .tableStyle(.inset(alternatesRowBackgrounds: false))
+            .tableStyle(.inset(alternatesRowBackgrounds: false)).environment(\.defaultMinListRowHeight, 19)
         }
     }
 
@@ -293,7 +297,7 @@ struct ObjectsView: View {
             }
             .width(min: 60, ideal: 90)
         }
-        .tableStyle(.inset(alternatesRowBackgrounds: false))
+        .tableStyle(.inset(alternatesRowBackgrounds: false)).environment(\.defaultMinListRowHeight, 19)
         .task(id: "\(context.session?.id.uuidString ?? "")/\(context.name)/\(category.rawValue)/\(statisticsVersion)") {
             statistics = (try? await context.driver.tableStatistics(schema: nil)) ?? [:]
         }
@@ -443,7 +447,7 @@ private struct IndexTriggerList: View {
                 .width(min: 70, ideal: 100)
             TableColumn(category == .indexes ? "Fields" : "Events") { entry in Text(entry.extra).foregroundStyle(.secondary).lineLimit(1) }
         }
-        .tableStyle(.inset(alternatesRowBackgrounds: false))
+        .tableStyle(.inset(alternatesRowBackgrounds: false)).environment(\.defaultMinListRowHeight, 19)
         .overlay {
             if loaded && shown.isEmpty {
                 Text(search.isEmpty ? "No \(category.rawValue.lowercased())" : "No matches").foregroundStyle(.tertiary)

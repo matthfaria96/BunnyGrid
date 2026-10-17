@@ -335,9 +335,9 @@ private struct SyntaxColorGroup: View {
             Text("Syntax Colors").font(.system(size: 11)).foregroundStyle(.secondary)
             HStack(spacing: 18) {
                 swatch("Common", \.common, .labelColor)
-                swatch("Keyword", \.keyword, .systemPink)
+                swatch("Keyword", \.keyword, .navicatKeyword)
                 swatch("Comment", \.comment, .secondaryLabelColor)
-                swatch("String", \.string, .systemRed)
+                swatch("String", \.string, .navicatString)
                 swatch("Number", \.number, .systemBlue)
                 swatch("Background", \.background, .textBackgroundColor)
             }

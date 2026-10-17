@@ -22,15 +22,15 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 | ✅ 0.3 | Estrutura | Designer de tabela (ALTER), índices, chaves estrangeiras, DDL (`getTableCreateScript`) | `alterTableSql` |
 | 0.9 | Import/Export | Importar Excel (.xlsx) e XML, exportar XML/HTML/Markdown, agendar exportações, streaming para tabelas grandes | Navicat Import/Export Wizard |
 | 0.5 | Mais bancos | SQL Server (FreeTDS), Redis (RediStack), MongoDB (MongoKitten) | Navicat §2 |
-| 0.6 | Transferência | Data Transfer entre bancos, comparação e sincronização de estrutura e de dados | Navicat Structure/Data Sync |
+| ✅ 0.9 | Transferência | Data Transfer entre SQLite/PostgreSQL/MySQL (ou para .sql) com tradução de tipos, lotes tipados, progresso e Stop; Structure Synchronization (diff + script de deploy); Data Synchronization (inserções/atualizações/exclusões em transação) | Navicat Structure/Data Sync |
 | ✅ 0.7 | Modelagem | Diagrama ER (engenharia reversa), modelo → SQL | Navicat Modeling |
-| 0.8 | Automação | Jobs agendados (SMAppService + launchd), backup | Navicat Automation |
+| ✅ 0.9 | Automação | Backup por banco/schema (.bgbackup comprimido, restaurar no mesmo ou em outro banco, Extract SQL, cópia de arquivo SQLite); batch jobs com passos (consulta salva, SQL, arquivo .sql, backup, exportação, Data Transfer), agendamento (uma vez, hora, dia, semana, mês, cron) por launch agents em `~/Library/LaunchAgents`, runner headless `--run-job`, histórico com log e notificações | Navicat Automation / Backup |
 | depois | BI e IA | Gráficos com Swift Charts, perfil de dados, assistente de SQL com a Claude API | Navicat BI / AI Assistant |
 
 ## Débitos técnicos conhecidos
 
 - O AI Assistant não foi testado contra a API real nesta máquina (sem chave); o protocolo está coberto por testes unitários.
-- Automation, BI e Create BI Workspace aparecem na interface, mas ainda mostram "em breve". Model já funciona (diagrama ER, layout salvo, PNG/PDF e Generate SQL); falta sincronizar modelo → banco e editar o modelo (só leitura, por enquanto), e as linhas que pulam uma camada podem cruzar cartões no meio. User (PostgreSQL/MySQL), Others, Export Wizard, Dump SQL e as ações de tabela (excluir, esvaziar, truncar, renomear, duplicar) já funcionam.
+- BI e Create BI Workspace aparecem na interface, mas ainda mostram "em breve". Model já funciona (diagrama ER, layout salvo, PNG/PDF e Generate SQL); falta sincronizar modelo → banco e editar o modelo (só leitura, por enquanto), e as linhas que pulam uma camada podem cruzar cartões no meio. User (PostgreSQL/MySQL), Others, Export Wizard, Dump SQL e as ações de tabela (excluir, esvaziar, truncar, renomear, duplicar) já funcionam.
 
 - Edições vão como parâmetros tipados escolhidos pelo tipo da coluna (inteiro, double, booleano, bytes, data/hora, NULL). Tipos que o app não modela (numeric, arrays, enums, geometria, intervalos) seguem como texto sem tipo declarado e o banco converte, como faria com um literal. Os três motores têm teste de integração do binding.
 - No PostgreSQL, uma linha cuja chave primária é um `timestamp` com frações de segundo não pode ser editada: o valor chega ao grid sem as frações e o WHERE não acha a linha.
@@ -50,3 +50,6 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 - A host key desconhecida é aceita e gravada sem perguntar (TOFU); o fingerprint aparece na aba SSH e no Test Connection, e uma chave diferente bloqueia a conexão até "Forget Host Key". Falta um diálogo de confirmação na primeira conexão.
 - Quando a sessão SSH cai, as conexões abertas por ela falham; o próximo connect abre outro túnel, mas não há reconexão automática.
 - Builds de desenvolvimento são assinados ad hoc: a cada rebuild o macOS pode pedir de novo acesso às senhas no Keychain. Com assinatura Developer ID isso não acontece.
+- Transferência e sincronização: o Data Sync lê as duas tabelas inteiras e o Data Transfer pagina com OFFSET; falta cursor no servidor para tabelas grandes. Views só são comparadas entre motores iguais; CHECK, triggers, sequências, funções e comentários não entram no diff. Os testes do MySQL (`SyncIntegrationTests.swift`) ainda não rodaram contra um servidor real; os do PostgreSQL rodam.
+- Automação: a janela Automation é uma janela própria, não uma aba do espaço de trabalho. Jobs têm passo de Data Transfer, mas ainda não de Data Sync / Structure Sync. O launch agent aponta para o executável no lugar em que estava quando o agendamento foi salvo: mover o app exige salvar o job de novo. Em builds assinados ad hoc o runner headless pode não conseguir ler as senhas do Keychain sem um aviso (que o launchd não mostra); conexões SQLite não precisam. Notificações só saem do app empacotado (`scripts/bundle.sh`).
+- Backup e restauração carregam o script inteiro na memória. Um backup de schema do PostgreSQL usa nomes qualificados pelo schema, então restaura em outro banco com o mesmo schema (criado se não for `public`), não em outro schema. Funções, tipos e extensões não entram no backup (como no Dump SQL).

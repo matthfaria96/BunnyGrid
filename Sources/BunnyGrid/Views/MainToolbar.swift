@@ -6,19 +6,13 @@ import SwiftUI
 /// a title row beside the traffic lights, then the icon toolbar with View and the account on the right.
 struct MainToolbar: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("BunnyGrid")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 84)
-                Spacer()
-            }
-            .frame(height: 28)
+            WindowTitleRow()
 
-            HStack(alignment: .top, spacing: 0) {
+            HStack(alignment: .top, spacing: 1) {
                 Menu {
                     ForEach(DatabaseKind.allCases) { kind in
                         Button(kind.displayName + "…") { app.newConnection(kind: kind) }
@@ -78,7 +72,9 @@ struct MainToolbar: View {
                 }
                 objectButton(.queries, "Query", "query")
                 objectButton(.backups, "Backup", "backup")
-                ChromeButton(title: "Automation", comingSoon: "Batch jobs that run queries, exports and backups on a schedule.") {} glyph: {
+                ChromeButton(title: "Automation", help: "Batch jobs that run queries, exports and backups on a schedule") {
+                    openWindow(id: "automation")
+                } glyph: {
                     AppIcon(name: "automation", size: 32)
                 }
                 let modelContext = app.currentContext?.isOpen == true ? app.currentContext : nil
@@ -95,10 +91,12 @@ struct MainToolbar: View {
 
                 ViewControl()
                 AccountBadge()
-                    .padding(.leading, 12)
-                    .padding(.top, 2)
+                    .padding(.leading, 16)
+                    .padding(.top, -2)
             }
-            .padding(.horizontal, 10)
+            .padding(.leading, 4)
+            .padding(.trailing, 10)
+            .padding(.top, 3)
             .padding(.bottom, 4)
         }
         .background(ChromeBackground())
@@ -134,36 +132,49 @@ private struct WindowDragModifier: ViewModifier {
     }
 }
 
-/// Icon over label, with Navicat's rounded highlight for the selected object type.
+/// Icon over label. The selected object type sits in a rounded box that holds both, as in Navicat;
+/// in a background window the icons lose their color like the rest of the chrome.
 private struct ChromeLabel<Glyph: View>: View {
     let title: String
     var isSelected = false
     var isEnabled = true
     var isHovering = false
     @ViewBuilder let glyph: () -> Glyph
+    @Environment(\.controlActiveState) private var activeState
+
+    private var isKey: Bool { activeState != .inactive }
 
     var body: some View {
         VStack(spacing: 2) {
             glyph()
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background {
-                    if isSelected {
-                        // The selected object type sits on a pane of glass, as in Navicat on macOS 26+.
-                        Color.clear.glassBackground(in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    } else if isHovering {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(0.07))
-                    }
-                }
+                .saturation(isKey ? 1 : 0)
+                .opacity(isKey ? 1 : 0.7)
             Text(title)
                 .font(.system(size: 11))
-                .foregroundStyle(isSelected ? Color.accentColor : (isEnabled ? Color.secondary : Color.secondary.opacity(0.5)))
+                .foregroundStyle(labelStyle)
                 .lineLimit(1)
                 .fixedSize()
         }
-        .frame(minWidth: 52)
-        .padding(.horizontal, 3)
+        .padding(.horizontal, 10)
+        .padding(.top, 3)
+        .padding(.bottom, 2)
+        .frame(minWidth: 56)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(isSelected ? 0.1 : (isHovering ? 0.05 : 0)))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(isSelected ? 0.1 : 0), lineWidth: 1)
+                }
+        }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
         .contentShape(Rectangle())
+    }
+
+    private var labelStyle: HierarchicalShapeStyle {
+        if !isEnabled { return .tertiary }
+        if isSelected { return .primary }
+        return isKey ? .primary : .secondary
     }
 }
 
@@ -195,30 +206,62 @@ private struct ChromeButton<Glyph: View>: View {
 /// "View": a capsule with the left (navigation) and right (info) pane toggles.
 private struct ViewControl: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 3) {
             HStack(spacing: 0) {
                 toggle("sidebar.left", isOn: app.showNavigator, help: "Show/Hide Navigation Pane (⌥⌘1)") { app.showNavigator.toggle() }
-                Divider().frame(height: 16)
+                Rectangle().fill(Color.primary.opacity(0.22)).frame(width: 1, height: 16)
                 toggle("sidebar.right", isOn: app.showAssistant, help: "Show/Hide Information Pane (⌥⌘2)") { app.showAssistant.toggle() }
             }
             .padding(.horizontal, 4)
             .frame(height: 32)
             .glassBackground(in: Capsule(), interactive: true)
-            Text("View").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text("View")
+                .font(.system(size: 11))
+                .foregroundStyle(activeState == .inactive ? .secondary : .primary)
         }
     }
 
     private func toggle(_ symbol: String, isOn: Bool, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            withAnimation(.smooth(duration: 0.25)) { action() }
+        } label: {
             Image(systemName: symbol)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
-                .frame(width: 34, height: 26)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                .frame(width: 40, height: 26)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+}
+
+/// The title row beside the traffic lights: the open tab's icon and title ("customers@main (My Server)"), as Navicat
+/// titles its window, or the app name on the Objects tab.
+private struct WindowTitleRow: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.controlActiveState) private var activeState
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let tab = app.selectedTab {
+                AppIcon(name: tab.systemImage, size: 15)
+                    .saturation(activeState == .inactive ? 0 : 1)
+                    .opacity(activeState == .inactive ? 0.6 : 1)
+                Text(tab.title)
+            } else {
+                Text("BunnyGrid")
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 13, weight: .bold))
+        .foregroundStyle(activeState == .inactive ? .tertiary : .secondary)
+        .lineLimit(1)
+        .padding(.leading, 82)
+        .padding(.trailing, 16)
+        .frame(height: 28)
     }
 }

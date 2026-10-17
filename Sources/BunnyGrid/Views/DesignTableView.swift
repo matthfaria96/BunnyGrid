@@ -5,6 +5,21 @@ import SwiftUI
 struct DesignTableView: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: TableDesignModel
+    @State private var triggerAdvanced = false
+
+    /// A Navicat sub-tab chip (Definition / Advanced).
+    private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 4).fill(selected ? Color.accentColor : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +42,7 @@ struct DesignTableView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .alternatingRowBackgrounds(.disabled)
             if let error = model.planError, model.section != .sqlPreview {
                 Divider()
                 Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -60,7 +76,7 @@ struct DesignTableView: View {
                 ToolIconButton(systemImage: "arrow.left.circle", help: "Insert Field") { model.insertField() }
                 ToolIconButton(systemImage: "minus.circle", help: "Delete Field", tint: .red) { model.deleteField() }
                     .disabled(model.selection == nil)
-                ToolIconButton(systemImage: "key", help: "Primary Key", tint: .yellow) { model.togglePrimaryKey() }
+                ToolIconButton(systemImage: "key", help: "Primary Key") { model.togglePrimaryKey() }
                     .disabled(model.selection == nil)
             case .indexes, .uniques:
                 ToolIconButton(systemImage: "plus.circle", help: model.section == .uniques ? "Add Unique" : "Add Index", tint: .green) {
@@ -85,23 +101,27 @@ struct DesignTableView: View {
                 EmptyView()
             }
             Spacer()
-            HStack(spacing: 6) {
-                Text("Table name").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize()
-                TextField("new_table", text: $model.tableName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
+            // Navicat renames tables from the navigator; only a new table needs its name here.
+            if model.isNew {
+                HStack(spacing: 6) {
+                    Text("Table Name:").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize()
+                    TextField("new_table", text: $model.tableName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 180)
+                }
             }
             if model.isSaving || model.isLoading { ProgressView().controlSize(.small) }
             Divider().frame(height: 16).padding(.horizontal, 6)
-            ToolIconButton(systemImage: "arrow.up.left.and.arrow.down.right", help: "Enter Focus Mode", isOn: app.isFocusMode) { app.toggleFocusMode() }
+            ToolIconButton(systemImage: "viewfinder", help: "Enter Focus Mode", isOn: app.isFocusMode) { app.toggleFocusMode() }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 36)
+        .padding(.horizontal, 12)
+        .frame(height: 38)
     }
 
     private var sectionBar: some View {
-        HStack(spacing: 4) {
-            ForEach(TableDesignModel.Section.allCases, id: \.self) { section in
+        HStack(spacing: 0) {
+            ForEach(Array(TableDesignModel.Section.allCases.enumerated()), id: \.element) { offset, section in
+                if offset > 0 { Spacer(minLength: 4) }
                 Button {
                     model.section = section
                 } label: {
@@ -109,16 +129,15 @@ struct DesignTableView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(model.section == section ? Color.white : Color.primary)
                         .padding(.horizontal, 9)
-                        .padding(.vertical, 3)
-                        .background(RoundedRectangle(cornerRadius: 5).fill(model.section == section ? Color.accentColor.opacity(0.85) : .clear))
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(model.section == section ? Color.accentColor : .clear))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
-            Spacer()
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 4)
+        .frame(height: 32)
     }
 
     // MARK: Foreign Keys
@@ -252,11 +271,6 @@ struct DesignTableView: View {
             }
             .width(50)
         }
-        .overlay {
-            if model.foreignKeyDesigns.isEmpty {
-                Text("No foreign keys. Use Add Foreign Key to create one.").foregroundStyle(.tertiary)
-            }
-        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if model.kind == .sqlite, !model.isNew, model.foreignKeysChanged {
                 Label("SQLite can't alter foreign keys in place: saving rebuilds the table (new table, copy rows, drop, rename) and recreates its indexes and triggers. See SQL Preview.",
@@ -297,11 +311,14 @@ struct DesignTableView: View {
                 .menuStyle(.button)
                 .buttonStyle(.plain)
             }
-        }
-        .overlay {
-            if !model.indexDesigns.contains(where: { $0.unique && !model.isPrimaryIndex($0) }) {
-                Text("No unique constraints. Use Add Unique to create one.").foregroundStyle(.tertiary)
+            TableColumn("ON CONFLICT") { _ in
+                HStack {
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                }
+                .help("ON CONFLICT clauses aren't supported by the designer yet")
             }
+            .width(min: 80, ideal: 110)
         }
     }
 
@@ -323,8 +340,23 @@ struct DesignTableView: View {
             }
             .frame(minHeight: 120)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Definition").font(.system(size: 12, weight: .semibold))
-                if let name = model.triggerSelection, let trigger = model.triggers.first(where: { $0.name == name }) {
+                HStack(spacing: 8) {
+                    Spacer()
+                    chip("Definition", selected: !triggerAdvanced) { triggerAdvanced = false }
+                    chip("Advanced", selected: triggerAdvanced) { triggerAdvanced = true }
+                    Spacer()
+                }
+                .frame(height: 30)
+                Divider().padding(.horizontal, -10)
+                if triggerAdvanced, let name = model.triggerSelection, let trigger = model.triggers.first(where: { $0.name == name }) {
+                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 8) {
+                        GridRow { Text("Fires:").gridColumnAlignment(.trailing); Text(trigger.timing) }
+                        GridRow { Text("Events:"); Text(trigger.events.joined(separator: ", ")) }
+                    }
+                    .font(.system(size: 12))
+                    .padding(.top, 8)
+                }
+                if !triggerAdvanced, let name = model.triggerSelection, let trigger = model.triggers.first(where: { $0.name == name }) {
                     ScrollView {
                         Text(SQLSyntax.highlight(trigger.definition))
                             .font(.system(size: 12, design: .monospaced))
@@ -381,12 +413,19 @@ struct DesignTableView: View {
                     TextField("", text: $model.comment).frame(width: 360)
                 }
             case .sqlite:
+                // Shown as in Navicat; the designer keeps these as they are in the stored CREATE TABLE.
                 GridRow {
-                    Text("Table Options:").gridColumnAlignment(.trailing)
-                    Text("SQLite tables have no comment or engine. WITHOUT ROWID and STRICT are set in CREATE TABLE (see the DDL pane).")
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(width: 360, alignment: .leading)
+                    Text("Primary Key ON CONFLICT:").gridColumnAlignment(.trailing)
+                    Picker("", selection: .constant("")) { Text("").tag("") }
+                        .labelsHidden().frame(width: 250).disabled(true)
+                }
+                GridRow {
+                    Text("Auto Increment:")
+                    TextField("", text: .constant(""), prompt: Text("-1")).frame(width: 250).disabled(true)
+                }
+                GridRow {
+                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    Toggle("WITHOUT ROWID", isOn: .constant(false)).toggleStyle(.checkbox).disabled(true)
                 }
             }
         }
@@ -406,6 +445,19 @@ struct DesignTableView: View {
         )
     }
 
+    /// Type, Size and Scale edit one type string (`numeric(10,2)`), as Navicat's columns do.
+    private func typePart(_ id: ColumnDesign.ID, _ keyPath: WritableKeyPath<SQLTypeParts, String>) -> Binding<String> {
+        let type = binding(id, \.type)
+        return Binding(
+            get: { SQLTypeParts(type.wrappedValue)[keyPath: keyPath] },
+            set: { value in
+                var parts = SQLTypeParts(type.wrappedValue)
+                parts[keyPath: keyPath] = value.filter { keyPath == \SQLTypeParts.base || $0.isNumber }
+                type.wrappedValue = parts.type
+            }
+        )
+    }
+
     private var fields: some View {
         Table(model.columns, selection: $model.selection) {
             TableColumn("Name") { column in
@@ -414,15 +466,16 @@ struct DesignTableView: View {
             .width(min: 120, ideal: 180)
             TableColumn("Type") { column in
                 HStack(spacing: 2) {
-                    TextField("", text: binding(column.id, \.type))
+                    TextField("", text: typePart(column.id, \.base))
                         .textFieldStyle(.plain)
                         .font(.system(size: 12, design: .monospaced))
                     Menu {
                         ForEach(model.dialect.suggestedTypes, id: \.self) { type in
                             Button(type) { binding(column.id, \.type).wrappedValue = type }
+
                         }
                     } label: {
-                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
                     }
                     .menuStyle(.button)
                     .buttonStyle(.plain)
@@ -430,7 +483,15 @@ struct DesignTableView: View {
                     .fixedSize()
                 }
             }
-            .width(min: 120, ideal: 170)
+            .width(min: 110, ideal: 140)
+            TableColumn("Size") { column in
+                TextField("", text: typePart(column.id, \.size)).textFieldStyle(.plain).monospacedDigit()
+            }
+            .width(min: 36, ideal: 48)
+            TableColumn("Scale") { column in
+                TextField("", text: typePart(column.id, \.scale)).textFieldStyle(.plain).monospacedDigit()
+            }
+            .width(min: 36, ideal: 48)
             TableColumn("Not Null") { column in
                 Toggle("", isOn: Binding(
                     get: { !binding(column.id, \.nullable).wrappedValue },
@@ -439,25 +500,20 @@ struct DesignTableView: View {
                 .toggleStyle(.checkbox)
                 .labelsHidden()
             }
-            .width(64)
+            .width(56)
             TableColumn("Key") { column in
                 Button {
                     model.selection = column.id
                     model.togglePrimaryKey()
                 } label: {
-                    Image(systemName: column.isPrimaryKey ? "key.fill" : "key")
-                        .foregroundStyle(column.isPrimaryKey ? .yellow : Color.secondary.opacity(0.4))
+                    Image(systemName: "key.fill")
+                        .foregroundStyle(column.isPrimaryKey ? Color.yellow : Color.clear)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(column.isPrimaryKey ? "Primary key" : "Make primary key")
             }
-            .width(40)
-            TableColumn("Default") { column in
-                TextField("", text: binding(column.id, \.defaultValue))
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, design: .monospaced))
-            }
-            .width(min: 100, ideal: 160)
+            .width(60)
             TableColumn("") { column in
                 if column.originalName == nil {
                     Text("new").font(.system(size: 10)).foregroundStyle(.green)
@@ -525,11 +581,6 @@ struct DesignTableView: View {
             }
             .width(80)
         }
-        .overlay {
-            if model.indexDesigns.isEmpty {
-                Text("No indexes. Use Add Index to create one.").foregroundStyle(.tertiary)
-            }
-        }
     }
 
     // MARK: SQL Preview
@@ -541,12 +592,24 @@ struct DesignTableView: View {
         } else if model.statements.isEmpty {
             ContentUnavailableView("No Changes", systemImage: "checkmark.circle", description: Text("The design matches the table in the database."))
         } else {
-            ScrollView {
-                Text(SQLSyntax.highlight(model.statements.map { $0 + ";" }.joined(separator: "\n\n")))
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
+            VStack(spacing: 0) {
+                ScrollView {
+                    Text(SQLSyntax.highlight(model.statements.map { $0 + ";" }.joined(separator: "\n\n")))
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+                .background(Color(nsColor: .textBackgroundColor))
+                Divider()
+                HStack {
+                    Picker("", selection: .constant("save")) { Text("SQL Preview for \"Save\"").tag("save") }
+                        .labelsHidden()
+                        .fixedSize()
+                    Spacer()
+                }
+                .padding(.horizontal, 18)
+                .frame(height: 56)
             }
         }
     }
@@ -558,6 +621,14 @@ private struct FieldProperties: View {
 
     private var index: Int? { model.selection.flatMap { id in model.columns.firstIndex { $0.id == id } } }
 
+    private var inertProperties: [String] {
+        switch model.kind {
+        case .sqlite: ["Collate", "Not Null ON CONFLICT", "Generated Type", "Generated Value"]
+        case .postgresql: ["Comment", "Collation"]
+        case .mysql, .mariadb: ["Comment", "Character Set", "Collation"]
+        }
+    }
+
     var body: some View {
         Group {
             if let index {
@@ -568,25 +639,22 @@ private struct FieldProperties: View {
                             .font(.system(size: 12, design: .monospaced))
                             .frame(width: 280)
                     }
-                    GridRow {
-                        Text("Not Null:")
-                        Toggle("", isOn: Binding(get: { !model.columns[index].nullable }, set: { model.columns[index].nullable = !$0 }))
-                            .toggleStyle(.checkbox).labelsHidden()
-                    }
-                    GridRow {
-                        Text("Primary Key:")
-                        Toggle("", isOn: Binding(get: { model.columns[index].isPrimaryKey }, set: { value in
-                            model.columns[index].isPrimaryKey = value
-                            if value { model.columns[index].nullable = false }
-                        }))
-                        .toggleStyle(.checkbox).labelsHidden()
+                    // Navicat's other field properties; the designer doesn't write them yet, so they stay inert.
+                    ForEach(inertProperties, id: \.self) { title in
+                        GridRow {
+                            Text(title + ":")
+                            TextField("", text: .constant(""))
+                                .frame(width: 280)
+                                .disabled(true)
+                                .help("Not supported by the designer yet")
+                        }
                     }
                 }
                 .textFieldStyle(.roundedBorder)
-                .padding(.vertical, 14)
-                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
-                Text("Select a field to edit its properties.").foregroundStyle(.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                Color.clear
             }
         }
         .font(.system(size: 12))
