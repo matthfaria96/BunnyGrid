@@ -413,21 +413,29 @@ struct DesignTableView: View {
                     TextField("", text: $model.comment).frame(width: 360)
                 }
             case .sqlite:
-                // Shown as in Navicat; the designer keeps these as they are in the stored CREATE TABLE.
+                // Changing these rebuilds the table (see SQL Preview).
                 GridRow {
                     Text("Primary Key ON CONFLICT:").gridColumnAlignment(.trailing)
-                    Picker("", selection: .constant("")) { Text("").tag("") }
-                        .labelsHidden().frame(width: 250).disabled(true)
+                    Picker("", selection: $model.sqliteOptions.primaryKeyOnConflict) {
+                        Text("").tag(String?.none)
+                        ForEach(SQLiteTableOptions.conflictResolutions, id: \.self) { Text($0).tag(Optional($0)) }
+                    }
+                    .labelsHidden().frame(width: 250)
                 }
                 GridRow {
                     Text("Auto Increment:")
-                    TextField("", text: .constant(""), prompt: Text("-1")).frame(width: 250).disabled(true)
+                    Toggle("AUTOINCREMENT", isOn: $model.sqliteOptions.autoincrement)
+                        .toggleStyle(.checkbox)
+                        .disabled(model.sqliteOptions.withoutRowID)
+                        .help("Only applies to a single INTEGER primary key of a rowid table")
                 }
                 GridRow {
                     Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-                    Toggle("WITHOUT ROWID", isOn: .constant(false)).toggleStyle(.checkbox).disabled(true)
+                    Toggle("WITHOUT ROWID", isOn: $model.sqliteOptions.withoutRowID).toggleStyle(.checkbox)
                 }
             case .redis: EmptyView()
+            case .mongodb:
+                EmptyView()
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -626,8 +634,8 @@ private struct FieldProperties: View {
         switch model.kind {
         case .sqlite: ["Collate", "Not Null ON CONFLICT", "Generated Type", "Generated Value"]
         case .postgresql: ["Comment", "Collation"]
-        case .mysql, .mariadb: ["Comment", "Character Set", "Collation"]
         case .redis: []
+        case .mysql, .mariadb, .mongodb: ["Comment", "Character Set", "Collation"]
         }
     }
 

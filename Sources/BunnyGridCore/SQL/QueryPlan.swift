@@ -44,6 +44,10 @@ public enum QueryPlan {
             guard result.columns.count == 1, result.rows.count == 1, let cell = result.rows.first?.first, !cell.isNull else { return nil }
             return kind == .postgresql ? postgresJSON(cell.displayString) : mysqlJSON(cell.displayString)
         case .redis: return nil
+        case .mongodb:
+            guard result.columns == ["explain"], let text = result.rows.first?.first?.displayString,
+                  let document = try? MongoShellParser.parseDocument(text) else { return nil }
+            return MongoExplain.plan(document)
         }
     }
 

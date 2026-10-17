@@ -108,7 +108,7 @@ extension AppModel {
             return
         }
         let model = RedisKeyModel(database: database, key: key, driver: browser.driver, browser: browser)
-        openTab(.redis(RedisTabModel(content: .key(model), session: session)))
+        appendTab(.redis(RedisTabModel(content: .key(model), session: session)))
     }
 
     /// Console tab with its own connection, starting on `database`.
@@ -116,7 +116,7 @@ extension AppModel {
         guard let session = sessions[connectionID], let driver = session.makeDedicatedDriver(database: "") as? RedisDriver else { return }
         let start = database ?? redisSelection?.database ?? driver.defaultDatabase
         let model = RedisConsoleModel(driver: driver, database: start)
-        openTab(.redis(RedisTabModel(content: .console(model), session: session)))
+        appendTab(.redis(RedisTabModel(content: .console(model), session: session)))
     }
 
     func openRedisServerMonitor(connectionID: UUID) {
@@ -127,7 +127,7 @@ extension AppModel {
             selectedTabID = existing.id
             return
         }
-        openTab(.redis(RedisTabModel(content: .server(RedisServerModel(driver: browser.driver)), session: session)))
+        appendTab(.redis(RedisTabModel(content: .server(RedisServerModel(driver: browser.driver)), session: session)))
     }
 
     func deleteRedisKeys(_ keys: [String], database: Int, connectionID: UUID) {

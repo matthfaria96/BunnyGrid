@@ -181,6 +181,8 @@ extension ERModel {
         let precision = ["timestamp", "time"].contains(kind) ? params : ""
 
         switch target {
+        case .mongodb:
+            return trimmed
         case .sqlite:
             switch kind {
             case "int", "bigint", "smallint", "bool": return "INTEGER"

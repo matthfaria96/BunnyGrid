@@ -51,7 +51,7 @@ public enum SchemaMapper {
             return ["integer", "bigint", "smallint", "boolean", "real", "double precision", "numeric", "varchar", "char", "text",
                     "bytea", "date", "time", "timestamp", "timestamptz", "uuid", "json", "jsonb", "bit", "inet", "cidr",
                     "macaddr", "interval", "xml"].contains(base)
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             return ["int", "bigint", "smallint", "mediumint", "tinyint", "double", "float", "decimal", "varchar", "char", "text",
                     "longtext", "mediumtext", "longblob", "blob", "date", "time", "datetime", "timestamp", "json", "bit", "year"].contains(base)
         case .sqlite:
@@ -73,7 +73,7 @@ public enum SchemaMapper {
             case .binary: return "BLOB"
             default: return "TEXT"
             }
-        case .postgresql, .mysql, .mariadb:
+        case .postgresql, .mysql, .mariadb, .mongodb:
             switch category {
             case .integer: return "bigint"
             case .real: return pg ? "double precision" : "double"
@@ -183,7 +183,7 @@ public enum SchemaMapper {
             return "serial"
         case .sqlite:
             return "INTEGER"
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             return type
         case .redis:
             return type

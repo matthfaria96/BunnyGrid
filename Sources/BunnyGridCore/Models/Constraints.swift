@@ -61,7 +61,7 @@ extension SQLDialect {
         switch kind {
         case .sqlite: throw TableDesignError.invalid("SQLite can't drop a foreign key from an existing table.")
         case .redis: throw DatabaseError.unsupported("Foreign keys")
-        case .mysql, .mariadb: return "ALTER TABLE \(qualifiedName(table: table, schema: schema)) DROP FOREIGN KEY \(quoteIdentifier(name))"
+        case .mysql, .mariadb, .mongodb: return "ALTER TABLE \(qualifiedName(table: table, schema: schema)) DROP FOREIGN KEY \(quoteIdentifier(name))"
         case .postgresql: return "ALTER TABLE \(qualifiedName(table: table, schema: schema)) DROP CONSTRAINT \(quoteIdentifier(name))"
         }
     }
@@ -69,7 +69,7 @@ extension SQLDialect {
     public func dropTrigger(named name: String, table: String, schema: String?) -> String {
         switch kind {
         case .postgresql: "DROP TRIGGER \(quoteIdentifier(name)) ON \(qualifiedName(table: table, schema: schema))"
-        case .mysql, .mariadb: "DROP TRIGGER \(qualifiedName(table: name, schema: schema))"
+        case .mysql, .mariadb, .mongodb: "DROP TRIGGER \(qualifiedName(table: name, schema: schema))"
         case .sqlite: "DROP TRIGGER \(quoteIdentifier(name))"
         case .redis: ""
         }

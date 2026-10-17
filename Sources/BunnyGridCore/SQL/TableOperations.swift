@@ -24,14 +24,14 @@ extension SQLDialect {
             ["DELETE FROM \(qualifiedName(object))",
              "DELETE FROM sqlite_sequence WHERE name = \(quoteLiteral(object.name))"]
         case .postgresql: ["TRUNCATE TABLE \(qualifiedName(object)) RESTART IDENTITY"]
-        case .mysql, .mariadb: ["TRUNCATE TABLE \(qualifiedName(object))"]
         case .redis: []
+        case .mysql, .mariadb, .mongodb: ["TRUNCATE TABLE \(qualifiedName(object))"]
         }
     }
 
     public func renameObject(_ object: DatabaseObject, to newName: String) -> String {
         switch kind {
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             "RENAME TABLE \(qualifiedName(object)) TO \(qualifiedName(table: newName, schema: object.schema))"
         case .postgresql:
             // PostgreSQL keeps the schema; the new name is unqualified.
@@ -66,7 +66,7 @@ extension DatabaseDriver {
         case .redis: throw DatabaseError.unsupported("Duplicating tables")
         case .postgresql:
             statements = ["CREATE TABLE \(d.qualifiedName(table: newName, schema: source.schema)) (LIKE \(d.qualifiedName(source)) INCLUDING ALL)"]
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             statements = ["CREATE TABLE \(d.qualifiedName(table: newName, schema: source.schema)) LIKE \(d.qualifiedName(source))"]
         case .sqlite:
             // Rebuilt from the catalog; SQLite index names are global, so they get the new table's prefix.

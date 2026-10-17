@@ -185,6 +185,8 @@ struct StatusBar: View {
         case .model(let model):
             return [model.summary]
         case .redis(let model): return [model.statusText].filter { !$0.isEmpty }
+        case .document(let tab):
+            return [tab.recordText]
         case nil:
             return []
         }
@@ -204,6 +206,7 @@ struct StatusBar: View {
         case .design(let model): model.statements.joined(separator: "; ")
         case .model: ""
         case .redis: ""
+        case .document(let tab): tab.lastStatement
         case nil: ""
         }
     }
@@ -215,6 +218,7 @@ struct StatusBar: View {
         case .design(let model): model.planError
         case .model(let model): model.error
         case .redis(let model): model.error
+        case .document(let tab): tab.warning
         case nil: nil
         }
     }
@@ -226,6 +230,7 @@ struct StatusBar: View {
         case .design(let model): model.columns.count == 1 ? "1 field" : "\(model.columns.count) fields"
         case .model(let model): model.summary
         case .redis(let model): model.statusText
+        case .document(let tab): tab.recordText
         case nil: app.currentContext.map { "\($0.objects(in: app.currentSchema, category: app.objectCategory)?.count ?? 0) \(app.objectCategory.rawValue.lowercased())" } ?? ""
         }
     }

@@ -115,7 +115,7 @@ public struct SchemaSnapshot: Hashable, Sendable {
                key.dataType.trimmingCharacters(in: .whitespaces).uppercased() == "INTEGER" {
                 auto.insert(key.name)
             }
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             if let sql = dialect.autoIncrementColumnsQuery(table: name, schema: schema ?? driver.config.database),
                let result = try? await driver.executeStatement(sql) {
                 auto.formUnion(result.rows.compactMap { $0.first?.displayString })
@@ -151,8 +151,8 @@ extension SQLDialect {
     public var maxParameters: Int {
         switch kind {
         case .sqlite: 32_000
-        case .postgresql, .mysql, .mariadb: 65_000
         case .redis: 0
+        case .postgresql, .mysql, .mariadb, .mongodb: 65_000
         }
     }
 

@@ -1,7 +1,7 @@
 # BunnyGrid
 
 Cliente de bancos de dados nativo para macOS, em Swift e SwiftUI.
-Conecta em **SQLite, PostgreSQL, MySQL, MariaDB e Redis**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
+Conecta em **SQLite, PostgreSQL, MySQL, MariaDB, MongoDB e Redis**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
 
 Referências:
 - **Beekeeper Studio**: arquitetura (contrato de driver, fluxo conexão → árvore → abas). Usado só como referência; nenhum código foi copiado (veja [Licenças](#licenças)).
@@ -67,7 +67,26 @@ BUNNYGRID_MYSQL_PORT=3306 BUNNYGRID_MYSQL_USER=root BUNNYGRID_MYSQL_PASSWORD=…
 # MariaDB: acrescente BUNNYGRID_MYSQL_KIND=mariadb
 ```
 
-O usuário precisa de CREATE/DROP DATABASE: cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MYSQL_PORT` esses testes são pulados.
+O usuário precisa de CREATE/DROP DATABASE e CREATE USER: cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MYSQL_PORT` esses testes são pulados.
+
+Um MySQL descartável do Homebrew (`brew install mysql`), sem mexer no `my.cnf` nem nos dados do sistema (`--no-defaults`; dados, socket, pid, log e certificados ficam numa pasta só):
+
+```sh
+scripts/test-servers/mysql.sh start /tmp/bg-mysql   # inicializa na primeira vez, porta 33071 (BUNNYGRID_MYSQL_PORT muda)
+eval "$(scripts/test-servers/mysql.sh env /tmp/bg-mysql)"
+swift test --filter MySQL
+scripts/test-servers/mysql.sh stop /tmp/bg-mysql
+```
+
+O script cria uma CA e certificados de servidor e de cliente, sobe o servidor com SSL (sem `require_secure_transport`, para testar com e sem SSL) e os usuários `bunny` / `bunnypass`, `certuser` (`REQUIRE X509`) e `nopass` (sem senha, útil para abrir o app sem Keychain). O `env` exporta também `BUNNYGRID_MYSQL_SSL_CA`, `_SSL_CERT`, `_SSL_KEY`, `_SSL_USER` e `BUNNYGRID_MYSQL_SOCKET`; se o caminho do socket passar do limite de 104 bytes, ele fica num link curto em `$TMPDIR`. Para o caso do túnel, acrescente `BUNNYGRID_SSH_PORT`, `_USER` e `_KEYS` (um `sshd -f <config>` do usuário com a chave `user_ecdsa` serve).
+
+MariaDB pelo Docker (colima):
+
+```sh
+docker run -d --name bg-mariadb -p 127.0.0.1:33081:3306 -e MARIADB_ROOT_PASSWORD=bunnypass mariadb:11
+BUNNYGRID_MYSQL_KIND=mariadb BUNNYGRID_MYSQL_PORT=33081 BUNNYGRID_MYSQL_USER=root BUNNYGRID_MYSQL_PASSWORD=bunnypass swift test --filter MySQL
+docker rm -f bg-mariadb
+```
 
 Os testes de SSL, socket e túnel SSH (`ConnectivityIntegrationTests.swift`) usam outras variáveis: `BUNNYGRID_TLS_PG_PORT`, `BUNNYGRID_TLS_PG_USER` e `BUNNYGRID_TLS_PG_CERTS` (PostgreSQL com `ssl = on` e uma CA própria), `BUNNYGRID_PG_SOCKET_DIR`, e `BUNNYGRID_SSH_PORT`, `BUNNYGRID_SSH_USER` e `BUNNYGRID_SSH_KEYS` (um `sshd` com chaves de teste). O comentário no topo do arquivo descreve os arquivos esperados. Com o Remote Login desligado, um `sshd -D -f <config>` do próprio usuário numa porta alta serve.
 
@@ -80,6 +99,14 @@ redis-cli -p 63791 -a segredo shutdown nosave
 ```
 
 Usa o db 9 e chaves `bunnygrid-test:*`. Opcionais: `BUNNYGRID_REDIS_TLS_PORT` + `BUNNYGRID_REDIS_TLS_CA` (e `_TLS_CERT` / `_TLS_KEY` para certificado de cliente) para um `redis-server --tls-port`, e `BUNNYGRID_REDIS_SOCKET` para socket Unix. O caminho do socket precisa ter menos de 104 caracteres (limite do macOS); um link simbólico curto para o socket serve. Com o módulo RedisJSON carregado (`--loadmodule …/rejson.so`, incluído no `redis` do Homebrew) o teste de JSON também roda.
+### Testes de integração com MongoDB
+Com um `mongod` acessível (ex.: `brew install mongodb-community`). No macOS o `--fork` não é aceito; rode em segundo plano:
+mongod --dbpath /tmp/bg-mongo --port 27071 --bind_ip 127.0.0.1 --logpath /tmp/bg-mongo.log &
+BUNNYGRID_MONGO_PORT=27071 swift test --filter Mongo
+# Com autenticação (mongod --auth e um usuário root em admin; opcionalmente outro criado com mechanisms: ["SCRAM-SHA-1"]):
+BUNNYGRID_MONGO_PORT=27071 BUNNYGRID_MONGO_USER=bunny BUNNYGRID_MONGO_PASSWORD=… \
+  BUNNYGRID_MONGO_SHA1_USER=sha1user BUNNYGRID_MONGO_SHA1_PASSWORD=… swift test --filter Mongo
+Cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MONGO_PORT` esses testes são pulados. No build de debug, com `--connect-first` numa conexão MongoDB: `--open-collection NOME [--mongo-view grid|tree|json] [--mongo-filter '{…}'] [--edit-document]` abre o visualizador de coleção e `--mongo-shell 'db.c.find()' [--explain]` abre uma aba de shell e executa.
 
 No build de debug, `--edit-connection` abre o editor da primeira conexão salva (`-connectionTab ssl|ssh|advanced` escolhe a aba) e `--test-connection` roda o Test Connection ao abrir.
 
@@ -89,8 +116,9 @@ No build de debug, `--edit-connection` abre o editor da primeira conexão salva 
 Sources/
   BunnyGridCore/          núcleo sem UI (testável)
     Models/               ConnectionConfig, objetos, colunas, CellValue, QueryResult
-    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO), Redis (RedisDriver)
+    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO), MongoDB (cliente próprio), Redis (RedisDriver)
     Redis/                cliente RESP2/RESP3 próprio em SwiftNIO, parser de linha de comando (aspas do redis-cli), KeyValueDatabaseDriver, árvore de pastas das chaves, INFO/CLIENT LIST/SLOWLOG
+    Mongo/                BSON, OP_MSG sobre SwiftNIO, SCRAM, mongodb+srv (dnssd), parser do shell, DocumentDatabaseDriver, achatamento para o grid
     SQL/                  SQLDialect (aspas, SELECT paginado, EXPLAIN), SQLSplitter (divide scripts, comando sob o cursor) e QueryPlan (árvore do plano)
     Network/              túnel SSH (Citadel), host keys, configuração SSL e endpoint (TCP, socket ou túnel) usado pelos drivers
     Transfer/             zip e Excel (.xlsx), leitura de JSON para importar, execução de scripts .sql com progresso
@@ -173,6 +201,10 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - **Fix with AI** e **Ask AI** (explicar o erro) aparecem quando uma consulta falha, usando a instrução que falhou e a mensagem do banco.
   - **Opções** (Settings › AI Assistant): por plataforma, Max Tokens, Effort (Low/Medium/High; os modelos atuais não aceitam temperature) e Instruction; Action for Enter key, Enable Compare with Other Assistants e Show AI features.
 - **Model** (barra principal ou "Reverse Database to Model" no menu de contexto do banco/schema): aba com o diagrama ER do banco ou schema, lido do catálogo (tabelas, colunas, chaves primárias e estrangeiras). Layout automático em camadas (tabelas referenciadas à esquerda, relacionadas próximas), arrastar cartões, zoom (⌘+ / ⌘-, pinça, ajustar), clicar destaca as relações; linhas com pés de galinha (1:N, 1:1, opcional). As posições ficam em `model-layouts.json` por conexão, banco e schema. Exporta PNG/PDF e **Generate SQL** gera CREATE TABLE + chaves estrangeiras para SQLite, PostgreSQL, MySQL ou MariaDB (com tradução de tipos), para copiar, salvar ou abrir numa consulta. Flags de debug: `--open-model`, `--model-select TABELA`, `--model-export arquivo.png|pdf`, `--model-sql`.
+- **MongoDB** (cliente próprio em Swift sobre SwiftNIO, sem dependências novas): BSON completo (inclusive Decimal128), OP_MSG, `hello`, SCRAM-SHA-256 e SCRAM-SHA-1, TLS pela aba SSL, túnel SSH e socket pelo mesmo `ConnectionEndpoint`, `mongodb://` com vários hosts (conecta no primário do replica set) e `mongodb+srv://` (registros SRV/TXT via dnssd, TLS ligado). New Connection com MongoDB e MongoDB Atlas; o formulário ganha Connection Type (Standalone/Replica Set ou SRV), outros hosts, Replica Set, Auth Database e Auth Mechanism, e New Connection with URI aceita `mongodb://` e `mongodb+srv://`.
+  - **Navegação**: conexão → bancos → Collections / Views / GridFS / Indexes / Queries. O driver implementa `DatabaseDriver` (coleções como tabelas com a união das chaves de primeiro nível, aninhados como JSON) e `DocumentDatabaseDriver` (find, aggregate, insert, update, delete, runCommand, explain, índices, `$collStats`). Os drivers SQL não mudaram.
+  - **Visualizador de coleção**: Grid View (cabeçalho com o tipo BSON de cada campo), Tree View e JSON View; barra Filter / Sort / Projection com a sintaxe do shell; paginação com o total; clicar no cabeçalho ordena; edições de célula pendentes com Apply/Discard (`$set` por `_id`, preservando o tipo do campo); Add / Edit / Duplicate / Delete abrem um editor JSON com Beautify e Validate (`ObjectId("…")`, `ISODate("…")`, `NumberLong`…); Import (JSON, JSON Lines, CSV) e Export (JSON em Extended JSON relaxado, JSON Lines, CSV); estatísticas (documentos, tamanho, índices); GridFS: Save File remonta o arquivo dos chunks.
+  - **Shell** (New Query numa conexão MongoDB): `db.coll.find({…}).sort({…}).skip(n).limit(n)`, `findOne`, `aggregate([…])`, `countDocuments`, `estimatedDocumentCount`, `distinct`, `insertOne/Many`, `updateOne/Many`, `replaceOne`, `deleteOne/Many`, `createIndex`, `dropIndex`, `getIndexes`, `drop`, `stats`, `renameCollection`, `db.runCommand`, `db.adminCommand`, `db.createCollection`, `db.createView`, `show dbs|collections|users`, `use`, `db.getSiblingDB(…)`, `db.getCollection(…)`. O parser aceita chaves sem aspas, aspas simples, vírgula final, comentários, regex `/…/i`, `ObjectId`, `ISODate`, `new Date`, `NumberLong`, `NumberInt`, `NumberDecimal`, `Timestamp`, `BinData`, `UUID`, `MinKey/MaxKey` e Extended JSON. Um resultado por comando, em Grid/Tree/JSON; **Explain** mostra a árvore do plano vencedor (COLLSCAN, IXSCAN, FETCH… com nReturned e documentos examinados); **Stop** acha a operação pelo `comment` e roda `killOp` por uma segunda conexão.
 - **Backup** (botão Backup da barra principal, pasta Backups da aba Objects ou Tools › New Backup…): backup do banco ou schema com comentário, escolha de objetos, estrutura e/ou dados; no SQLite também cópia do arquivo inteiro pela API `sqlite3_backup`. A lista mostra data, tamanho, objetos, linhas, tipo e comentário; **Restore** no mesmo banco ou em outro banco aberto do mesmo motor (Drop existing, Continue on error, transação única, com progresso e erros), **Extract SQL** para um .sql, editar comentário, mostrar no Finder, apagar (vai para o Lixo).
   - Formato `.bgbackup` (versão 1): `BGBACKUP` + versão (UInt32 LE) + tamanho do manifesto (UInt32 LE) + manifesto JSON (conexão, banco, schema, data, comentário, objetos, linhas) + o script SQL (ou o arquivo SQLite) comprimido em DEFLATE puro (`COMPRESSION_ZLIB` da Apple; `zlib.decompress(dados, -15)` no Python). O script vem do Dump SQL, com DROP … IF EXISTS e INSERTs de 100 linhas.
 - **Automation** (botão Automation, Tools › Automation ⇧⌘J): janela com os batch jobs. Cada job tem passos em ordem (Run Saved Query, Run SQL, Execute SQL File, Backup, Export com as opções do Export Wizard e pasta de saída, opcionalmente datada, Data Transfer entre duas conexões), "continuar quando um passo falha", agendamento (manual, uma vez, de hora em hora, diário, semanal, mensal ou cron de 5 campos com as próximas 5 execuções), notificações de sucesso e falha, e o histórico com status, duração e log de cada execução. Start roda na hora, dentro do app.
@@ -184,4 +216,4 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
 ## Licenças
 
 - **Beekeeper Studio Community** é GPL-3 (e `src-commercial/` tem licença comercial). Copiar ou traduzir o código dele para Swift faz do BunnyGrid uma obra derivada sob GPL-3. Até que se decida isso, o Beekeeper serve só como referência de arquitetura e comportamento.
-- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O cliente Redis é código próprio sobre SwiftNIO (o RediStack não foi usado: só fala RESP2).
+- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O cliente Redis é código próprio sobre SwiftNIO (o RediStack não foi usado: só fala RESP2). O MongoDB não usa o MongoKitten: o cliente é próprio (BSON + OP_MSG + SCRAM, ~2 mil linhas), sem pacotes novos, testado contra o MongoDB 9.0 (wire version 29).

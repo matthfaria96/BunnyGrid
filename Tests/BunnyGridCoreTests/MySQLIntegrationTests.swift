@@ -137,7 +137,7 @@ struct MySQLIntegrationTests {
             _ = try await driver.execute("""
                 CREATE TABLE t (i bigint, u bigint unsigned, n decimal(8,3), f double, b tinyint(1), s varchar(20), tx text,
                                 d date, dt datetime, dt6 datetime(6), tm time, y year, j json, raw varbinary(8), bits bit(8),
-                                e enum('a','b'), empty varchar(5));
+                                e enum('a','b'), nothing varchar(5));
                 INSERT INTO t VALUES (42, 18446744073709551615, 12.345, 1.5, 1, 'olá', 'long text', '2024-02-29', '2024-02-29 13:45:00',
                   '2024-02-29 13:45:00.120000', '-838:59:59', 2024, '{"a": 1}', X'0102FF', b'00000101', 'b', NULL);
                 """)
@@ -184,6 +184,32 @@ struct MySQLIntegrationTests {
         }
     }
 
+    @Test func emptyResultsKeepColumnNames() async throws {
+        try await withDatabase { driver, db in
+            _ = try await driver.executeStatement("CREATE TABLE t (id int PRIMARY KEY, label varchar(10))")
+            let empty = try await driver.executeStatement("SELECT id, label AS name FROM t WHERE id > 5")
+            #expect(empty.columns == ["id", "name"])
+            #expect(empty.rows.isEmpty)
+            #expect(empty.affectedRows == nil, "a result set, not a row count")
+            #expect(try await driver.fetchPage(table: "t", schema: db, offset: 0, limit: 10).columns == ["id", "label"])
+            let update = try await driver.executeStatement("UPDATE t SET label = 'x' WHERE id = 1")
+            #expect(update.columns.isEmpty)
+            #expect(update.affectedRows == 0)
+        }
+    }
+
+    @Test func parameterErrorsShowTheServerMessage() async throws {
+        try await withDatabase { driver, _ in
+            do {
+                _ = try await driver.executeStatement("SELECT * FROM missing WHERE id = ?", parameters: [.integer(1)])
+                Issue.record("expected an error")
+            } catch {
+                #expect(error.localizedDescription.contains("missing"))
+                #expect(!error.localizedDescription.contains("MySQL error"))
+            }
+        }
+    }
+
     @Test func unpreparableStatementsFallBackToTextProtocol() async throws {
         try await withDatabase { driver, db in
             _ = try await driver.executeStatement("CREATE TABLE t (id int PRIMARY KEY)")
@@ -200,7 +226,7 @@ struct MySQLIntegrationTests {
 
     @Test func gridChangesCommitAndRollBack() async throws {
         try await withDatabase { driver, db in
-            _ = try await driver.executeStatement("CREATE TABLE items (id int AUTO_INCREMENT PRIMARY KEY, name varchar(20) NOT NULL, qty int DEFAULT 7) ENGINE=InnoDB")
+            _ = try await driver.executeStatement("CREATE TABLE items (id int AUTO_INCREMENT PRIMARY KEY, name varchar(20) NOT NULL DEFAULT '', qty int DEFAULT 7) ENGINE=InnoDB")
             try await driver.applyChanges([
                 .insert(values: [ColumnValue("name", .text("a"))]),
                 .insert(values: [ColumnValue("name", .text("b")), ColumnValue("qty", .text("3"))]),
@@ -275,6 +301,43 @@ struct MySQLIntegrationTests {
         }
     }
 
+    /// MODIFY COLUMN rewrites the whole definition: string defaults must come back quoted, and AUTO_INCREMENT,
+    /// ON UPDATE and comments must be repeated or the server drops them.
+    @Test func designerModifyKeepsDefaultsAndAttributes() async throws {
+        try await withDatabase { driver, db in
+            let dialect = driver.dialect
+            _ = try await driver.executeStatement("""
+                CREATE TABLE t (id int NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT 'the key',
+                                label varchar(20) DEFAULT 'it''s', plain varchar(5), touched datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                                qty int NOT NULL DEFAULT 3) ENGINE=InnoDB
+                """)
+            let before = try await driver.listColumns(table: "t", schema: db)
+            #expect(before[1].defaultValue == "'it''s'")
+            #expect(before[2].defaultValue == nil)
+            #expect(before[4].defaultValue == "3")
+            #expect(try dialect.alterTable(name: "t", schema: db, original: before, design: before.map(ColumnDesign.init)).isEmpty)
+
+            var design = before.map(ColumnDesign.init)
+            design[0].type = "bigint"
+            design[1].type = "varchar(40)"
+            design[2].type = "varchar(10)"
+            design[3].nullable = false
+            design[4].type = "bigint"
+            for statement in try dialect.alterTable(name: "t", schema: db, original: before, design: design) {
+                _ = try await driver.executeStatement(statement)
+            }
+            let after = try await driver.listColumns(table: "t", schema: db)
+            #expect(after[0].extra == "AUTO_INCREMENT COMMENT 'the key'")
+            #expect(after[1].defaultValue == "'it''s'")
+            #expect(after[1].dataType == "varchar(40)")
+            #expect(after[2].defaultValue == nil)
+            #expect(after[3].extra?.uppercased().hasPrefix("ON UPDATE CURRENT_TIMESTAMP") == true)
+            #expect(after[4].defaultValue == "3")
+            _ = try await driver.executeStatement("INSERT INTO t () VALUES ()")
+            #expect(try await driver.executeStatement("SELECT id, label FROM t").rows == [[.integer(1), .text("it's")]])
+        }
+    }
+
     @Test func designerIndexesOnRealTable() async throws {
         try await withDatabase { driver, db in
             let dialect = driver.dialect
@@ -295,6 +358,44 @@ struct MySQLIntegrationTests {
             after = try await driver.listIndexes(table: "t", schema: db)
             #expect(!after.contains { $0.name == "t_city_idx" })
             #expect(after.contains { $0.primary })
+        }
+    }
+
+    @Test func designerForeignKeysOnRealTables() async throws {
+        try await withDatabase { driver, db in
+            _ = try await driver.execute("""
+                CREATE TABLE customers (id int PRIMARY KEY, region char(2), code int, UNIQUE KEY region_code (region, code)) ENGINE=InnoDB;
+                CREATE TABLE orders (id int PRIMARY KEY, customer_id int, region char(2), code int) ENGINE=InnoDB;
+                INSERT INTO customers VALUES (1, 'BR', 7);
+                INSERT INTO orders VALUES (10, 1, 'BR', 7);
+                """)
+            let dialect = driver.dialect
+            let byCustomer = TableForeignKey(name: "fk_orders_customer", columns: ["customer_id"], referencedSchema: db,
+                                             referencedTable: "customers", referencedColumns: ["id"], onDelete: "CASCADE")
+            let byRegion = TableForeignKey(name: "fk_orders_region", columns: ["region", "code"], referencedSchema: db,
+                                           referencedTable: "customers", referencedColumns: ["region", "code"])
+            let add = try dialect.alterForeignKeys(table: "orders", schema: db, original: [],
+                                                   design: [ForeignKeyDesign(key: byCustomer), ForeignKeyDesign(key: byRegion)])
+            for statement in add.drops + add.adds { _ = try await driver.executeStatement(statement) }
+            let keys = try await driver.listForeignKeys(table: "orders", schema: db)
+            #expect(keys.map(\.name) == ["fk_orders_customer", "fk_orders_region"])
+            #expect(keys.last?.columns == ["region", "code"])
+            #expect(keys.last?.referencedColumns == ["region", "code"])
+            #expect(keys.first?.onDelete == "CASCADE")
+            // MariaDB reports an unspecified rule as RESTRICT (the same thing in InnoDB).
+            #expect(keys.first?.onUpdate == (MySQL.kind == .mariadb ? "RESTRICT" : "NO ACTION"))
+            #expect(!SQLDialect.foreignKeysChanged(original: keys, design: keys.map(ForeignKeyDesign.init)))
+
+            var changed = ForeignKeyDesign(keys[0])
+            changed.key.onUpdate = "RESTRICT"
+            let alter = try dialect.alterForeignKeys(table: "orders", schema: db, original: keys, design: [changed])
+            for statement in alter.drops + alter.adds { _ = try await driver.executeStatement(statement) }
+            let after = try await driver.listForeignKeys(table: "orders", schema: db)
+            #expect(after.map(\.name) == ["fk_orders_customer"])
+            #expect(after.first?.onUpdate == "RESTRICT")
+            #expect(after.first?.onDelete == "CASCADE")
+            _ = try await driver.executeStatement("DELETE FROM customers WHERE id = 1")
+            #expect(try await driver.countRows(table: "orders", schema: db) == 0, "ON DELETE CASCADE is in force")
         }
     }
 
@@ -397,6 +498,36 @@ struct MySQLIntegrationTests {
             let ids = try await driver.fetchAllRows(table: "t", schema: db).rows.map { $0[0] }
             #expect(ids == [.integer(1), .integer(2), .integer(30)])
         }
+    }
+
+    @Test func userManagerRoundTrip() async throws {
+        let driver = try await MySQL.driver()
+        let dialect = driver.dialect
+        let name = "bg_user_\(UUID().uuidString.prefix(6).lowercased())"
+        do {
+            for statement in try dialect.createUser(UserDraft(name: name, password: "first'pass", host: "%", createDatabases: true)) {
+                _ = try await driver.executeStatement(statement)
+            }
+            let users = dialect.users(from: try await driver.executeStatement(try #require(dialect.listUsersSQL)))
+            let user = try #require(users.first { $0.name == name })
+            #expect(user.host == "%")
+            #expect(user.attributes == ["Create"])
+            let grants = try await driver.executeStatement(try #require(dialect.grantsSQL(user)))
+            #expect(grants.rows.contains { $0.first?.displayString.contains("CREATE") == true })
+            _ = try await driver.executeStatement(dialect.setPassword(user, to: "second"))
+
+            var config = MySQL.config(tls: .prefer)
+            config.username = name
+            let login = MySQLDriver(config: config, password: "second")
+            try await login.connect()
+            await login.disconnect()
+            _ = try await driver.executeStatement(dialect.dropUser(user))
+        } catch {
+            _ = try? await driver.executeStatement("DROP USER IF EXISTS '\(name)'@'%'")
+            await driver.disconnect()
+            throw error
+        }
+        await driver.disconnect()
     }
 
     @Test func readOnlyConnectionsRejectWrites() async throws {

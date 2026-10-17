@@ -207,6 +207,7 @@ struct ConnectionEditorView: View {
             TextField("", value: $config.port, format: .number.grouping(.never)).frame(width: 90)
                 .disabled(usesSocket && config.kind != .postgresql)
         }
+        if config.kind.isDocumentStore { MongoConnectionRows(config: $config) }
         row("User Name") { TextField("", text: $config.username) }
         row("Password") { SecureField("", text: $password) }
         row(config.kind == .postgresql ? "Initial Database" : "Default Database") {
