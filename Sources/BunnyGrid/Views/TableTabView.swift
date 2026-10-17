@@ -40,7 +40,7 @@ struct TableTabView: View {
                 GridFooter(model: model, showingSQLPreview: $showingSQLPreview)
             }
         }
-        .task { await model.loadIfNeeded() }
+        .task { await model.loadIfNeeded(applying: app.defaultProfile(for: model)) }
         .sheet(isPresented: $model.showProfiling) {
             if let context = app.currentContextFor(model) {
                 DataProfilingView(model: model, driver: context.driver, driverSchema: context.usesSchemas ? model.object.schema : (context.kind == .sqlite ? nil : context.name))
@@ -230,11 +230,23 @@ private struct TableProfileMenu: View {
         Menu {
             if profiles.isEmpty { Text("No saved profiles") }
             ForEach(profiles) { profile in
-                Button(profile.name) { Task { await model.apply(profile) } }
+                Button(profile.isDefault ? "\(profile.name) (default)" : profile.name) { Task { await model.apply(profile) } }
             }
             Divider()
             Button("Save Current as Profile…") { namingProfile = true }
             if !profiles.isEmpty {
+                Menu("Update Profile with Current View") {
+                    ForEach(profiles) { profile in
+                        Button(profile.name) {
+                            if let updated = model.makeProfile(named: profile.name) { app.saveProfile(updated) }
+                        }
+                    }
+                }
+                Menu("Open Table with Profile") {
+                    ForEach(profiles) { profile in
+                        Toggle(profile.name, isOn: Binding(get: { profile.isDefault }, set: { _ in app.toggleDefaultProfile(profile.id) }))
+                    }
+                }
                 Menu("Delete Profile") {
                     ForEach(profiles) { profile in
                         Button(profile.name, role: .destructive) { app.deleteProfile(profile.id) }

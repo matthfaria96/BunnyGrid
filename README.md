@@ -37,7 +37,7 @@ BUNNYGRID_DATA_DIR=/tmp/bg build/BunnyGrid.app/Contents/MacOS/BunnyGrid \
   Resources/Samples/demo.sqlite --open-table customers --query "SELECT * FROM orders LIMIT 10"
 ```
 
-Com `--query`, `--explain` abre o plano da consulta em vez do resultado. No build de debug: `--demo-edits` (com `--open-table`) cria alterações pendentes de exemplo, `--focus-cell` foca uma célula, `--show-objects` abre a aba Objects com a pasta Tables selecionada, `--design TABELA` abre o Design Table (com `--design-section "Foreign Keys"` ou outra aba já selecionada e `--demo-fk` para uma chave alterada pendente), `--new-table` abre o New Table, `--connect-first` abre a primeira conexão salva, `--begin-transaction` e `--generate` (com `--open-table`) abrem o modo de transação e a Data Generation.
+Com `--query`, `--explain` abre o plano da consulta em vez do resultado. No build de debug: `--demo-edits` (com `--open-table`) cria alterações pendentes de exemplo, `--focus-cell` foca uma célula, `--show-objects` abre a aba Objects com a pasta Tables selecionada, `--design TABELA` abre o Design Table (com `--design-section "Foreign Keys"` ou outra aba já selecionada e `--demo-fk` para uma chave alterada pendente), `--new-table` abre o New Table, `--connect-first` abre a primeira conexão salva, `--begin-transaction` e `--generate` (com `--open-table`) abrem o modo de transação e a Data Generation. Com `--open-table`, `--export-wizard`, `--import-wizard csv|json|sql [ARQUIVO]` e `--execute-sql ARQUIVO [--run-script]` abrem o Export Wizard, o Import Wizard e o Execute SQL File (`-export.format sql|xlsx|json|csv` escolhe o formato).
 Também com `--open-table`: `--value-editor [COLUNA] [--row N]` abre o editor de valor sobre a célula, `--cell-editor [COLUNA]` abre o painel Cell Editor e `--demo-duplicate` duplica as duas primeiras linhas.
 
 ### Testes de integração com PostgreSQL
@@ -50,6 +50,25 @@ BUNNYGRID_PG_PORT=5432 BUNNYGRID_PG_USER=$USER BUNNYGRID_PG_PASSWORD= BUNNYGRID_
 
 Sem `BUNNYGRID_PG_PORT` esses testes são pulados. Cada teste cria e apaga um schema próprio.
 
+Um servidor descartável, sem mexer no PostgreSQL do sistema (a senha é exigida via TCP, para o teste de senha errada):
+
+```sh
+initdb -D /tmp/bg-pg -U bunny --auth-local=trust --auth-host=scram-sha-256 --pwprompt
+pg_ctl -D /tmp/bg-pg -o "-p 54329 -k ''" -l /tmp/bg-pg.log start
+createdb -h localhost -p 54329 -U bunny bunnytest
+BUNNYGRID_PG_PORT=54329 BUNNYGRID_PG_USER=bunny BUNNYGRID_PG_PASSWORD=… BUNNYGRID_PG_DATABASE=bunnytest swift test --filter Postgres
+pg_ctl -D /tmp/bg-pg stop
+```
+
+### Testes de integração com MySQL / MariaDB
+
+```sh
+BUNNYGRID_MYSQL_PORT=3306 BUNNYGRID_MYSQL_USER=root BUNNYGRID_MYSQL_PASSWORD=… swift test --filter MySQL
+# MariaDB: acrescente BUNNYGRID_MYSQL_KIND=mariadb
+```
+
+O usuário precisa de CREATE/DROP DATABASE: cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MYSQL_PORT` esses testes são pulados.
+
 ## Estrutura
 
 ```
@@ -58,6 +77,7 @@ Sources/
     Models/               ConnectionConfig, objetos, colunas, CellValue, QueryResult
     Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO)
     SQL/                  SQLDialect (aspas, SELECT paginado, EXPLAIN), SQLSplitter (divide scripts, comando sob o cursor) e QueryPlan (árvore do plano)
+    Transfer/             zip e Excel (.xlsx), leitura de JSON para importar, execução de scripts .sql com progresso
     Storage/              ConnectionStore (JSON em Application Support) e KeychainStore (senhas)
   BunnyGrid/              app SwiftUI
     App/                  BunnyGridApp, AppModel (conexões e sessões), Session (árvore e abas)
@@ -100,7 +120,7 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
 - **Visual do Navicat para macOS**: janela sem barra de título com o título ao lado dos botões da janela, barra de ícones ilustrados (mosaicos com gradiente e selos), controle **View** e avatar; **painel de navegação translúcido** (desfoque do que está atrás da janela, como no Finder); painel direito com abas **ⓘ Info** (cartão da conexão, banco ou tabela) e **AI**; aba Objects com barra de ícones, modo lista/grade e colunas Rows, Data Length, Engine, Created Date e Modified Date; resumo centralizado na barra de status; menu de contexto da conexão (estrela, cor, grupos, executar arquivo SQL…). Ícones são ilustrações SVG próprias (`Sources/BunnyGrid/Resources/Icons`), com gradientes, brilho e sombra, na paleta do Navicat mas sem copiar sua arte; bancos aparecem como cilindros na cor de cada motor, sem logotipos de terceiros. **Ícone do app** no formato do Icon Composer (`Resources/AppIcon.icon`): fundo, coelho e cilindro de moedas em camadas separadas, que o sistema renderiza com vidro, brilho especular e sombra nas aparências padrão, escura, tingida e transparente; o `bundle.sh` compila com o `actool` para `Assets.car` mais `AppIcon.icns` de reserva (macOS 14–15). `scripts/preview-icon.sh <pasta>` gera as prévias; `scripts/icon/build-layers.sh` refaz as camadas a partir da arte original. No macOS 26+ a cápsula View, o avatar, o item selecionado, as buscas e o campo do assistente usam Liquid Glass.
 - **New Connection** (botão Connection, ⌘N): tela no estilo do Navicat com Connection Filter e Vendor Filter, grade ou lista, busca, Recents e o catálogo completo (bancos e serviços de nuvem de AWS, Google Cloud, Microsoft, Oracle, Alibaba, Huawei, Tencent, Fujitsu, HighGo, Kingbase, OceanBase, PingCAP). Serviços compatíveis com PostgreSQL ou MySQL/MariaDB funcionam de verdade, com porta e SSL pré-configurados; os demais aparecem como "Soon". **New Connection with URI** aceita `postgresql://`, `mysql://`, `mariadb://` e `sqlite:///`.
 - **Aparência** (Settings → General): Sistema, Claro ou Escuro. O tema claro é o do modelo do Navicat.
-- **Table Profile ▾**: salva e reaplica filtro, ordenação, colunas ocultas e máscaras de uma tabela.
+- **Table Profile ▾**: salva e reaplica filtro, ordenação, colunas ocultas e máscaras de uma tabela; atualiza um perfil com a visão atual e marca um perfil para abrir a tabela já com ele.
 - **Data Profiling**: por coluna, registros, nulos (com medidor de preenchimento), distintos, mínimo, máximo, média e os valores mais frequentes em barras.
 - **Data Masking**: mascara colunas no grid e nas exportações (total, parcial, e-mail, últimos 4 dígitos); colunas mascaradas não são editáveis e o banco não é alterado.
 - **Editor de valor** (Cell Editors do Navicat): ⌥↩, duplo clique num valor longo ou "Open in Value Editor" abre um popover sobre a célula; o mesmo editor fica no painel **Cell Editor**. O editor segue o tipo da coluna: texto multilinha (sem aspas inteligentes), **JSON** com Beautify, Minify e validação (a ordem das chaves é mantida), **blobs** em hex ou imagem com Load from File / Save to File, e **calendário e hora** para colunas de data. NULL, vazio e DEFAULT aplicam na hora. No grid, quebras de linha aparecem como ⏎ e blobs como "(PNG) 14 KB".
@@ -114,7 +134,9 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
 - **Índices no Design Table**: criar, renomear, mudar campos/unicidade e remover índices (a chave primária fica protegida).
 - **Chaves estrangeiras no Design Table** (aba Foreign Keys, como no Navicat): nome, campos, schema/banco, tabela e campos referenciados (menus com as tabelas e colunas do banco), On Delete e On Update. No PostgreSQL e no MySQL salvar gera `DROP`/`ADD CONSTRAINT … FOREIGN KEY` (as remoções antes das mudanças de campos, as inclusões depois); numa tabela nova as chaves vão no `CREATE TABLE`. O SQLite não altera chaves com `ALTER TABLE`, então o designer **reconstrói a tabela** como a documentação do SQLite recomenda (nova tabela, cópia das linhas, `DROP`, `RENAME` com `legacy_alter_table`, índices e triggers recriados, `PRAGMA foreign_key_check` antes do commit, `foreign_keys` restaurado no fim); isso também libera mudar tipo, Not Null, default e a chave primária no SQLite. Tabelas com CHECK, COLLATE, colunas geradas, WITHOUT ROWID ou STRICT são recusadas em vez de perder essas definições.
 - **DDL**: SQLite mostra o `CREATE` guardado em `sqlite_master`, MySQL o `SHOW CREATE TABLE`, e o PostgreSQL monta do catálogo (colunas, PK/UNIQUE/CHECK/EXCLUDE, índices, comentários, triggers e as chaves estrangeiras como `ALTER TABLE` no fim). O painel DDL recarrega depois de salvar o design. O Dump SQL deixa as chaves do PostgreSQL para o fim do script e desliga `FOREIGN_KEY_CHECKS` no MySQL, para restaurar em qualquer ordem.
-- **Import Wizard**: importa CSV/TSV numa tabela, com detecção do delimitador, linha de cabeçalho, vazio → NULL, prévia e mapeamento automático por nome; tudo numa transação.
+- **Import Wizard**: importa CSV/TSV ou JSON (array de objetos, objeto com um array, JSON Lines; números, booleanos e NULL mantêm o tipo) numa tabela, com detecção do delimitador, linha de cabeçalho, vazio → NULL, prévia e mapeamento automático por nome, tudo numa transação; ou roda um arquivo .sql no banco.
+- **Export Wizard**: várias tabelas e views de uma vez, em CSV (delimitador, cabeçalho), JSON (chaves na ordem das colunas), SQL (CREATE e DROP opcionais, INSERT com N linhas por comando) ou Excel .xlsx (um arquivo por objeto ou uma pasta de trabalho com uma planilha por objeto). O .xlsx é escrito por código próprio (`Sources/BunnyGridCore/Transfer`), sem dependências. O menu Export do grid também grava Excel.
+- **Execute SQL File** (menu da conexão ou do banco): divide o arquivo em comandos (inclusive `DELIMITER` do mysqldump), mostra o progresso, para no primeiro erro ou continua e lista os erros, e pode rodar tudo numa transação. **Dump SQL File** desliga a checagem de chaves estrangeiras no MySQL, usa nomes sem o banco (restaura em qualquer banco) e recria as sequências `serial` do PostgreSQL.
 - **Favorites**: favoritar tabelas/views (menu de contexto ou ⌘D), menu Favorites para abrir, e a estrela no rodapé do painel de navegação mostra só os favoritos.
 - **⌘S** salva o que a aba atual tiver: edições do grid, consulta ou design.
 - **Barra de status**: SQL da aba, alerta, "Record 5 of 1000 in page 1", "Last Refresh", e botões para mostrar/ocultar os painéis.

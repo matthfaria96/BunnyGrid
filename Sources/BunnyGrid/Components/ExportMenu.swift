@@ -2,7 +2,7 @@ import AppKit
 import BunnyGridCore
 import SwiftUI
 
-/// "Export" menu for a set of rows: writes CSV or JSON through a save panel.
+/// "Export" menu for a set of rows: writes CSV, JSON or Excel through a save panel.
 struct ExportMenu: View {
     let columns: [String]
     let rows: [[CellValue]]
@@ -28,7 +28,7 @@ struct ExportMenu: View {
         panel.nameFieldStringValue = "\(suggestedName).\(format.fileExtension)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try ResultExporter.export(columns: columns, rows: rows, as: format).write(to: url, options: .atomic)
+            try ResultExporter.export(columns: columns, rows: rows, as: format, sheetName: suggestedName).write(to: url, options: .atomic)
         } catch {
             NSAlert(error: error).runModal()
         }

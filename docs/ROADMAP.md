@@ -15,12 +15,13 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 | ✅ 0.6 | Design e experiência | Tema claro, grid e navegação no visual do Navicat, Table Profile, Data Profiling, Data Masking, estatísticas na aba Objects, abas persistentes, teclado no grid e na árvore | Navicat |
 | ✅ 0.7 | Visual macOS | Layout do Navicat para macOS: chrome unificado, ícones ilustrados, sidebar translúcida, painel Info/AI, aba Objects com ícones e modo grade, menu de contexto da conexão | Navicat macOS |
 | ✅ 0.8 | Estrutura | Chaves estrangeiras no designer (aba Foreign Keys; ALTER no PostgreSQL/MySQL, reconstrução da tabela no SQLite), DDL do PostgreSQL montado do catálogo, Dump SQL com as chaves no fim | Navicat Design Table |
-| 0.8 | Próximos | Table Profile (filtros salvos), Export Wizard (vários objetos), túnel SSH, testes de integração com MySQL | Navicat |
+| ✅ 0.8 | Import/Export | Export Wizard com vários objetos em CSV, JSON, SQL (CREATE/DROP opcionais, INSERT em lotes) e Excel .xlsx (writer próprio em Swift, zip STORE + CRC32); Import Wizard com CSV, JSON (array, objeto com array, JSON Lines) e arquivo .sql; Execute SQL File com progresso, parar no erro e transação única; `DELIMITER` do mysqldump; Table Profile padrão ao abrir a tabela; testes de integração com MySQL/MariaDB (`BUNNYGRID_MYSQL_PORT`) | Navicat Import/Export Wizard |
+| 0.8 | Próximos | Túnel SSH | Navicat |
 | ✅ 0.8 | Editor SQL | Consultas salvas, formatação (⌘⇧B), Run Selected / Run Current Statement (⌘⇧↩) / Run All, Explain com árvore do plano, Stop cancelando no servidor, conexão própria por aba de consulta, resultados limitados com Load More / Fetch All | Navicat "Query Editor" |
 | ✅ 0.8 | Edição | Editor de valor pelo tipo da coluna (texto multilinha, JSON com Beautify/Minify/validação, hex e imagem para blobs com carregar/salvar arquivo, calendário e hora), em popover (⌥↩, duplo clique em valores longos) e no painel Cell Editor; NULL / vazio / DEFAULT; duplicar registros; Copy As (INSERT, UPDATE, TSV, CSV, JSON, Markdown); valores enviados como parâmetros tipados | Navicat "Cell Editors" |
 | 0.3 | Conectividade | Túnel SSH (Citadel, puro Swift), SSL com verificação e certificados de cliente, socket Unix | `tunnel.ts` |
 | ✅ 0.3 | Estrutura | Designer de tabela (ALTER), índices, chaves estrangeiras, DDL (`getTableCreateScript`) | `alterTableSql` |
-| 0.4 | Import/Export | CSV, JSON, SQL dump, Excel (libxlsxwriter, BSD) | Navicat Import/Export Wizard |
+| 0.9 | Import/Export | Importar Excel (.xlsx) e XML, exportar XML/HTML/Markdown, agendar exportações, streaming para tabelas grandes | Navicat Import/Export Wizard |
 | 0.5 | Mais bancos | SQL Server (FreeTDS), Redis (RediStack), MongoDB (MongoKitten) | Navicat §2 |
 | 0.6 | Transferência | Data Transfer entre bancos, comparação e sincronização de estrutura e de dados | Navicat Structure/Data Sync |
 | ✅ 0.7 | Modelagem | Diagrama ER (engenharia reversa), modelo → SQL | Navicat Modeling |
@@ -37,7 +38,10 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 - O realce de sintaxe refaz o documento inteiro a cada tecla; trocar por tree-sitter (CodeEditSourceEditor) quando os scripts ficarem grandes.
 - O editor SQL lê no máximo o limite de registros por resultado, mas Load More e Fetch All executam a consulta de novo (não há cursor aberto no servidor). No MySQL as linhas além do limite ainda trafegam e são descartadas (o MySQLNIO não tem backpressure); no PostgreSQL o PostgresNIO descarta o restante do stream.
 - O Stop no PostgreSQL e no MySQL abre uma conexão curta para cancelar (o PostgresNIO não expõe o CancelRequest do protocolo); se o comando terminar antes e uma nova execução começar nesse intervalo, é ela que recebe o cancelamento.
-- O driver MySQL/MariaDB ainda não tem testes de integração (o PostgreSQL tem: `BUNNYGRID_PG_PORT`); a leitura e o ALTER de chaves estrangeiras no MySQL só têm testes de geração de SQL.
+- Os testes de integração do MySQL/MariaDB (`BUNNYGRID_MYSQL_PORT`, `Tests/BunnyGridCoreTests/MySQLIntegrationTests.swift`) ainda não rodaram contra um servidor real: nesta máquina não há MySQL, MariaDB nem Docker. Os do PostgreSQL rodam (servidor descartável do Homebrew numa porta própria). A leitura e o ALTER de chaves estrangeiras no MySQL só têm testes de geração de SQL.
+- MySQL: um SELECT sem linhas volta sem nomes de colunas (o MySQLNIO só entrega as definições junto com as linhas). Comandos que o protocolo de prepared statements recusa (`LOCK TABLES`, `CREATE PROCEDURE/TRIGGER`, …) caem no protocolo de texto, que não informa linhas afetadas.
+- Exportação e importação carregam a tabela ou o arquivo inteiros na memória; o .xlsx é gravado sem compressão (zip STORE), então fica maior que o do Excel.
+- Dump SQL do PostgreSQL recria as sequências de colunas `serial`, mas não colunas `GENERATED … AS IDENTITY`, tipos, extensões nem funções.
 - Trocar a chave primária pelo designer só funciona no SQLite (reconstrução); no PostgreSQL e no MySQL ainda é recusado.
 - A reconstrução de tabela do SQLite recusa CHECK, COLLATE, colunas geradas, WITHOUT ROWID, STRICT, ON CONFLICT e chaves DEFERRABLE (o designer não modela essas definições), e o contador de AUTOINCREMENT recomeça do maior id copiado. Os nomes de chaves estrangeiras do SQLite não aparecem (o `PRAGMA foreign_key_list` não os informa).
 - Renomear um campo usado numa chave estrangeira não atualiza a linha da aba Foreign Keys (o banco renomeia a referência; no SQLite a reconstrução também).

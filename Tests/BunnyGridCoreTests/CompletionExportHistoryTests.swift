@@ -61,7 +61,7 @@ import Testing
     }
 
     @Test func jsonUsesNativeTypes() throws {
-        let data = try ResultExporter.json(columns: columns, rows: rows)
+        let data = ResultExporter.json(columns: columns, rows: rows)
         let decoded = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])
         #expect(decoded.count == 2)
         #expect(decoded[0]["id"] as? Int == 1)

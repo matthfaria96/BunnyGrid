@@ -2,7 +2,8 @@ import Foundation
 
 /// Splits a script into individual statements on `;`, ignoring semicolons inside
 /// string literals, quoted identifiers, comments, PostgreSQL dollar-quoted bodies and the
-/// BEGIN … END body of a CREATE TRIGGER (SQLite, MySQL).
+/// BEGIN … END body of a CREATE TRIGGER (SQLite, MySQL). A MySQL client `DELIMITER xx` line
+/// (as in mysqldump files) switches the terminator until the next DELIMITER line.
 public enum SQLSplitter {
     /// One statement of a script and where it sits in the script.
     public struct Statement: Sendable, Equatable {
@@ -60,6 +61,7 @@ public enum SQLSplitter {
         var isTrigger = false
         var sawCreate = false
         var blockDepth = 0
+        var delimiter: [Character] = [";"]
 
         func endWord() {
             guard !word.isEmpty else { return }
@@ -94,6 +96,23 @@ public enum SQLSplitter {
             let c = chars[i]
             let next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
 
+            if (c == "D" || c == "d"), i == 0 || chars[i - 1].isNewline, isOnlyComments(current),
+               let command = delimiterCommand(chars, at: i) {
+                endWord()
+                current = ""
+                segmentStart = command.end
+                delimiter = command.delimiter
+                i = command.end
+                continue
+            }
+            if delimiter != [";"], c == delimiter[0], i + delimiter.count <= chars.count,
+               Array(chars[i..<(i + delimiter.count)]) == delimiter {
+                endWord()
+                flush(end: i, delimiterEnd: i + delimiter.count)
+                i += delimiter.count
+                continue
+            }
+
             if c.isLetter || c == "_" {
                 word.append(c)
             } else {
@@ -122,7 +141,7 @@ public enum SQLSplitter {
                     current.append(c)
                     i += 1
                 }
-            case ";" where blockDepth > 0:
+            case ";" where blockDepth > 0 || delimiter != [";"]:
                 current.append(c)
                 i += 1
             case ";":
@@ -135,6 +154,19 @@ public enum SQLSplitter {
         }
         flush(end: chars.count, delimiterEnd: chars.count)
         return statements
+    }
+
+    /// Recognizes a `DELIMITER xx` line at `index`; returns the new terminator and the index after the line.
+    private static func delimiterCommand(_ chars: [Character], at index: Int) -> (delimiter: [Character], end: Int)? {
+        let keyword = Array("DELIMITER")
+        guard index + keyword.count < chars.count,
+              String(chars[index..<(index + keyword.count)]).uppercased() == "DELIMITER",
+              chars[index + keyword.count] == " " || chars[index + keyword.count] == "\t" else { return nil }
+        var end = index + keyword.count
+        while end < chars.count && !chars[end].isNewline { end += 1 }
+        let token = String(chars[(index + keyword.count)..<end]).trimmingCharacters(in: .whitespaces)
+        guard !token.isEmpty, !token.contains(" ") else { return nil }
+        return (Array(token), end)
     }
 
     private static func isSpace(_ c: Character) -> Bool {
