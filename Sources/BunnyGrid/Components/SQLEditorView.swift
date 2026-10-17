@@ -222,7 +222,8 @@ private final class ClosureMenuItem: NSMenuItem, NSMenuItemValidation {
 
 @MainActor
 enum SQLHighlighter {
-    static let defaultFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    /// Navicat's default editor font (Options › Editor shows it as "Menlo-Regular 11.0").
+    static let defaultFont = NSFont(name: "Menlo-Regular", size: 11) ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
 
     static var font: NSFont { AppOptions.shared.values.editorFont?.nsFont ?? defaultFont }
 
@@ -261,8 +262,12 @@ enum SQLHighlighter {
             ]
             // Later rules win, so strings and comments override keywords inside them.
             for (regex, color) in rules {
+                let bold = regex === keywordRule ? NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) : nil
                 regex.enumerateMatches(in: storage.string, range: full) { match, _, _ in
-                    if let range = match?.range { storage.addAttribute(.foregroundColor, value: color, range: range) }
+                    guard let range = match?.range else { return }
+                    storage.addAttribute(.foregroundColor, value: color, range: range)
+                    // Keywords are bold, as in Navicat; strings and comments later reset the font.
+                    if let bold { storage.addAttribute(.font, value: bold, range: range) } else if regex !== numberRule { storage.addAttribute(.font, value: font, range: range) }
                 }
             }
         }

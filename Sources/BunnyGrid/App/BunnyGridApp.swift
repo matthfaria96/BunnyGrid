@@ -24,7 +24,16 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
     }
 }
 
+/// Starts the headless job runner for `--run-job`, otherwise the app.
 @main
+@MainActor
+enum AppEntry {
+    static func main() {
+        HeadlessEntry.runIfRequested()
+        BunnyGridApp.main()
+    }
+}
+
 struct BunnyGridApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
@@ -135,6 +144,11 @@ struct BunnyGridApp: App {
                 }
             }
             CommandMenu("Tools") {
+                ForEach(SyncTool.allCases) { tool in
+                    Button(tool.title + "…") { model.openSyncWizard(tool) }
+                }
+                AutomationMenuItems(model: model)
+                Divider()
                 Button("AI Assistant") { model.showAssistant = true; model.rightPane = .ai }
                 Button("AI Platform…") { model.showingAccountMenu = true }
                 Button("Query History") {
@@ -143,6 +157,13 @@ struct BunnyGridApp: App {
                 .disabled(model.currentContext == nil)
             }
         }
+
+        Window("Automation", id: "automation") {
+            AutomationView()
+                .environment(model)
+                .frame(minWidth: 900, minHeight: 560)
+        }
+        .defaultSize(width: 1100, height: 700)
 
         Settings {
             SettingsView()

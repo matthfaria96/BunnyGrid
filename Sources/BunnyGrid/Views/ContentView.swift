@@ -52,10 +52,14 @@ struct ContentView: View {
         .sheet(item: $app.sqlFileTarget) { target in
             ExecuteSQLFileView(target: target)
         }
+        .sheet(item: $app.syncWizard) { request in
+            SyncWizardView(request: request)
+        }
         .sheet(item: $app.usersSession) { session in
             UsersView(session: session)
         }
         .modifier(ObjectActionAlert())
+        .modifier(BackupSheets())
         .alert("BunnyGrid", isPresented: Binding(
             get: { app.alertMessage != nil },
             set: { if !$0 { app.alertMessage = nil } }
@@ -133,7 +137,7 @@ struct StatusBar: View {
             if app.objectCategory == .queries {
                 return "\(plural(app.savedQueries(connectionID: id, database: db).count, "Query")) in \(place)"
             }
-            let count = app.objectCategory == .indexes || app.objectCategory == .triggers
+            let count = [.indexes, .triggers, .backups].contains(app.objectCategory)
                 ? app.listedItemCount
                 : context.objects(in: schema, category: app.objectCategory)?.count ?? 0
             // Navicat: "2 tables".
