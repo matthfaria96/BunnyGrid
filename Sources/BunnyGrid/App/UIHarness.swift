@@ -36,6 +36,7 @@ final class UIHarness {
         var ms: Double
         var error: String?
         var screenshot: String?
+        var optional: Bool?
     }
 
     struct Failure: Error, CustomStringConvertible {
@@ -114,7 +115,7 @@ final class UIHarness {
             for (index, step) in steps.enumerated() {
                 let op = step["op"] as? String ?? "?"
                 let started = ContinuousClock.now
-                var result = StepResult(index: index, op: op, note: step["note"] as? String, ok: true, ms: 0)
+                var result = StepResult(index: index, op: op, note: step["note"] as? String, ok: true, ms: 0, optional: step["optional"] as? Bool)
                 do {
                     result.screenshot = try await perform(op, step)
                 } catch {

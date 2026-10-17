@@ -74,6 +74,8 @@ enum UIHarnessProbe {
         case "expandedCount": return app.expanded.count
         case "sheet": return NSApp.windows.contains { $0.isVisible && $0.isSheet }
         case "opened": return UIHarness.opened.joined(separator: "|")
+        case "options": return AppOptions.shared.values
+        case "appearance": return NSApp.appearance?.name.rawValue ?? "system"
         case "popover": return NSApp.windows.contains { $0.isVisible && String(describing: type(of: $0)).contains("Popover") }
         case "windowCount": return NSApp.windows.filter { $0.isVisible && $0.level == .normal }.count
         case "keyWindow": return NSApp.keyWindow?.title ?? "nil"

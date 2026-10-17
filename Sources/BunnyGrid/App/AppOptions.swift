@@ -94,7 +94,7 @@ struct FontSpec: Codable, Equatable {
     var size: Double
 
     var nsFont: NSFont? { NSFont(name: name, size: size) }
-    var label: String { "\(name) \(String(format: "%.1f", size))" }
+    var label: String { "\(NSFont(name: name, size: CGFloat(size))?.displayName ?? name) \(String(format: "%.1f", size))" }
 }
 
 /// Editor colors as hex strings; nil uses the system color for the current appearance.

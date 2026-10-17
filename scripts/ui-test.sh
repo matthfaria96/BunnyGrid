@@ -124,7 +124,7 @@ for name, text in setup["files"].items():
     else reason=$(/usr/bin/python3 -I -c '
 import json,sys
 r = json.load(open(sys.argv[1]))
-bad = [s for s in r["steps"] if not s["ok"]]
+bad = [s for s in r["steps"] if not s["ok"] and not s.get("optional")]
 b = bad[0] if bad else None
 print(r.get("fatal") or ("step %s %s %s: %s" % (b["index"], b["op"], b.get("note") or "", b.get("error")) if b else "failed"))' "$run/results.json")
     fi

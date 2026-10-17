@@ -125,8 +125,11 @@ struct SettingsView: View {
         ai.commit(to: app.assistant)
     }
 
+    /// Closes the Settings window itself: closing "the key window" closed the main window instead when Settings
+    /// was not key (OK / Cancel pressed while the app was in the background, or with another window key).
     private func close() {
-        NSApp.keyWindow?.close()
+        let settings = NSApp.windows.first { $0.isVisible && $0.identifier?.rawValue.contains("Settings") == true }
+        (settings ?? NSApp.keyWindow)?.close()
     }
 }
 
@@ -172,7 +175,8 @@ private struct FontGroup: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Text("Font:")
-                    Text(font?.label ?? "\(fallback.fontName) \(String(format: "%.1f", fallback.pointSize))")
+                    // The display name ("System Font Regular"), not the private PostScript name (".AppleSystemUIFont").
+                    Text(font?.label ?? "\(fallback.displayName ?? fallback.fontName) \(String(format: "%.1f", fallback.pointSize))")
                         .font(.system(size: 12, design: font == nil ? .default : .monospaced))
                         .foregroundStyle(font == nil ? .secondary : .primary)
                         .lineLimit(1)

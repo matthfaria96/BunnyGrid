@@ -1,0 +1,24 @@
+{
+  "name": "settings",
+  "args": ["{{DB}}", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "openSessions", "equals": 1},
+    {"op": "key", "key": ",", "modifiers": ["cmd"], "note": "⌘, opens Settings"},
+    {"op": "waitFor", "label": "Use safe confirm dialog", "exists": true, "timeout": 5},
+    {"op": "remember", "as": "safe", "probe": "options.useSafeConfirmDialog"},
+    {"op": "click", "label": "Use safe confirm dialog", "role": "AXCheckBox"},
+    {"op": "click", "role": "AXPopUpButton", "window": "settings", "index": 0, "menu": ["Dark"], "note": "Appearance › Dark"},
+    {"op": "waitFor", "role": "AXPopUpButton", "window": "settings", "index": 0, "equals": "Dark"},
+    {"op": "screenshot", "name": "general"},
+    {"op": "click", "label": "Records", "window": "settings", "index": 0, "note": "Records tab"},
+    {"op": "waitFor", "label": "Limit records", "exists": true},
+    {"op": "remember", "as": "limit", "probe": "options.limitRecords"},
+    {"op": "click", "label": "Limit records", "role": "AXCheckBox"},
+    {"op": "screenshot", "name": "records"},
+    {"op": "click", "label": "OK", "role": "AXButton", "window": "settings"},
+    {"op": "waitFor", "probe": "options.limitRecords", "notEquals": "$limit", "note": "OK saved the Records option"},
+    {"op": "assert", "probe": "options.useSafeConfirmDialog", "notEquals": "$safe", "note": "and the General one"},
+    {"op": "waitFor", "probe": "windowCount", "equals": 1, "note": "regression: OK closes Settings (not the main window) when Settings is not the key window"},
+    {"op": "waitFor", "probe": "appearance", "contains": "Dark", "note": "OK applied the appearance"}
+  ]
+}
