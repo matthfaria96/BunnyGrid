@@ -22,6 +22,55 @@ import Testing
     }
 }
 
+@Suite struct ConnectionDatabasesTabTests {
+    @Test func visibleDatabasesKeepServerOrderAndOwnDatabase() {
+        var config = ConnectionConfig(kind: .postgresql, database: "app")
+        #expect(config.visible(["postgres", "app", "b"]) == ["postgres", "app", "b"])
+        config.visibleDatabases = ["b"]
+        #expect(config.visible(["postgres", "app", "b"]) == ["app", "b"])
+        config.visibleDatabases = []
+        #expect(config.visible(["x"]) == ["x"])
+    }
+
+    @Test func suggestsAliases() {
+        #expect(AttachedDatabase.suggestedAlias(for: "/tmp/sales-2024.db", taken: []) == "sales_2024")
+        #expect(AttachedDatabase.suggestedAlias(for: "/tmp/main.sqlite", taken: []) == "main_2")
+        #expect(AttachedDatabase.suggestedAlias(for: "/tmp/2024.db", taken: ["db_2024"]) == "db_2024_2")
+    }
+
+    @Test func oldConfigsDecodeAndNewOnesRoundTrip() throws {
+        var config = ConnectionConfig(kind: .sqlite, filePath: "/tmp/a.db")
+        let old = try JSONEncoder().encode(config)
+        #expect(try JSONDecoder().decode(ConnectionConfig.self, from: old).attachedDatabases == nil)
+        config.attachedDatabases = [AttachedDatabase(alias: "b", path: "/tmp/b.db")]
+        config.visibleDatabases = ["x"]
+        let decoded = try JSONDecoder().decode(ConnectionConfig.self, from: try JSONEncoder().encode(config))
+        #expect(decoded.attachedDatabases == config.attachedDatabases && decoded.visibleDatabases == ["x"])
+    }
+
+    @Test func sqliteAttachesConfiguredFilesOnConnect() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let other = dir.appendingPathComponent("other.db").path
+        let seed = SQLiteDriver(config: ConnectionConfig(kind: .sqlite, filePath: other))
+        try await seed.connect()
+        _ = try await seed.execute("CREATE TABLE things (id INTEGER PRIMARY KEY, v TEXT); INSERT INTO things (v) VALUES ('x')")
+        await seed.disconnect()
+
+        var config = ConnectionConfig(kind: .sqlite, filePath: dir.appendingPathComponent("main.db").path)
+        config.attachedDatabases = [AttachedDatabase(alias: "other", path: other)]
+        let driver = SQLiteDriver(config: config)
+        try await driver.connect()
+        #expect(try await driver.listDatabases().contains("other"))
+        #expect(try await driver.listObjects(schema: "other").map(\.name) == ["things"])
+        await driver.disconnect()
+
+        config.attachedDatabases = [AttachedDatabase(alias: "main", path: other)]
+        await #expect(throws: DatabaseError.self) { try await SQLiteDriver(config: config).connect() }
+    }
+}
+
 @Suite struct DesignerLeftoversTests {
     @Test func parsesUniqueConflicts() {
         let sql = #"""

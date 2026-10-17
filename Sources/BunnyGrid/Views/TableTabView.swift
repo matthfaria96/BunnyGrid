@@ -613,7 +613,7 @@ private struct HistoryPanel: View {
 }
 
 /// One record at a time, field by field (Navicat's Form View).
-private struct FormRecordView: View {
+struct FormRecordView: View {
     @Bindable var model: TableTabModel
 
     private var row: Int { model.focusedCell?.row ?? model.selectedRows.first ?? 0 }
@@ -670,16 +670,53 @@ private struct FormField: View {
     let value: CellValue
     @State private var text = ""
 
+    @State private var showingEditor = false
+    @FocusState private var focused: Bool
+
+    /// Long or multi-line text, JSON and blobs get a multi-line field and the full value editor.
+    private var isLong: Bool {
+        if case .blob = value { return true }
+        let category = model.category(ofColumn: column)
+        if category == .json || category == .binary { return true }
+        let shown = value.isNull ? "" : value.displayString
+        return shown.count > 60 || shown.contains(where: \.isNewline)
+    }
+
     var body: some View {
-        let editable = model.isEditable && model.cellState(row: row, column: column) != .deleted
-        TextField(value.isNull ? "(Null)" : "", text: $text)
-            .textFieldStyle(.roundedBorder)
-            .font(.system(size: 12, design: value.isNumeric ? .monospaced : .default))
-            .disabled(!editable)
-            .onSubmit {
-                if text != (value.isNull ? "" : value.displayString) { model.setValue(.text(text), row: row, column: column) }
+        let editable = model.canEditCell(row: row, column: column)
+        Group {
+            if isLong {
+                HStack(alignment: .top, spacing: 4) {
+                    TextField(value.isNull ? "(Null)" : "", text: $text, axis: .vertical)
+                        .lineLimit(3...10)
+                        .focused($focused)
+                    Button { showingEditor = true } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                        .buttonStyle(.borderless)
+                        .help("Open in the Value Editor (⌥↩ in the grid)")
+                        .popover(isPresented: $showingEditor, arrowEdge: .trailing) {
+                            ValueEditorView(model: model, cell: GridCell(row: row, column: column), onClose: { showingEditor = false })
+                                .frame(width: 520, height: 360)
+                        }
+                }
+                .frame(maxWidth: 520)
+            } else {
+                TextField(value.isNull ? "(Null)" : "", text: $text)
+                    .focused($focused)
             }
-            .onChange(of: value, initial: true) { _, newValue in text = newValue.isNull ? "" : newValue.displayString }
+        }
+        .textFieldStyle(.roundedBorder)
+        .font(.system(size: 12, design: value.isNumeric ? .monospaced : .default))
+        .disabled(!editable)
+        .onSubmit(commit)
+        // A multi-line field commits when it loses focus too (Return there is a new line with ⌥).
+        .onChange(of: focused) { _, isFocused in if !isFocused { commit() } }
+        .onChange(of: value, initial: true) { _, newValue in text = newValue.isNull ? "" : newValue.displayString }
+    }
+
+    private func commit() {
+        guard model.canEditCell(row: row, column: column) else { return }
+        if case .blob = value { return }
+        if text != (value.isNull ? "" : value.displayString) { model.setValue(.text(text), row: row, column: column) }
     }
 }
 
