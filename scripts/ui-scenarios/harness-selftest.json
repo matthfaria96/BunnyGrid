@@ -1,0 +1,7 @@
+{
+  "name": "harness-selftest",
+  "args": ["{{DB}}"],
+  "steps": [
+    {"op": "selfTest", "note": "SwiftUI taps and DragGesture (plain and in a ScrollView) see synthesized events"}
+  ]
+}

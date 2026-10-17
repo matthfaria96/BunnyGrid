@@ -2,6 +2,7 @@
 import AppKit
 import BunnyGridCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// `--ui-script FILE [--ui-results FILE] [--ui-shots DIR]`: runs a scripted interaction scenario inside the app.
 ///
@@ -44,6 +45,10 @@ final class UIHarness {
 
     private var results: [StepResult] = []
     private var variables: [String: String] = [:]
+    /// How mouse events are made and delivered: "cg" (from a CGEvent, queued), "ns" (NSEvent.mouseEvent, queued),
+    /// "send" (from a CGEvent, NSApp.sendEvent from the run loop). Scenarios may set it: {"op": "mode", "mode": ...}.
+    private var postMode = "cg"
+    private var held: (NSWindow, NSPoint, NSEvent.ModifierFlags)?
     private var logs: [String] = []
     private var eventNumber = 0
     private var trackedMenus: [NSMenu] = []
@@ -76,6 +81,8 @@ final class UIHarness {
         try? FileManager.default.createDirectory(at: shotsDir, withIntermediateDirectories: true)
         installMenuTracking()
         Self.acceptFirstMouseEverywhere()
+        Self.virtualizePointer()
+        Self.virtualizeKeyWindow()
         logs.append("app active at start: \(NSApp.isActive)")
         if ProcessInfo.processInfo.environment["BUNNYGRID_UI_TRACE"] != nil {
             // Every event the app dispatches, with the view under it: why a synthesized event went nowhere.
@@ -109,6 +116,7 @@ final class UIHarness {
                     result.ok = false
                     result.error = "\(error)"
                     result.screenshot = screenshot(named: String(format: "fail-%02d", index))
+                    _ = try? await perform("dump", ["name": String(format: "fail-%02d-tree", index)])
                 }
                 let elapsed = ContinuousClock.now - started
                 result.ms = Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
@@ -162,6 +170,8 @@ final class UIHarness {
             let (window, point) = try locate(step)
             if op == "hover" {
                 post(.mouseMoved, window, point)
+                try await drain()
+                await hover(window, point)
                 break
             }
             let count = op == "doubleClick" ? 2 : Int(step["count"] as? Double ?? 1)
@@ -197,10 +207,23 @@ final class UIHarness {
                 post(.leftMouseDragged, window, NSPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t), flags: flags)
                 try await drain(ms: 8)
             }
-            post(.leftMouseUp, window, to, flags: flags)
+            // "release": false keeps the button down (screenshot mid-drag); a later {"op": "release"} lets go.
+            if step["release"] as? Bool == false {
+                held = (window, to, flags)
+            } else {
+                post(.leftMouseUp, window, to, flags: flags)
+            }
+            try await drain()
+        case "mode":
+            postMode = step["mode"] as? String ?? "cg"
+        case "release":
+            guard let (window, point, flags) = held else { throw Failure("no drag is held") }
+            held = nil
+            post(.leftMouseUp, window, point, flags: flags)
             try await drain()
         case "dragDrop":
-            guard let payload = step["payload"] as? String else { throw Failure("dragDrop needs a payload string") }
+            guard let raw = step["payload"] as? String else { throw Failure("dragDrop needs a payload string") }
+            let payload = variables.keys.sorted { $0.count > $1.count }.reduce(raw) { $0.replacingOccurrences(of: "$" + $1, with: variables[$1]!) }
             let (window, point) = try locate(step["to"] as? [String: Any] ?? [:])
             try await deliverDrop(payload, in: window, at: point)
         case "key":
@@ -253,6 +276,53 @@ final class UIHarness {
             let url = shotsDir.appendingPathComponent("\(scenarioName)-\(step["name"] as? String ?? "tree").txt")
             try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
             return url.path
+        case "selfTest":
+            // Checks which SwiftUI gestures synthesized events can drive, in a window of their own.
+            let probe = HarnessGestureProbe()
+            let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 400, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = NSHostingView(rootView: HarnessGestureView(probe: probe))
+            window.makeKeyAndOrderFront(nil)
+            try await drain(ms: 400)
+            logs.append("selfTest key=\(window.isKeyWindow) active=\(NSApp.isActive) mainKey=\(NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") == true }?.isKeyWindow ?? false)")
+            for mode in ["cg", "ns", "send"] {
+                postMode = mode
+                probe.changed = [:]; probe.ended = [:]; probe.taps = [:]
+                for (name, y) in [("plain", 350.0), ("scroll", 150.0)] {
+                    post(.leftMouseDown, window, NSPoint(x: 100, y: y))
+                    post(.leftMouseUp, window, NSPoint(x: 100, y: y))
+                    try await drain(ms: 300)
+                    post(.leftMouseDown, window, NSPoint(x: 100, y: y))
+                    try await drain(ms: 30)
+                    for i in 1...10 { post(.leftMouseDragged, window, NSPoint(x: 100 + Double(i) * 10, y: y)); try await drain(ms: 16) }
+                    post(.leftMouseUp, window, NSPoint(x: 200, y: y))
+                    try await drain(ms: 200)
+                    logs.append("selfTest \(mode) \(name): changed=\(probe.changed[name] ?? 0) ended=\(probe.ended[name] ?? 0) taps=\(probe.taps[name] ?? 0)")
+                    if mode == "cg", probe.changed[name] == nil || probe.ended[name] != 1 || probe.taps[name] != 1 {
+                        window.orderOut(nil)
+                        postMode = "cg"
+                        throw Failure("SwiftUI did not see the synthesized \(name) tap/drag (\(probe.taps[name] ?? 0) taps, \(probe.changed[name] ?? 0) changes)")
+                    }
+                }
+            }
+            postMode = "cg"
+            window.orderOut(nil)
+        case "dumpViews":
+            // The AppKit view tree: class, frame in the window, registered drag types.
+            var lines: [String] = []
+            for window in windows {
+                lines.append("== window \"\(window.title)\" \(type(of: window))")
+                func walk(_ view: NSView, _ depth: Int) {
+                    var types = view.registeredDraggedTypes.isEmpty ? "" : " drag=\(view.registeredDraggedTypes.map(\.rawValue))"
+                    if !view.gestureRecognizers.isEmpty { types += " gestures=\(view.gestureRecognizers.map { String(describing: type(of: $0)) })" }
+                    if !view.trackingAreas.isEmpty { types += " tracking=\(view.trackingAreas.count)" }
+                    lines.append(String(repeating: "  ", count: depth) + "\(String(describing: type(of: view)).prefix(70)) \(NSStringFromRect(view.convert(view.bounds, to: nil)))\(types)\(view.isHidden ? " hidden" : "")")
+                    for subview in view.subviews { walk(subview, depth + 1) }
+                }
+                if let root = window.contentView?.superview { walk(root, 0) }
+            }
+            let url = shotsDir.appendingPathComponent("\(scenarioName)-\(step["name"] as? String ?? "views").txt")
+            try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+            return url.path
         case "closeSheet":
             for window in NSApp.windows where window.isSheet { window.sheetParent?.endSheet(window) }
         default:
@@ -269,6 +339,58 @@ final class UIHarness {
         guard let method = class_getInstanceMethod(NSView.self, selector) else { return }
         let block: @convention(block) (NSView, NSEvent?) -> Bool = { _, _ in true }
         method_setImplementation(method, imp_implementationWithBlock(block))
+    }
+
+    /// The scripted pointer, as the app sees it: SwiftUI gestures and hover read `NSEvent.pressedMouseButtons` and
+    /// `NSEvent.mouseLocation` (the real hardware state) besides the events, so while a scenario runs both report the
+    /// synthesized events' state, updated as each one is dispatched. The real pointer is untouched.
+    /// SwiftUI ignores gestures (DragGesture, hover) in windows that are not key, and a background app has no key
+    /// window. A scenario must not activate the app (that would take the keyboard from the person's current app), so
+    /// the app is told it is active and its frontmost window that can be key is key.
+    private static func virtualizeKeyWindow() {
+        let active: @convention(block) (NSApplication) -> Bool = { _ in true }
+        if let method = class_getInstanceMethod(NSApplication.self, #selector(getter: NSApplication.isActive)) {
+            method_setImplementation(method, imp_implementationWithBlock(active))
+        }
+        let key: @convention(block) (NSWindow) -> Bool = { window in
+            MainActor.assumeIsolated {
+                let front = NSApp.orderedWindows.first { $0.isVisible && $0.canBecomeKey && String(describing: type(of: $0)) != "SPRoundedWindow" }
+                return front === window
+            }
+        }
+        if let method = class_getInstanceMethod(NSWindow.self, #selector(getter: NSWindow.isKeyWindow)) {
+            method_setImplementation(method, imp_implementationWithBlock(key))
+        }
+    }
+
+    nonisolated(unsafe) static var virtualButtons = 0
+    nonisolated(unsafe) static var virtualLocation: NSPoint?
+
+    private static func virtualizePointer() {
+        let buttons: @convention(block) (AnyObject) -> Int = { _ in UIHarness.virtualButtons }
+        if let method = class_getClassMethod(NSEvent.self, #selector(getter: NSEvent.pressedMouseButtons)) {
+            method_setImplementation(method, imp_implementationWithBlock(buttons))
+        }
+        if let method = class_getClassMethod(NSEvent.self, #selector(getter: NSEvent.mouseLocation)) {
+            typealias Getter = @convention(c) (AnyObject, Selector) -> NSPoint
+            let original = unsafeBitCast(method_getImplementation(method), to: Getter.self)
+            let location: @convention(block) (AnyObject) -> NSPoint = { object in
+                UIHarness.virtualLocation ?? original(object, #selector(getter: NSEvent.mouseLocation))
+            }
+            method_setImplementation(method, imp_implementationWithBlock(location))
+        }
+        _ = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
+                                                        .leftMouseDragged, .mouseMoved, .otherMouseDown, .otherMouseUp]) { event in
+            switch event.type {
+            case .leftMouseDown: virtualButtons |= 1
+            case .leftMouseUp: virtualButtons &= ~1
+            case .rightMouseDown: virtualButtons |= 2
+            case .rightMouseUp: virtualButtons &= ~2
+            default: break
+            }
+            if let window = event.window { virtualLocation = window.convertPoint(toScreen: event.locationInWindow) }
+            return event
+        }
     }
 
     // MARK: - Waiting and checks
@@ -459,6 +581,41 @@ final class UIHarness {
         return (found.window, point)
     }
 
+    private var hovered: [(NSTrackingArea, NSWindow)] = []
+
+    /// Tracking areas fire from the window server's idea of the pointer, which synthesized moves do not change:
+    /// send mouseExited / mouseEntered to the owners of the areas the scripted pointer leaves and enters.
+    private func hover(_ window: NSWindow, _ point: NSPoint) async {
+        var inside: [NSTrackingArea] = []
+        if let root = window.contentView?.superview {
+            walkViews(root) { view in
+                guard !view.isHiddenOrHasHiddenAncestor else { return }
+                let local = view.convert(point, from: nil)
+                for area in view.trackingAreas where area.options.contains(.mouseEnteredAndExited) {
+                    let rect = area.options.contains(.inVisibleRect) ? view.visibleRect : area.rect
+                    if rect.contains(local) { inside.append(area) }
+                }
+            }
+        }
+        func send(_ type: NSEvent.EventType, _ area: NSTrackingArea, _ window: NSWindow) {
+            eventNumber += 1
+            guard let owner = area.owner as? NSResponder,
+                  let event = NSEvent.enterExitEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                     windowNumber: window.windowNumber, context: nil, eventNumber: eventNumber,
+                                                     trackingNumber: Int(bitPattern: Unmanaged.passUnretained(area).toOpaque()), userData: nil)
+            else { return }
+            if type == .mouseEntered { owner.mouseEntered(with: event) } else { owner.mouseExited(with: event) }
+        }
+        let left = hovered.filter { old in !inside.contains { $0 === old.0 } }
+        let entered = inside.filter { new in !hovered.contains { $0.0 === new } }
+        let leftBox = UncheckedBox(left), enteredBox = UncheckedBox(entered), windowBox = UncheckedBox(window)
+        await onRunLoop {
+            for (area, window) in leftBox.value { send(.mouseExited, area, window) }
+            for area in enteredBox.value { send(.mouseEntered, area, windowBox.value) }
+        }
+        hovered = inside.map { ($0, window) }
+    }
+
     /// Scrolls the innermost scroll view whose document holds `frame` (window coordinates) so its centre is visible.
     private func reveal(_ frame: NSRect, in window: NSWindow) -> Bool {
         let center = NSPoint(x: frame.midX, y: frame.midY)
@@ -497,7 +654,43 @@ final class UIHarness {
 
     private func post(_ type: NSEvent.EventType, _ window: NSWindow, _ point: NSPoint, flags: NSEvent.ModifierFlags = [], clicks: Int = 1) {
         eventNumber += 1
+        let previous = pointer
         pointer = point
+        // Built from a CGEvent (never posted to the system) so drags carry deltas, which SwiftUI's DragGesture reads;
+        // addressed to the window and queued in this app only.
+        let cgType: CGEventType? = switch type {
+        case .leftMouseDown: .leftMouseDown
+        case .leftMouseUp: .leftMouseUp
+        case .leftMouseDragged: .leftMouseDragged
+        case .rightMouseDown: .rightMouseDown
+        case .rightMouseUp: .rightMouseUp
+        case .mouseMoved: .mouseMoved
+        default: nil
+        }
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        let screenPoint = window.convertPoint(toScreen: point)
+        if postMode != "ns", let cgType, let cg = CGEvent(mouseEventSource: nil, mouseType: cgType, mouseCursorPosition: CGPoint(x: screenPoint.x, y: screenHeight - screenPoint.y),
+                                        mouseButton: type == .rightMouseDown || type == .rightMouseUp ? .right : .left) {
+            cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
+            cg.setIntegerValueField(.mouseEventClickState, value: Int64(type == .mouseMoved ? 0 : clicks))
+            cg.setIntegerValueField(.mouseEventNumber, value: Int64(eventNumber))
+            cg.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+            cg.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
+            if type == .leftMouseDragged || type == .mouseMoved {
+                cg.setIntegerValueField(.mouseEventDeltaX, value: Int64((point.x - previous.x).rounded()))
+                cg.setIntegerValueField(.mouseEventDeltaY, value: Int64((previous.y - point.y).rounded()))
+            }
+            cg.setDoubleValueField(.mouseEventPressure, value: type == .leftMouseUp || type == .rightMouseUp || type == .mouseMoved ? 0 : 1)
+            if let event = NSEvent(cgEvent: cg), event.windowNumber == window.windowNumber {
+                if postMode == "send" {
+                    let box = UncheckedBox(event)
+                    DispatchQueue.main.async { MainActor.assumeIsolated { NSApp.sendEvent(box.value) } }
+                } else {
+                    NSApp.postEvent(event, atStart: false)
+                }
+                return
+            }
+        }
         guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                              windowNumber: window.windowNumber, context: nil, eventNumber: eventNumber,
                                              clickCount: type == .mouseMoved ? 0 : clicks, pressure: type == .leftMouseUp || type == .rightMouseUp ? 0 : 1)
@@ -557,10 +750,23 @@ final class UIHarness {
         }
     }
 
-    /// Pinch: a magnify gesture event when one can be built, otherwise the enclosing scroll view's magnification
-    /// (what NSScrollView does with the gesture).
+    /// Pinch. On a magnifying NSScrollView it does what a trackpad pinch does there: will-start notification,
+    /// magnification changed in steps around the point, did-end notification (which views listen to, to keep
+    /// their zoom). Elsewhere a magnify gesture event (built from a CGEvent, never posted) goes to the view.
     private func magnify(_ window: NSWindow, _ point: NSPoint, amount: Double) {
         let hit = window.contentView?.superview?.hitTest(point) ?? window.contentView?.hitTest(point)
+        var view = hit
+        while let current = view, !((current as? NSScrollView)?.allowsMagnification ?? false) { view = current.superview }
+        if let scrollView = view as? NSScrollView {
+            NotificationCenter.default.post(name: NSScrollView.willStartLiveMagnifyNotification, object: scrollView)
+            let start = scrollView.magnification
+            for step in 1...4 {
+                let center = scrollView.contentView.convert(point, from: nil)
+                scrollView.setMagnification(start * (1 + amount * Double(step) / 4), centeredAt: center)
+            }
+            NotificationCenter.default.post(name: NSScrollView.didEndLiveMagnifyNotification, object: scrollView)
+            return
+        }
         if let cg = CGEvent(source: nil) {
             cg.type = CGEventType(rawValue: 29)!   // kCGSEventGesture
             cg.setIntegerValueField(CGEventField(rawValue: 110)!, value: 8)   // kIOHIDEventTypeZoom
@@ -572,13 +778,7 @@ final class UIHarness {
                 return
             }
         }
-        var view = hit
-        while let current = view, !(current is NSScrollView) { view = current.superview }
-        if let scrollView = view as? NSScrollView, scrollView.allowsMagnification {
-            scrollView.setMagnification(scrollView.magnification * (1 + amount), centeredAt: scrollView.contentView.convert(point, from: nil))
-        } else {
-            logs.append("magnify: no magnifiable view at \(point)")
-        }
+        logs.append("magnify: no magnifiable view at \(point)")
     }
 
     // MARK: - Menus
@@ -667,42 +867,57 @@ final class UIHarness {
     private func deliverDrop(_ payload: String, in window: NSWindow, at point: NSPoint) async throws {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("app.bunnygrid.uiharness.\(UUID().uuidString)"))
         pasteboard.clearContents()
-        pasteboard.declareTypes([.string, NSPasteboard.PasteboardType("public.utf8-plain-text")], owner: nil)
-        pasteboard.setString(payload, forType: .string)
+        // What `.draggable(String)` / NSString writers put on a drag pasteboard.
+        let textTypes = [NSPasteboard.PasteboardType.string, .init("public.plain-text"), .init("public.text"), .init("public.utf16-plain-text")]
+        pasteboard.declareTypes(textTypes, owner: nil)
+        for type in textTypes { pasteboard.setString(payload, forType: type) }
         let info = HarnessDraggingInfo(window: window, location: point, pasteboard: pasteboard)
         let hit = window.contentView?.superview?.hitTest(point) ?? window.contentView?.hitTest(point)
-        var view = hit
         let types = Set(pasteboard.types ?? [.string])
-        // The innermost view that registered for a type on the pasteboard.
-        var chain: [String] = []
-        while let current = view, !current.registeredDraggedTypes.contains(where: types.contains) {
-            chain.append(String(describing: type(of: current)).prefix(40) + "")
-            view = current.superview
+        // The innermost AppKit view registered for a type on the pasteboard; otherwise the window, which routes the
+        // drag to SwiftUI's drop destinations (they do not register types per view).
+        var view = hit
+        while let current = view, !current.registeredDraggedTypes.contains(where: types.contains) { view = current.superview }
+        // SwiftUI's drop targets are `_PlatformDraggingDestinationView`s that hit testing skips and that register
+        // parent types (public.data): like AppKit, take the frontmost view under the point whose registered types
+        // the pasteboard's types conform to, before falling back to the hit-test chain.
+        let pasteboardUTTypes = types.compactMap { UTType($0.rawValue) }
+        var registered: NSView?
+        if let root = window.contentView?.superview {
+            walkViews(root) { candidate in
+                guard !candidate.isHiddenOrHasHiddenAncestor, !candidate.registeredDraggedTypes.isEmpty,
+                      candidate.convert(candidate.bounds, to: nil).contains(point),
+                      candidate.registeredDraggedTypes.contains(where: { accepted in
+                          types.contains(accepted) || UTType(accepted.rawValue).map { want in pasteboardUTTypes.contains { $0.conforms(to: want) } } == true
+                      }) else { return }
+                registered = candidate
+            }
         }
-        guard let destination = view else { throw Failure("no drop destination at \(point) (hit: \(chain.joined(separator: " < ")))") }
-        let entered = await onRunLoop { destination.draggingEntered(info) }
+        if let registered, view == nil || registered.isDescendant(of: view!) || !(view!.isDescendant(of: registered)) { view = registered }
+        let destination: NSDraggingDestination = view.map { $0 as NSDraggingDestination } ?? (window as NSDraggingDestination)
+        let name = String(describing: type(of: destination))
+        let entered = await onRunLoop { destination.draggingEntered?(info) ?? [] }
+        info.lastOperation = entered
         try await drain(ms: 30)
-        var updated: NSDragOperation = []
+        var updated = entered
         for offset in [1.0, 0.0] {
             info.location = NSPoint(x: point.x + offset, y: point.y)
-            updated = await onRunLoop { destination.responds(to: #selector(NSView.draggingUpdated(_:))) ? destination.draggingUpdated(info) : entered }
+            updated = await onRunLoop { destination.draggingUpdated?(info) ?? entered }
+            info.lastOperation = updated
             try await drain(ms: 30)
         }
-        guard entered != [] || updated != [] else {
-            await onRunLoop { if destination.responds(to: #selector(NSView.draggingExited(_:))) { destination.draggingExited(info) } }
-            throw Failure("\(type(of: destination)) refused the drop of \(payload)")
+        guard updated != [] else {
+            await onRunLoop { destination.draggingExited?(info) }
+            throw Failure("\(name) refused the drop of \(payload) at \(point) (over \(hit.map { String(describing: type(of: $0)) } ?? "nothing"))")
         }
         let accepted = await onRunLoop {
-            // The optional NSDraggingDestination methods are only sent when implemented, as AppKit does.
-            if destination.responds(to: #selector(NSView.prepareForDragOperation(_:))) {
-                guard destination.prepareForDragOperation(info) else { return false }
-            }
-            let accepted = destination.performDragOperation(info)
-            if destination.responds(to: #selector(NSView.concludeDragOperation(_:))) { destination.concludeDragOperation(info) }
-            if destination.responds(to: #selector(NSView.draggingEnded(_:))) { destination.draggingEnded(info) }
+            if destination.prepareForDragOperation?(info) == false { return false }
+            let accepted = destination.performDragOperation?(info) ?? false
+            destination.concludeDragOperation?(info)
+            destination.draggingEnded?(info)
             return accepted
         }
-        guard accepted else { throw Failure("\(type(of: destination)) did not accept \(payload)") }
+        guard accepted else { throw Failure("\(name) did not accept \(payload)") }
         try await drain()
     }
 
@@ -727,12 +942,24 @@ final class UIHarness {
     func screenshot(named name: String) -> String? {
         let main = NSApp.orderedWindows.first { $0.isVisible && $0.identifier?.rawValue.hasPrefix("main") == true } ?? NSApp.keyWindow ?? windows.first
         guard let main else { return nil }
+        logs.append("screenshot \(name): \(main.identifier?.rawValue ?? "?") \(Int(main.frame.width))x\(Int(main.frame.height)) of [\(NSApp.windows.filter(\.isVisible).map { "\($0.identifier?.rawValue ?? String(describing: type(of: $0))) \(Int($0.frame.width))x\(Int($0.frame.height))" }.joined(separator: ", "))]")
         let path = capture(main, as: name)
         if let sheet = main.attachedSheet { _ = capture(sheet, as: name + "-sheet") }
         for other in windows where other !== main && !other.isSheet && other.level == .normal {
             _ = capture(other, as: name + "-" + (other.title.isEmpty ? "window" : other.title.lowercased().replacingOccurrences(of: " ", with: "-")))
         }
         return path
+    }
+
+    /// Every sampled pixel the same colour.
+    private static func isBlank(_ image: CGImage) -> Bool {
+        let rep = NSBitmapImageRep(cgImage: image)
+        guard rep.pixelsWide > 8, rep.pixelsHigh > 8, let first = rep.colorAt(x: 4, y: 4) else { return true }
+        for i in 1..<64 {
+            let x = (i * 37) % rep.pixelsWide, y = (i * 53) % rep.pixelsHigh
+            if let color = rep.colorAt(x: x, y: y), color != first { return false }
+        }
+        return true
     }
 
     private func capture(_ window: NSWindow, as name: String) -> String? {
@@ -742,7 +969,8 @@ final class UIHarness {
             // .optionIncludingWindow; .boundsIgnoreFraming | .bestResolution: only this window, never what is behind it.
             image = function(.null, 8, UInt32(window.windowNumber), 1 | 8)?.takeRetainedValue()
         }
-        if (image?.width ?? 0) < 4, let view = window.contentView?.superview ?? window.contentView,
+        // A locked or sleeping screen gives a blank (uniform) capture: draw the window ourselves instead.
+        if (image?.width ?? 0) < 4 || image.map(Self.isBlank) == true, let view = window.contentView?.superview ?? window.contentView,
            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: rep)
             image = rep.cgImage
@@ -828,6 +1056,37 @@ final class ResultBox<T> {
     var value: T?
 }
 
+@MainActor @Observable
+final class HarnessGestureProbe {
+    var changed: [String: Int] = [:]
+    var ended: [String: Int] = [:]
+    var taps: [String: Int] = [:]
+}
+
+private struct HarnessGestureView: View {
+    let probe: HarnessGestureProbe
+
+    var body: some View {
+        VStack(spacing: 0) {
+            target("plain").frame(height: 200)
+            ScrollView { target("scroll").frame(height: 200) }.frame(height: 200)
+        }
+    }
+
+    private func target(_ name: String) -> some View {
+        Color.blue.opacity(0.3)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 2)
+                .onChanged { _ in probe.changed[name, default: 0] += 1 }
+                .onEnded { _ in probe.ended[name, default: 0] += 1 })
+            .onTapGesture { probe.taps[name, default: 0] += 1 }
+    }
+}
+
+/// NSWindow implements the dragging-destination methods (it routes a drag to the view under it, SwiftUI's drop
+/// destinations included); the requirements are all optional, so they are sent only when implemented.
+extension NSWindow: @retroactive NSDraggingDestination {}
+
 struct UncheckedBox<T>: @unchecked Sendable {
     let value: T
     init(_ value: T) { self.value = value }
@@ -861,12 +1120,21 @@ final class HarnessDraggingInfo: NSObject, @preconcurrency NSDraggingInfo {
     func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?, classes classArray: [AnyClass],
                                 searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
                                 using block: @escaping (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {
-        guard let string = pasteboard.string(forType: .string) else { return }
-        let item = NSDraggingItem(pasteboardWriter: string as NSString)
+        // Items read back from the pasteboard as the classes asked for (NSPasteboardItem, NSString, …).
+        let objects = pasteboard.readObjects(forClasses: classArray, options: searchOptions) ?? []
         var stop: ObjCBool = false
-        block(item, 0, &stop)
+        for (index, object) in objects.enumerated() {
+            guard let writer = object as? NSPasteboardWriting else { continue }
+            let item = NSDraggingItem(pasteboardWriter: writer)
+            block(item, index, &stop)
+            if stop.boolValue { break }
+        }
     }
     var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    /// The operation the destination last answered (AppKit's private bookkeeping, which SwiftUI reads).
+    var lastOperation: NSDragOperation = []
+    @objc func _lastDragDestinationOperation() -> UInt { lastOperation.rawValue }
+    @objc func _setLastDragDestinationOperation(_ value: UInt) { lastOperation = NSDragOperation(rawValue: value) }
     func resetSpringLoading() {}
 }
 #endif

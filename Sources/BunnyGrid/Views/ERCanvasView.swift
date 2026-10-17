@@ -576,6 +576,26 @@ final class ERScrollView: NSScrollView {
     }
 }
 
+#if DEBUG
+/// UI scenarios: "table:NAME" (a card's header), "card:NAME" (the whole card), "empty" (a spot with no card).
+extension ERCanvasView: UIHarnessAnchors {
+    func harnessAnchor(_ name: String) -> NSRect? {
+        if name == "empty" {
+            let used = frames.values.reduce(CGRect.null) { $0.union($1) }
+            return NSRect(x: used.maxX + 20, y: used.minY + 10, width: 20, height: 20)
+        }
+        let parts = name.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let table = diagram?.tables.first(where: { $0.name == parts[1] || $0.id == parts[1] }),
+              let frame = frames[table.id] else { return nil }
+        return parts[0] == "table" ? NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: 26) : frame
+    }
+
+    var harnessValue: String? {
+        frames.keys.sorted().map { "\($0)@\(Int(frames[$0]!.minX)),\(Int(frames[$0]!.minY))" }.joined(separator: " ")
+    }
+}
+#endif
+
 /// A menu item that runs a closure (the cards' context menu).
 final class ERMenuItem: NSMenuItem {
     private let handler: () -> Void

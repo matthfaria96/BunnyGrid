@@ -110,7 +110,12 @@ final class BIWorkspaceModel: DocumentTab, Identifiable {
 
     func updateDashboard(_ id: UUID, refresh: Bool = false, _ change: (inout BIDashboard) -> Void) {
         guard let i = workspace.dashboards.firstIndex(where: { $0.id == id }) else { return }
-        change(&workspace.dashboards[i])
+        // On a copy, like updateChart: `change` may read the workspace (place() looks up the chart type), and
+        // doing that while `workspace` is being mutated in place was an exclusivity crash on every chart placed
+        // on a dashboard (drag from the sidebar, Add Chart, Add to Dashboard).
+        var board = workspace.dashboards[i]
+        change(&board)
+        workspace.dashboards[i] = board
         if refresh { refreshDashboard(id) }
     }
 

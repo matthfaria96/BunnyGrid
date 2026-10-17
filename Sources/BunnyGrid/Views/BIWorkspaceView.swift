@@ -494,6 +494,8 @@ struct BIShelf: View {
             }
             return accepted
         } isTargeted: { isTargeted = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("bi.shelf.\(title)")
     }
 }
 

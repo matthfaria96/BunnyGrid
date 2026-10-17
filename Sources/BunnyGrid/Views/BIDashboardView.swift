@@ -57,6 +57,8 @@ struct BIDashboardView: View {
                 withAnimation(.smooth) { ids.forEach { model.place($0, on: dashboard.id) } }
                 return !ids.isEmpty
             } isTargeted: { isTargeted = $0 }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("bi.dashboard")
         }
         .task(id: dashboard.id) { model.refreshDashboard(dashboard.id) }
     }
@@ -93,6 +95,7 @@ struct BIDashboardView: View {
                         Label("Add Filter", systemImage: "plus").font(.system(size: 11.5))
                     }
                     .menuStyle(.button).buttonStyle(.plain).fixedSize().foregroundStyle(.secondary)
+                    .accessibilityIdentifier("bi.addFilter")
                 }
             }
             Spacer()
@@ -105,6 +108,7 @@ struct BIDashboardView: View {
             }
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
             .disabled(model.workspace.charts.isEmpty)
+            .accessibilityIdentifier("bi.addChart")
         }
         .padding(.horizontal, 12)
         .frame(height: 36)
@@ -191,6 +195,8 @@ struct BIDashboardTile: View {
         .offset(x: frame.minX + move.width, y: frame.minY + move.height)
         .zIndex(active ? 1 : 0)
         .onHover { hovering = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("bi.tile.\(chart.name)")
     }
 
     private func commit(dx: CGFloat, dy: CGFloat, dw: CGFloat, dh: CGFloat) {
