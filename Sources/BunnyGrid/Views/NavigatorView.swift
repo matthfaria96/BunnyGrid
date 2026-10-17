@@ -297,6 +297,27 @@ private struct NavContextMenu: View {
     @Environment(AppModel.self) private var app
     let node: NavNode
 
+    /// SQLite "Attach Database…": pick a file, ATTACH it under its file name, and show it beside main.
+    private func attachDatabase(to id: UUID) {
+        let panel = NSOpenPanel()
+        panel.title = "Attach Database"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url, let session = app.sessions[id] else { return }
+        let base = url.deletingPathExtension().lastPathComponent
+        var alias = base.isEmpty ? "attached" : base
+        var suffix = 2
+        while session.databases.contains(alias) { alias = "\(base)\(suffix)"; suffix += 1 }
+        Task {
+            do {
+                try await session.attachSQLiteDatabase(path: url.path, alias: alias)
+                app.setExpanded(.database(id, alias), true)
+            } catch {
+                app.alertMessage = error.localizedDescription
+            }
+        }
+    }
+
     var body: some View {
         switch node {
         case .connection(let id):
@@ -306,17 +327,27 @@ private struct NavContextMenu: View {
             } else {
                 Button("Open Connection") { app.setExpanded(node, true) }
             }
+            // BunnyGrid keeps one profile per connection; the submenu is where Navicat lists them.
+            Menu("Switch Connection Profile") {
+                Toggle("Main Profile", isOn: .constant(true))
+                Divider()
+                Button("Edit Connection…") { app.edit(id) }
+            }
             Divider()
             Button("Edit Connection…") { app.edit(id) }
             Button("New Connection") { app.newConnection() }
             Button("Delete Connection", role: .destructive) { app.delete(id) }
             Button("Duplicate Connection…") { app.duplicate(id) }
             Divider()
-            if app.connection(id: id)?.kind != .sqlite {
+            if app.connection(id: id)?.kind == .sqlite {
+                Button("Attach Database…") { attachDatabase(to: id) }
+                    .disabled(!isOpen || app.connection(id: id)?.readOnly == true)
+            } else {
                 Button("New Database…") { app.creatingDatabaseFor = id }
                     .disabled(!isOpen)
             }
             Button("New Query") { app.openQuery(in: app.sessions[id]?.contexts.values.first) }
+                .keyboardShortcut("y")
                 .disabled(!isOpen)
             Divider()
             Button("Console") { app.openQuery(in: app.sessions[id]?.contexts.values.first) }
@@ -325,20 +356,23 @@ private struct NavContextMenu: View {
                 .disabled(!isOpen)
             Divider()
             Button(app.starredConnections.contains(id) ? "Remove Star" : "Add Star") { app.toggleStar(id) }
-            Menu("Color") {
+            // "Color:" with the swatches inline, as in Navicat's menu.
+            ControlGroup {
                 ForEach(ConnectionColor.allCases) { color in
                     Button {
                         app.setColor(color, for: id)
                     } label: {
-                        if let swatch = color.swiftUIColor {
-                            Label(color.rawValue.capitalized, systemImage: app.connection(id: id)?.color == color ? "checkmark.circle.fill" : "circle.fill")
-                                .foregroundStyle(swatch)
-                        } else {
-                            Label("None", systemImage: app.connection(id: id)?.color == color ? "checkmark" : "xmark")
+                        Label {
+                            Text(color == .none ? "None" : color.rawValue.capitalized)
+                        } icon: {
+                            Image(nsImage: ColorSwatch.image(color, selected: app.connection(id: id)?.color == color))
                         }
                     }
                 }
+            } label: {
+                Text("Color:")
             }
+            .controlGroupStyle(.palette)
             Divider()
             Menu("Manage Group") {
                 Button("New Group…") { app.groupingConnection = id }
@@ -554,5 +588,55 @@ private struct DatabaseActionItems: View {
             Button("Structure Only…") { app.dumpDatabase(context, schema: schema, includeData: false) }
         }
         Button("Reverse Database to Model") { app.openModel(in: context, schema: schema) }
+    }
+}
+
+/// Small colored squares for the connection color palette (not template images, so menus keep their color).
+@MainActor enum ColorSwatch {
+    private static var cache: [String: NSImage] = [:]
+
+    static func image(_ color: ConnectionColor, selected: Bool) -> NSImage {
+        let key = "\(color.rawValue)-\(selected)"
+        if let cached = cache[key] { return cached }
+        let size = NSSize(width: 14, height: 14)
+        let image = NSImage(size: size, flipped: false) { rect in
+            let square = NSBezierPath(roundedRect: rect.insetBy(dx: 2.5, dy: 2.5), xRadius: 2, yRadius: 2)
+            if let swatch = color.nsColor {
+                swatch.setFill()
+                square.fill()
+            } else {
+                NSColor.secondaryLabelColor.setStroke()
+                let cross = NSBezierPath()
+                cross.move(to: NSPoint(x: 4, y: 4)); cross.line(to: NSPoint(x: 10, y: 10))
+                cross.move(to: NSPoint(x: 4, y: 10)); cross.line(to: NSPoint(x: 10, y: 4))
+                cross.lineWidth = 1.4
+                cross.stroke()
+            }
+            if selected {
+                NSColor.labelColor.setStroke()
+                let ring = NSBezierPath(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), xRadius: 3, yRadius: 3)
+                ring.lineWidth = 1.2
+                ring.stroke()
+            }
+            return true
+        }
+        image.isTemplate = false
+        cache[key] = image
+        return image
+    }
+}
+
+extension ConnectionColor {
+    var nsColor: NSColor? {
+        switch self {
+        case .none: nil
+        case .red: .systemRed
+        case .orange: .systemOrange
+        case .yellow: .systemYellow
+        case .green: .systemGreen
+        case .blue: .systemBlue
+        case .purple: .systemPurple
+        case .gray: .systemGray
+        }
     }
 }

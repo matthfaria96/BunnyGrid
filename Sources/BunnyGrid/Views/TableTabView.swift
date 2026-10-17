@@ -43,7 +43,7 @@ struct TableTabView: View {
         .task { await model.loadIfNeeded(applying: app.defaultProfile(for: model)) }
         .sheet(isPresented: $model.showProfiling) {
             if let context = app.currentContextFor(model) {
-                DataProfilingView(model: model, driver: context.driver, driverSchema: context.usesSchemas ? model.object.schema : (context.kind == .sqlite ? nil : context.name))
+                DataProfilingView(model: model, driver: context.driver, driverSchema: context.driverSchema(model.object.schema))
             }
         }
         .alert("Save Table Profile", isPresented: $namingProfile) {
@@ -93,6 +93,7 @@ struct TableTabView: View {
     @ViewBuilder
     private var toolbarItems: some View {
                 TableProfileMenu(model: model, namingProfile: $namingProfile)
+                ToolbarGroupSeparator()
                 if model.isInTransaction {
                     ToolbarChip(title: "Commit", systemImage: "checkmark.seal.fill", tint: .green, help: "Apply pending edits and commit the transaction", icon: "tb-commit") {
                         Task { await model.commitTransaction() }
@@ -106,6 +107,7 @@ struct TableTabView: View {
                         Task { await model.beginTransaction(session: model.connectionID.flatMap { app.sessions[$0] }) }
                     }
                 }
+                ToolbarGroupSeparator()
                 ToolbarChip(title: "Cell Editor", systemImage: "square.and.pencil", tint: .orange, isOn: model.showCellEditor, icon: "tb-cell-editor") {
                     model.showCellEditor.toggle()
                 }
@@ -125,6 +127,7 @@ struct TableTabView: View {
                         includeTable: true
                     )
                 }
+                ToolbarGroupSeparator()
                 ToolbarChip(title: "Data Profiling", systemImage: "chart.bar.doc.horizontal", tint: .green, isEnabled: !model.columns.isEmpty, icon: "tb-data-profiling") {
                     model.showProfiling = true
                 }
