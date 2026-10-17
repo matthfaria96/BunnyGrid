@@ -101,14 +101,25 @@ extension SQLDialect {
         }
     }
 
-    public func createTable(name: String, schema: String?, columns: [ColumnDesign], foreignKeys: [TableForeignKey] = []) throws -> String {
+    /// `sqliteOptions` (SQLite only) adds Primary Key ON CONFLICT, AUTOINCREMENT and WITHOUT ROWID.
+    public func createTable(name: String, schema: String?, columns: [ColumnDesign], foreignKeys: [TableForeignKey] = [],
+                            sqliteOptions: SQLiteTableOptions? = nil) throws -> String {
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { throw TableDesignError.invalid("The table needs a name.") }
         try validate(columns)
-        var parts = columns.map { "  " + columnDefinition($0) }
-        let keys = columns.filter(\.isPrimaryKey).map { quoteIdentifier($0.name) }
-        if !keys.isEmpty { parts.append("  PRIMARY KEY (\(keys.joined(separator: ", ")))") }
+        var parts: [String]
+        var suffix = ""
+        if kind == .sqlite, let options = sqliteOptions {
+            try options.validate(columns)
+            let table = options.tableParts(columns: columns, dialect: self)
+            parts = table.columns + (table.primaryKey.map { [$0] } ?? [])
+            suffix = table.suffix
+        } else {
+            parts = columns.map { "  " + columnDefinition($0) }
+            let keys = columns.filter(\.isPrimaryKey).map { quoteIdentifier($0.name) }
+            if !keys.isEmpty { parts.append("  PRIMARY KEY (\(keys.joined(separator: ", ")))") }
+        }
         for key in foreignKeys { parts.append("  " + (try foreignKeyClause(key, schema: schema))) }
-        return "CREATE TABLE \(qualifiedName(table: name, schema: schema)) (\n\(parts.joined(separator: ",\n"))\n)"
+        return "CREATE TABLE \(qualifiedName(table: name, schema: schema)) (\n\(parts.joined(separator: ",\n"))\n)\(suffix)"
     }
 
     public func createIndex(_ index: IndexDesign, table: String, schema: String?) throws -> String {
