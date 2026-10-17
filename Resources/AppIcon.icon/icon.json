@@ -1,0 +1,91 @@
+{
+  "fill" : {
+    "solid" : "srgb:0.11765,0.12549,0.18824,1.00000"
+  },
+  "groups" : [
+    {
+      "name" : "Bunny",
+      "layers" : [
+        {
+          "name" : "bunny",
+          "image-name" : "bunny.png",
+          "glass" : true,
+          "position" : {
+            "scale" : 0.86,
+            "translation-in-points" : [ 0, 0 ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.5
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.15
+      }
+    },
+    {
+      "name" : "Database",
+      "layers" : [
+        {
+          "name" : "coins",
+          "image-name" : "coins.png",
+          "glass" : true,
+          "position" : {
+            "scale" : 0.86,
+            "translation-in-points" : [ 0, 0 ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.5
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.1
+      }
+    },
+    {
+      "name" : "Background",
+      "layers" : [
+        {
+          "name" : "background",
+          "image-name" : "background.png",
+          "glass" : false,
+          "opacity-specializations" : [
+            { "appearance" : "dark", "value" : 0 }
+          ]
+        },
+        {
+          "name" : "background-dark",
+          "image-name" : "background-dark.png",
+          "glass" : false,
+          "opacity-specializations" : [
+            { "value" : 0 },
+            { "appearance" : "dark", "value" : 1 }
+          ]
+        }
+      ],
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}

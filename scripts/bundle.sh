@@ -23,6 +23,14 @@ cp "$BIN" "$APP/Contents/MacOS/BunnyGrid"
 # SwiftPM resource bundle (SVG icons) lives in Contents/Resources so the signature stays valid.
 cp -R "$(dirname "$BIN")/BunnyGrid_BunnyGrid.bundle" "$APP/Contents/Resources/"
 
+# App icon from Icon Composer (Resources/AppIcon.icon): actool compiles the layered Liquid Glass icon into
+# Assets.car (default, dark, tinted and clear renditions on macOS 26+) plus AppIcon.icns for macOS 14–15.
+ICON_PLIST="$(mktemp -t bunnygrid-icon).plist"
+xcrun actool "$ROOT/Resources/AppIcon.icon" --compile "$APP/Contents/Resources" \
+  --platform macosx --target-device mac --minimum-deployment-target 14.0 \
+  --app-icon AppIcon --include-all-app-icons \
+  --output-partial-info-plist "$ICON_PLIST" >/dev/null
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -39,9 +47,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>CFBundleIconName</key><string>AppIcon</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
 </dict>
 </plist>
 PLIST
 
+rm -f "$ICON_PLIST"
 codesign --force --sign - "$APP" >/dev/null
 echo "Built $APP"

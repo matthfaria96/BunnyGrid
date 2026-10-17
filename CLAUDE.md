@@ -9,7 +9,8 @@ The active developer dir on this machine is the Command Line Tools, so prefix co
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 swift build && swift test
-scripts/bundle.sh debug     # build/BunnyGrid.app
+scripts/bundle.sh debug     # build/BunnyGrid.app (compiles Resources/AppIcon.icon with actool)
+scripts/preview-icon.sh <dir>   # render the icon in every appearance
 ```
 
 Visual check without touching the user's saved connections or driving the mouse:
