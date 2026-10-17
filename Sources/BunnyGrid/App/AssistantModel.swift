@@ -21,6 +21,8 @@ struct AIMessage: Codable, Identifiable, Hashable {
     var note: String?
     /// Platform that answered (nil in chats saved before ChatGPT support: those were Claude).
     var provider: AIProvider?
+    /// Name of the configured assistant that answered.
+    var assistantName: String?
     /// For user messages: what was typed, so Edit can put it back in the composer.
     var typedText: String?
     /// Answers to the same question from the other assistants ("Compare with Other Assistants").
@@ -31,6 +33,7 @@ struct AIMessage: Codable, Identifiable, Hashable {
 struct AIAlternate: Codable, Identifiable, Hashable {
     var id = UUID()
     var provider: AIProvider
+    var assistantName: String?
     var model: String?
     var text: String
     var note: String?
@@ -86,22 +89,16 @@ enum KeyVerification: Equatable {
 final class AssistantModel {
     private(set) var chats: [AIChat] = []
     var currentChatID: UUID?
-    /// The platform answering new messages; switched from the profile picture or the composer.
-    var provider: AIProvider = AIProvider(rawValue: UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .claude {
-        didSet { UserDefaults.standard.set(provider.rawValue, forKey: "aiProvider") }
+    /// Navicat's Settings › AI › AI Assistant list; the active one answers new messages.
+    var assistants: [AIAssistantConfig] = AssistantModel.loadAssistants() {
+        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(assistants), forKey: "aiAssistants") }
     }
-    var claudeModel: ClaudeModel = ClaudeModel(rawValue: UserDefaults.standard.string(forKey: "claudeModel") ?? "") ?? .opus {
-        didSet { UserDefaults.standard.set(claudeModel.rawValue, forKey: "claudeModel") }
+    var activeAssistantID: UUID? = UserDefaults.standard.string(forKey: "aiActiveAssistant").flatMap(UUID.init) {
+        didSet { UserDefaults.standard.set(activeAssistantID?.uuidString, forKey: "aiActiveAssistant") }
     }
-    var openAIModel: String = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAIModels.defaultModel {
-        didSet { UserDefaults.standard.set(openAIModel, forKey: "openAIModel") }
-    }
-    /// Max Tokens, Effort and Instruction per platform.
-    var requestOptions: [AIProvider: AIRequestOptions] = AssistantModel.loadOptions() {
-        didSet {
-            let encoded = Dictionary(uniqueKeysWithValues: requestOptions.map { ($0.key.rawValue, $0.value) })
-            UserDefaults.standard.set(try? JSONEncoder().encode(encoded), forKey: "aiRequestOptions")
-        }
+    /// Navicat's "Enable AI Assistant".
+    var aiEnabled = UserDefaults.standard.object(forKey: "aiEnabled") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(aiEnabled, forKey: "aiEnabled") }
     }
     /// Navicat's "Action for Enter key": send, or start a new line (then ⌘↩ sends).
     var enterSends = UserDefaults.standard.object(forKey: "aiEnterSends") as? Bool ?? true {
@@ -113,9 +110,9 @@ final class AssistantModel {
     }
     /// OpenAI models for the picker: the suggested ones until the account's list arrives.
     private(set) var openAIModels: [AIModelOption] = OpenAIModels.suggested
-    /// Keys saved in the Keychain, read off the main thread at launch.
-    private(set) var storedKeys: [AIProvider: String] = [:]
-    private(set) var verification: [AIProvider: KeyVerification] = [:]
+    /// Keys saved in the Keychain per assistant, read off the main thread at launch.
+    private(set) var storedKeys: [UUID: String] = [:]
+    private(set) var verification: [UUID: KeyVerification] = [:]
     /// Saved Ask AI actions from the query editor.
     private(set) var actions: [AIAction] = []
 
@@ -127,6 +124,7 @@ final class AssistantModel {
     private(set) var streamingText = ""
     /// The assistant message whose answer from another platform is streaming in.
     private(set) var comparingMessageID: UUID?
+    private(set) var comparingAssistantID: UUID?
     private(set) var compareText = ""
     var error: String?
     var isExpanded = false
@@ -151,139 +149,212 @@ final class AssistantModel {
         chats.first { $0.id == currentChatID }
     }
 
-    // MARK: - Platforms and keys
+    // MARK: - Assistants and keys
 
-    /// `BUNNYGRID_ANTHROPIC_BASE_URL` / `BUNNYGRID_OPENAI_BASE_URL` point a platform at a proxy or a local mock.
-    static func baseURL(for provider: AIProvider) -> URL? {
-        let name = provider == .claude ? "BUNNYGRID_ANTHROPIC_BASE_URL" : "BUNNYGRID_OPENAI_BASE_URL"
-        guard let value = ProcessInfo.processInfo.environment[name], !value.isEmpty else { return nil }
-        return URL(string: value)
+    /// The assistant answering new messages.
+    var active: AIAssistantConfig? {
+        guard aiEnabled else { return nil }
+        return assistants.first { $0.id == activeAssistantID } ?? assistants.first
     }
 
-    private static func anthropic(_ key: String) -> AnthropicClient {
-        baseURL(for: .claude).map { AnthropicClient(apiKey: key, baseURL: $0) } ?? AnthropicClient(apiKey: key)
+    /// The active assistant's platform (Claude when none is configured), for icons and labels.
+    var provider: AIProvider { active?.provider ?? .claude }
+
+    private static func loadAssistants() -> [AIAssistantConfig] {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: "aiAssistants"), let saved = try? JSONDecoder().decode([AIAssistantConfig].self, from: data) {
+            return saved
+        }
+        // First run, or settings from before assistants: one Claude and one ChatGPT assistant.
+        let claude = AIAssistantConfig(provider: .claude, model: defaults.string(forKey: "claudeModel"))
+        let chatGPT = AIAssistantConfig(provider: .chatGPT, model: defaults.string(forKey: "openAIModel"))
+        if defaults.string(forKey: "aiProvider") == AIProvider.chatGPT.rawValue {
+            defaults.set(chatGPT.id.uuidString, forKey: "aiActiveAssistant")
+        }
+        return [claude, chatGPT]
     }
 
-    private static func openAI(_ key: String) -> OpenAIClient {
-        baseURL(for: .chatGPT).map { OpenAIClient(apiKey: key, baseURL: $0) } ?? OpenAIClient(apiKey: key)
+    func activate(_ id: UUID) {
+        activeAssistantID = id
+        if let assistant = assistants.first(where: { $0.id == id }) { verifyIfNeeded(assistant) }
+    }
+
+    /// The first assistant on a platform (the profile popover's quick switch).
+    func assistant(for provider: AIProvider) -> AIAssistantConfig? {
+        assistants.first { $0.provider == provider }
+    }
+
+    /// Activates the platform's first assistant, creating one if there is none.
+    func activate(provider: AIProvider) {
+        let assistant = assistant(for: provider) ?? addAssistant(provider)
+        activate(assistant.id)
+    }
+
+    @discardableResult
+    func addAssistant(_ provider: AIProvider) -> AIAssistantConfig {
+        let taken = Set(assistants.map(\.name))
+        var name = provider.displayName
+        var number = 2
+        while taken.contains(name) { name = "\(provider.displayName) \(number)"; number += 1 }
+        let assistant = AIAssistantConfig(name: name, provider: provider)
+        assistants.append(assistant)
+        return assistant
+    }
+
+    func updateAssistant(_ assistant: AIAssistantConfig) {
+        guard let index = assistants.firstIndex(where: { $0.id == assistant.id }) else { return }
+        let hostChanged = assistants[index].apiHost != assistant.apiHost
+        assistants[index] = assistant
+        if hostChanged { verification[assistant.id] = .unknown }
+    }
+
+    func removeAssistant(_ id: UUID) {
+        guard let assistant = assistants.first(where: { $0.id == id }) else { return }
+        assistants.removeAll { $0.id == id }
+        storedKeys[id] = nil
+        verification[id] = nil
+        if activeAssistantID == id { activeAssistantID = assistants.first?.id }
+        Task.detached(priority: .utility) {
+            Self.keychain(assistant.provider).setPassword(nil, account: id.uuidString)
+        }
+    }
+
+    /// `BUNNYGRID_ANTHROPIC_BASE_URL` / `BUNNYGRID_OPENAI_BASE_URL` override the default host (proxy or local mock).
+    static func baseURL(for assistant: AIAssistantConfig) -> URL {
+        let name = assistant.provider == .claude ? "BUNNYGRID_ANTHROPIC_BASE_URL" : "BUNNYGRID_OPENAI_BASE_URL"
+        if assistant.apiHost == assistant.provider.defaultHost, let value = ProcessInfo.processInfo.environment[name],
+           !value.isEmpty, let url = URL(string: value) {
+            return url
+        }
+        return assistant.baseURL
     }
 
     nonisolated private static func keychain(_ provider: AIProvider) -> KeychainStore {
         KeychainStore(service: provider.keychainService)
     }
 
-    private static func loadOptions() -> [AIProvider: AIRequestOptions] {
-        guard let data = UserDefaults.standard.data(forKey: "aiRequestOptions"),
-              let decoded = try? JSONDecoder().decode([String: AIRequestOptions].self, from: data) else { return [:] }
-        return Dictionary(uniqueKeysWithValues: decoded.compactMap { key, value in AIProvider(rawValue: key).map { ($0, value) } })
-    }
-
-    func options(for provider: AIProvider) -> AIRequestOptions {
-        requestOptions[provider] ?? AIRequestOptions()
-    }
-
     /// Keychain reads can block on an access prompt (ad hoc builds), so they run detached.
+    /// Keys saved before assistants existed (account "api-key") move to that platform's first assistant.
     private func loadKeys() {
+        let assistants = assistants
         Task {
-            let keys = await Task.detached(priority: .userInitiated) {
-                Dictionary(uniqueKeysWithValues: AIProvider.allCases.map { ($0, Self.keychain($0).password(account: Self.apiKeyAccount) ?? "") })
-            }.value
-            storedKeys = keys
-        }
-    }
-
-    func apiKey(for provider: AIProvider) -> String {
-        if let key = storedKeys[provider], !key.isEmpty { return key }
-        return ProcessInfo.processInfo.environment[provider.environmentKey] ?? ""
-    }
-
-    func hasAPIKey(for provider: AIProvider) -> Bool { !apiKey(for: provider).isEmpty }
-
-    var hasAPIKey: Bool { hasAPIKey(for: provider) }
-
-    func storedAPIKey(for provider: AIProvider) -> String { storedKeys[provider] ?? "" }
-
-    /// True when the key comes from the environment rather than the Keychain.
-    func usesEnvironmentKey(_ provider: AIProvider) -> Bool {
-        storedAPIKey(for: provider).isEmpty && hasAPIKey(for: provider)
-    }
-
-    func setAPIKey(_ key: String, for provider: AIProvider) {
-        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        storedKeys[provider] = key
-        verification[provider] = .unknown
-        Task.detached(priority: .userInitiated) {
-            Self.keychain(provider).setPassword(key.isEmpty ? nil : key, account: Self.apiKeyAccount)
-        }
-        if !key.isEmpty { verify(provider) }
-    }
-
-    /// Checks the key against the platform (listing its models) and refreshes the OpenAI model list.
-    func verify(_ provider: AIProvider) {
-        let key = apiKey(for: provider)
-        guard !key.isEmpty else {
-            verification[provider] = .unknown
-            return
-        }
-        verification[provider] = .checking
-        Task {
-            do {
-                switch provider {
-                case .claude:
-                    _ = try await Self.anthropic(key).listModels()
-                case .chatGPT:
-                    let ids = try await Self.openAI(key).listModels()
-                    openAIModels = OpenAIModels.options(from: ids)
-                    if !openAIModels.contains(where: { $0.id == openAIModel }), let first = openAIModels.first {
-                        openAIModel = first.id
+            let keys = await Task.detached(priority: .userInitiated) { () -> [UUID: String] in
+                var keys: [UUID: String] = [:]
+                var migrated: Set<AIProvider> = []
+                for assistant in assistants {
+                    let store = Self.keychain(assistant.provider)
+                    if let key = store.password(account: assistant.id.uuidString), !key.isEmpty {
+                        keys[assistant.id] = key
+                    } else if !migrated.contains(assistant.provider), let legacy = store.password(account: Self.apiKeyAccount), !legacy.isEmpty {
+                        keys[assistant.id] = legacy
+                        store.setPassword(legacy, account: assistant.id.uuidString)
+                        store.setPassword(nil, account: Self.apiKeyAccount)
+                        migrated.insert(assistant.provider)
                     }
                 }
-                verification[provider] = .connected
+                return keys
+            }.value
+            storedKeys.merge(keys) { current, _ in current }
+        }
+    }
+
+    func apiKey(for assistant: AIAssistantConfig) -> String {
+        if let key = storedKeys[assistant.id], !key.isEmpty { return key }
+        return ProcessInfo.processInfo.environment[assistant.provider.environmentKey] ?? ""
+    }
+
+    func hasAPIKey(for assistant: AIAssistantConfig) -> Bool { !apiKey(for: assistant).isEmpty }
+
+    /// Whether the active assistant can answer.
+    var hasAPIKey: Bool { active.map(hasAPIKey(for:)) ?? false }
+
+    func storedAPIKey(for assistant: AIAssistantConfig) -> String { storedKeys[assistant.id] ?? "" }
+
+    /// True when the key comes from the environment rather than the Keychain.
+    func usesEnvironmentKey(_ assistant: AIAssistantConfig) -> Bool {
+        storedAPIKey(for: assistant).isEmpty && hasAPIKey(for: assistant)
+    }
+
+    func setAPIKey(_ key: String, for assistant: AIAssistantConfig) {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        storedKeys[assistant.id] = key
+        verification[assistant.id] = .unknown
+        let provider = assistant.provider, account = assistant.id.uuidString
+        Task.detached(priority: .userInitiated) {
+            Self.keychain(provider).setPassword(key.isEmpty ? nil : key, account: account)
+        }
+        if !key.isEmpty { verify(assistant) }
+    }
+
+    /// Checks the key against the assistant's host (listing its models) and refreshes the OpenAI model list.
+    func verify(_ assistant: AIAssistantConfig) {
+        let key = apiKey(for: assistant)
+        guard !key.isEmpty else {
+            verification[assistant.id] = .unknown
+            return
+        }
+        verification[assistant.id] = .checking
+        let url = Self.baseURL(for: assistant)
+        Task {
+            do {
+                switch assistant.provider {
+                case .claude:
+                    _ = try await AnthropicClient(apiKey: key, baseURL: url).listModels()
+                case .chatGPT:
+                    let ids = try await OpenAIClient(apiKey: key, baseURL: url).listModels()
+                    openAIModels = OpenAIModels.options(from: ids)
+                }
+                verification[assistant.id] = .connected
             } catch {
-                verification[provider] = .failed(error.localizedDescription)
+                verification[assistant.id] = .failed(error.localizedDescription)
             }
         }
     }
 
-    func verifyIfNeeded(_ provider: AIProvider) {
-        guard hasAPIKey(for: provider), (verification[provider] ?? .unknown) == .unknown else { return }
-        verify(provider)
+    func verifyIfNeeded(_ assistant: AIAssistantConfig) {
+        guard hasAPIKey(for: assistant), (verification[assistant.id] ?? .unknown) == .unknown else { return }
+        verify(assistant)
     }
 
     func models(for provider: AIProvider) -> [AIModelOption] {
         provider == .claude ? provider.suggestedModels : openAIModels
     }
 
-    func selectedModel(for provider: AIProvider) -> String {
-        provider == .claude ? claudeModel.rawValue : openAIModel
+    func modelName(for assistant: AIAssistantConfig) -> String {
+        models(for: assistant.provider).first { $0.id == assistant.model }?.name ?? assistant.model
     }
 
-    func select(_ provider: AIProvider, model: String) {
-        self.provider = provider
-        switch provider {
-        case .claude: if let model = ClaudeModel(rawValue: model) { claudeModel = model }
-        case .chatGPT: openAIModel = model
+    /// The active assistant's model name, for labels.
+    var activeModelName: String { active.map(modelName(for:)) ?? "" }
+
+    func setModel(_ model: String, for assistant: AIAssistantConfig) {
+        var changed = assistant
+        changed.model = model
+        updateAssistant(changed)
+    }
+
+    /// The other assistants that could answer the same question ("Compare with Other Assistants").
+    var compareAssistants: [AIAssistantConfig] {
+        assistants.filter { $0.id != active?.id && hasAPIKey(for: $0) }
+    }
+
+    /// One streamed request to `assistant` with its model, host and options.
+    func stream(_ assistant: AIAssistantConfig, messages: [JSONValue], system: String = AIPrompts.systemPrompt) -> AsyncThrowingStream<AssistantStreamEvent, any Error> {
+        let key = apiKey(for: assistant)
+        let url = Self.baseURL(for: assistant)
+        return switch assistant.provider {
+        case .claude:
+            AnthropicClient(apiKey: key, baseURL: url).streamMessage(modelID: assistant.model, system: system, messages: messages, options: assistant.options)
+        case .chatGPT:
+            OpenAIClient(apiKey: key, baseURL: url).streamResponse(model: assistant.model, instructions: system, messages: messages, options: assistant.options)
         }
     }
 
-    func modelName(for provider: AIProvider) -> String {
-        let id = selectedModel(for: provider)
-        return models(for: provider).first { $0.id == id }?.name ?? id
-    }
-
-    /// The other platforms that could answer the same question, for Compare.
-    var compareProviders: [AIProvider] {
-        AIProvider.allCases.filter { $0 != provider && hasAPIKey(for: $0) }
-    }
-
-    /// One streamed request to `provider` with its current model and options.
-    func stream(_ provider: AIProvider, messages: [JSONValue], system: String = AIPrompts.systemPrompt) -> AsyncThrowingStream<AssistantStreamEvent, any Error> {
-        let key = apiKey(for: provider)
-        let options = options(for: provider)
-        return switch provider {
-        case .claude: Self.anthropic(key).streamMessage(model: claudeModel, system: system, messages: messages, options: options)
-        case .chatGPT: Self.openAI(key).streamResponse(model: openAIModel, instructions: system, messages: messages, options: options)
-        }
+    /// Why nothing can be sent right now, or nil when the active assistant is ready.
+    var unavailableReason: String? {
+        if !aiEnabled { return "AI Assistant is turned off. Enable it in Settings › AI." }
+        guard let active else { return "Add an assistant in Settings › AI to get started." }
+        return hasAPIKey(for: active) ? nil : active.provider.missingKeyMessage()
     }
 
     // MARK: - Chats
@@ -440,8 +511,8 @@ final class AssistantModel {
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isStreaming else { return }
-        guard hasAPIKey(for: provider) else {
-            error = provider.missingKeyMessage()
+        if let reason = unavailableReason {
+            error = reason
             return
         }
         error = nil
@@ -468,9 +539,10 @@ final class AssistantModel {
 
     /// Streams the reply to the chat's last (user) message with the current platform.
     private func answer(chatID: UUID, restoreDraft: String?) {
+        guard let assistant = active else { return }
         let history = apiHistory(chats.first { $0.id == chatID }?.messages ?? [])
-        let provider = provider
-        let stream = stream(provider, messages: history)
+        let provider = assistant.provider
+        let stream = stream(assistant, messages: history)
         isStreaming = true
         streamingText = ""
         task = Task {
@@ -490,13 +562,15 @@ final class AssistantModel {
                         let note = Self.note(for: turn, provider: provider) ?? fallbackNote
                         // A refused turn with no content can't be echoed back; keep it out of the API history.
                         let content = turn.echoContent.isEmpty ? [JSONValue.object(["type": .string("text"), "text": .string(turn.text.isEmpty ? "(no answer)" : turn.text)])] : turn.echoContent
-                        append(AIMessage(role: .assistant, text: turn.text, apiContent: content, model: turn.model, note: note, provider: provider), to: chatID)
+                        append(AIMessage(role: .assistant, text: turn.text, apiContent: content, model: turn.model, note: note,
+                                         provider: provider, assistantName: assistant.name), to: chatID)
                     }
                 }
             } catch is CancellationError {
                 return
             } catch {
                 self.error = error.localizedDescription
+                DiagnosticLog.write("[ai] \(assistant.name) (\(assistant.model)): \(error.localizedDescription)")
                 if let restoreDraft {
                     // Drop the unanswered user message so the conversation stays valid (user/assistant alternation).
                     removeLastMessage(if: .user, from: chatID)
@@ -520,8 +594,8 @@ final class AssistantModel {
     func regenerate() {
         guard !isStreaming, let chatID = currentChatID, let index = chats.firstIndex(where: { $0.id == chatID }),
               chats[index].messages.last?.role == .assistant else { return }
-        guard hasAPIKey(for: provider) else {
-            error = provider.missingKeyMessage()
+        if let reason = unavailableReason {
+            error = reason
             return
         }
         chats[index].messages.removeLast()
@@ -549,16 +623,18 @@ final class AssistantModel {
     }
 
     /// Gets another platform's answer to the question before `messageID`, shown alongside the original.
-    func compare(_ messageID: UUID, with other: AIProvider) {
+    func compare(_ messageID: UUID, with other: AIAssistantConfig) {
         guard comparingMessageID == nil, let chatID = currentChatID, let chat = currentChat,
               let index = chat.messages.firstIndex(where: { $0.id == messageID }), index > 0 else { return }
         let history = apiHistory(Array(chat.messages[..<index]))
         let stream = stream(other, messages: history)
+        comparingAssistantID = other.id
         comparingMessageID = messageID
         compareText = ""
         compareTask = Task {
             defer {
                 comparingMessageID = nil
+                comparingAssistantID = nil
                 compareText = ""
             }
             do {
@@ -567,28 +643,29 @@ final class AssistantModel {
                     case .textDelta(let piece): compareText += piece
                     case .fallback: break
                     case .finished(let turn):
-                        let alternate = AIAlternate(provider: other, model: turn.model, text: turn.text, note: Self.note(for: turn, provider: other))
+                        let alternate = AIAlternate(provider: other.provider, assistantName: other.name, model: turn.model, text: turn.text,
+                                                    note: Self.note(for: turn, provider: other.provider))
                         updateMessage(messageID, in: chatID) { message in
-                            message.alternates = (message.alternates ?? []).filter { $0.provider != other } + [alternate]
+                            message.alternates = (message.alternates ?? []).filter { $0.assistantName != other.name } + [alternate]
                         }
                     }
                 }
             } catch is CancellationError {
                 return
             } catch {
-                self.error = "\(other.displayName): \(error.localizedDescription)"
+                self.error = "\(other.name): \(error.localizedDescription)"
             }
         }
     }
 
     /// Opens a chat seeded with an Ask AI exchange so the conversation can continue.
-    func continueInNewChat(question: String, apiPrompt: String, answer: String, provider: AIProvider, model: String?) {
+    func continueInNewChat(question: String, apiPrompt: String, answer: String, provider: AIProvider, assistantName: String?, model: String?) {
         cancel()
         var chat = AIChat(title: String(question.prefix(40)))
         chat.messages = [
             AIMessage(role: .user, text: question, apiContent: [.object(["type": .string("text"), "text": .string(apiPrompt)])], typedText: question),
             AIMessage(role: .assistant, text: answer, apiContent: [.object(["type": .string("text"), "text": .string(answer.isEmpty ? "(no answer)" : answer)])],
-                      model: model, provider: provider),
+                      model: model, provider: provider, assistantName: assistantName),
         ]
         chats.insert(chat, at: 0)
         currentChatID = chat.id

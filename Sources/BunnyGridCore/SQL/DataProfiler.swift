@@ -33,8 +33,12 @@ public struct TableStatistics: Sendable, Equatable {
     public var engine: String?
     public var created: String?
     public var modified: String?
+    /// Table collation (MySQL / MariaDB).
+    public var collation: String?
 
-    public init(rows: Int? = nil, sizeBytes: Int? = nil, comment: String? = nil, engine: String? = nil, created: String? = nil, modified: String? = nil) {
+    public init(rows: Int? = nil, sizeBytes: Int? = nil, comment: String? = nil, engine: String? = nil, created: String? = nil, modified: String? = nil,
+                collation: String? = nil) {
+        self.collation = collation
         self.rows = rows
         self.sizeBytes = sizeBytes
         self.comment = comment

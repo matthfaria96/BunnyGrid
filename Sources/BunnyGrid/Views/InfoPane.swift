@@ -90,6 +90,8 @@ private struct InfoHeader<Icon: View>: View {
     let subtitle: String
     var actionTitle: String?
     var action: (() -> Void)?
+    /// Text offered by the Share link (Navicat's "Share" under the connection name).
+    var shareText: String?
     @ViewBuilder let icon: () -> Icon
 
     var body: some View {
@@ -98,6 +100,13 @@ private struct InfoHeader<Icon: View>: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.system(size: 15, weight: .bold)).lineLimit(2)
                 Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
+                if let shareText {
+                    ShareLink(item: shareText) {
+                        Label("Share", systemImage: "square.and.arrow.up").font(.system(size: 12))
+                    }
+                    .buttonStyle(.link)
+                    .help("Share this connection's URI (without the password)")
+                }
                 if let actionTitle, let action {
                     Button(action: action) {
                         Label(actionTitle, systemImage: "square.and.pencil").font(.system(size: 12))
@@ -146,10 +155,14 @@ private struct ConnectionInfo: View {
 
     var body: some View {
         InfoScroll {
-            InfoHeader(title: config.displayName, subtitle: config.kind.displayName, actionTitle: "Edit Connection", action: { app.edit(config.id) }) {
+            InfoHeader(title: config.displayName, subtitle: config.kind.displayName, actionTitle: "Edit Connection", action: { app.edit(config.id) },
+                       shareText: ConnectionURI.string(for: config)) {
                 DatabaseBadge(kind: config.kind, size: 56, isActive: session?.isFailed != true)
             }
-            InfoField(label: "Status", value: status)
+            InfoField(label: "Active Profile", value: "Main Profile")
+            if case .failed(let message) = session?.state {
+                InfoField(label: "Status", value: "Failed: \(message)")
+            }
             InfoField(label: "Server Version", value: session?.serverVersion ?? "")
             InfoField(label: "Sessions", value: String(session?.contexts.count ?? 0))
             if config.kind.isFileBased {
@@ -158,20 +171,9 @@ private struct ConnectionInfo: View {
                 InfoField(label: "Host", value: config.host)
                 InfoField(label: "Port", value: String(config.port))
                 InfoField(label: "User Name", value: config.username)
-                InfoField(label: "SSL", value: config.tls.displayName)
             }
-            InfoField(label: "Group", value: config.group ?? "")
-            InfoField(label: "Read-only", value: config.readOnly ? "Yes" : "No")
             InfoField(label: "Settings Location", value: AppModel.dataDirectory.appending(path: "connections.json").path)
-        }
-    }
-
-    private var status: String {
-        switch session?.state {
-        case .connected: "Connected"
-        case .connecting: "Connecting…"
-        case .failed(let message): "Failed: \(message)"
-        case nil: "Not connected"
+            InfoField(label: "Remarks", value: config.remarks ?? "")
         }
     }
 }

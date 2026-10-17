@@ -73,6 +73,12 @@ public struct ConnectionConfig: Codable, Hashable, Identifiable, Sendable {
     public var readOnly: Bool
     /// Folder the connection is listed under in the navigator, if any.
     public var group: String?
+    /// Free-form notes (Navicat's Remarks tab), shown in the Info pane.
+    public var remarks: String?
+    /// Connect when BunnyGrid starts (Advanced tab).
+    public var autoConnect: Bool?
+    /// SQL run on every new connection, e.g. `SET search_path …` (Advanced tab). Statements are split on `;`.
+    public var initialQueries: String?
 
     public init(
         id: UUID = UUID(),

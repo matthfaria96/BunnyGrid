@@ -136,6 +136,7 @@ final class Session: Identifiable {
         }
         do {
             try await driver.connect()
+            try await Self.runInitialQueries(config, on: driver)
             serverVersion = (try? await driver.serverVersion()) ?? ""
             databases = config.kind == .sqlite ? ["main"] : try await driver.listDatabases()
             state = .connected
@@ -146,6 +147,18 @@ final class Session: Identifiable {
             }
         } catch {
             state = .failed(error.localizedDescription)
+        }
+    }
+
+    /// The connection's Initial Queries (Advanced tab), run on every new driver connection.
+    static func runInitialQueries(_ config: ConnectionConfig, on driver: any DatabaseDriver) async throws {
+        guard let script = config.initialQueries, !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        for statement in SQLSplitter.split(script) {
+            do {
+                _ = try await driver.executeTimed(statement)
+            } catch {
+                throw InitialQueryError(statement: statement, message: error.localizedDescription)
+            }
         }
     }
 
@@ -233,7 +246,10 @@ final class DatabaseContext: Identifiable {
     func open() async {
         state = .opening
         do {
-            if ownsDriver { try await driver.connect() }
+            if ownsDriver {
+                try await driver.connect()
+                if let config = session?.config { try await Session.runInitialQueries(config, on: driver) }
+            }
             if usesSchemas {
                 schemas = try await driver.listSchemas()
                 if let schema = defaultSchema, schemas.contains(schema) {
@@ -376,7 +392,8 @@ enum WorkspaceTab: Identifiable {
     @MainActor var hasUnsavedChanges: Bool {
         switch self {
         case .table(let model): model.hasChanges || model.isInTransaction
-        case .query(let model): model.savedQueryID != nil && model.isDirty
+        // A new query counts as unsaved when Options › General asks to save new queries before closing.
+        case .query(let model): model.isDirty && (model.savedQueryID != nil || (AppOptions.shared.values.askToSaveNewQueries && !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
         case .design(let model): model.hasChanges
         }
     }
@@ -392,4 +409,12 @@ enum WorkspaceTab: Identifiable {
         case .design: break
         }
     }
+}
+
+/// An Initial Query that failed, so the connection error names the statement.
+struct InitialQueryError: LocalizedError {
+    let statement: String
+    let message: String
+
+    var errorDescription: String? { "Initial query failed (\(statement.prefix(80))): \(message)" }
 }

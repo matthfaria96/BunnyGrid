@@ -8,6 +8,7 @@ struct ObjectsView: View {
     @State private var search = ""
     @State private var selection: Set<String> = []
     @State private var pendingDrop: DatabaseObject?
+    @State private var confirmName = ""
     @State private var querySelection: Set<UUID> = []
     @State private var statistics: [String: TableStatistics] = [:]
     @State private var statisticsVersion = 0
@@ -35,14 +36,24 @@ struct ObjectsView: View {
             Divider()
             content
         }
-        .confirmationDialog(
-            "Delete \(pendingDrop.map { "“\($0.name)”" } ?? "")? This permanently drops it from the database.",
-            isPresented: Binding(get: { pendingDrop != nil }, set: { if !$0 { pendingDrop = nil } })
+        // Options › General › "Use safe confirm dialog": type the object's name to delete it.
+        .alert(
+            "Delete \(pendingDrop.map { "“\($0.name)”" } ?? "")?",
+            isPresented: Binding(get: { pendingDrop != nil }, set: { if !$0 { pendingDrop = nil; confirmName = "" } })
         ) {
-            Button("Delete", role: .destructive) {
-                if let object = pendingDrop { drop(object) }
-                pendingDrop = nil
+            if AppOptions.shared.values.useSafeConfirmDialog {
+                TextField("Object name", text: $confirmName)
             }
+            Button("Delete", role: .destructive) {
+                if let object = pendingDrop, !AppOptions.shared.values.useSafeConfirmDialog || confirmName == object.name { drop(object) }
+                pendingDrop = nil
+                confirmName = ""
+            }
+            Button("Cancel", role: .cancel) { confirmName = "" }
+        } message: {
+            Text(AppOptions.shared.values.useSafeConfirmDialog
+                 ? "This permanently drops it from the database. Type \(pendingDrop.map { "“\($0.name)”" } ?? "the name") to confirm."
+                 : "This permanently drops it from the database.")
         }
     }
 
@@ -217,6 +228,10 @@ struct ObjectsView: View {
                         Text(row.stats?.modified ?? "").foregroundStyle(.secondary).lineLimit(1)
                     }
                     .width(min: 90, ideal: 140)
+                    TableColumn("Collation") { row in
+                        Text(row.stats?.collation ?? "").foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .width(min: 80, ideal: 130)
                     TableColumn("Comment") { row in
                         Text(row.stats?.comment ?? "").foregroundStyle(.secondary).lineLimit(1)
                     }

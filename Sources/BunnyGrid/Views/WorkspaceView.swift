@@ -7,8 +7,11 @@ struct WorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TabBar()
-            Divider()
+            // Options › Tabs › "Always show the tab bar": otherwise it appears once a tab is open.
+            if AppOptions.shared.values.alwaysShowTabBar || !app.tabs.isEmpty {
+                TabBar()
+                Divider()
+            }
             // Every tab stays alive so switching back keeps its scroll position, selection and editor state.
             // Hidden tabs are disabled so their keyboard shortcuts (⌘↩, ⌘R…) don't fire.
             ZStack {

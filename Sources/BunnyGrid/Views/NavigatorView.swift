@@ -145,15 +145,17 @@ struct NavigatorView: View {
             if context.usesSchemas {
                 for schema in context.schemas {
                     let schemaNode = NavNode.schema(config.id, database, schema)
+                    // Options › General › "Show objects under schema in navigation pane".
+                    let showObjects = AppOptions.shared.values.showObjectsUnderSchema
                     let schemaRow = NavRow(node: schemaNode, depth: depth + 2, title: schema, icon: "square.stack.3d.up.fill",
                                            iconColor: context.objects(in: schema) != nil ? .teal : .secondary,
-                                           isExpandable: true, isExpanded: app.expanded.contains(schemaNode))
+                                           isExpandable: showObjects, isExpanded: showObjects && app.expanded.contains(schemaNode))
                     rows.append(schemaRow)
                     if schemaRow.isExpanded {
                         appendCategories(context: context, schema: schema, depth: depth + 3, filter: filter, to: &rows)
                     }
                 }
-            } else {
+            } else if AppOptions.shared.values.showObjectsUnderSchema {
                 appendCategories(context: context, schema: nil, depth: depth + 2, filter: filter, to: &rows)
             }
         }

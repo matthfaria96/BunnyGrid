@@ -1,0 +1,139 @@
+Window "Editor" {Raise}   #[]
+  Button "OK" {Press}   #[0]
+  Button "Cancel" {Press}   #[1]
+  Group   #[2]
+    ScrollArea {ScrollLeftByPage,ScrollRightByPage,ScrollUpByPage,ScrollDownByPage}   #[2, 0]
+      CheckBox "General" {Press}   #[2, 0, 0]
+      CheckBox "Tabs" {Press}   #[2, 0, 1]
+      CheckBox "Code Completion" {Press}   #[2, 0, 2]
+      CheckBox "Records" {Press}   #[2, 0, 3]
+      CheckBox "Editor" {Press}   #[2, 0, 4]
+      CheckBox "Auto Recovery" {Press}   #[2, 0, 5]
+      CheckBox "Environment" {Press}   #[2, 0, 6]
+      CheckBox "AI" {Press}   #[2, 0, 7]
+      CheckBox "Advanced" {Press}   #[2, 0, 8]
+    Group   #[2, 1]
+      StaticText = 'Disable syntax highlight and code completion if SQL larger than:'   #[2, 1, 0]
+      TextField = '10' {ShowMenu,Confirm}   #[2, 1, 1]
+      StaticText = 'MB'   #[2, 1, 2]
+      CheckBox "Show line number" {Press}   #[2, 1, 3]
+      StaticText = 'Show:'   #[2, 1, 4]
+      CheckBox "Use code folding" {Press}   #[2, 1, 5]
+      CheckBox "Use brace highlighting" {Press}   #[2, 1, 6]
+      CheckBox "Use syntax highlighting" {Press}   #[2, 1, 7]
+      StaticText = 'Text Layout:'   #[2, 1, 8]
+      CheckBox "Insert spaces when pressing Tab" {Press}   #[2, 1, 9]
+      StaticText = 'Tab Width:'   #[2, 1, 10]
+      TextField = '2' {ShowMenu,Confirm}   #[2, 1, 11]
+      CheckBox "Use word wrap" {Press}   #[2, 1, 12]
+      Group   #[2, 1, 13]
+        StaticText = 'Font:'   #[2, 1, 13, 0]
+        StaticText = 'Menlo-Regular 11.0'   #[2, 1, 13, 1]
+        CheckBox "Use default font" {Press}   #[2, 1, 13, 2]
+        StaticText = 'Editor Font'   #[2, 1, 13, 3]
+      StaticText = 'Font and Colors:'   #[2, 1, 14]
+      Group   #[2, 1, 15]
+        ColorWell = 'rgb 0.941176 0.941176 0.941176 1' {Press,Name:Show color panel
+Target:0x0
+Selector:(null)}   #[2, 1, 15, 0]
+        ColorWell = 'rgb 0.47451 0.768627 0.941176 1' {Press,Name:Show color panel
+Target:0x0
+Selector:(null)}   #[2, 1, 15, 1]
+        ColorWell = 'rgb 0.407843 0.407843 0.407843 1' {Press,Name:Show color panel
+Target:0x0
+Selector:(null)}   #[2, 1, 15, 2]
+        ColorWell = 'rgb 1 0.415686 0.533333 1' {Press,Name:Show color panel
+Target:0x0
+Selector:(null)}   #[2, 1, 15, 3]
+        ColorWell = 'rgb 0.666667 1 0.415686 1' {Press,Name:Show color panel
+Target:0x0
+Selector:(null)}   #[2, 1, 15, 4]
+        ColorWell = 'rgb 0.117647 0.117647 0.117647 1' {Press,Name:Show color panel
+Target:0x0
+Selector:(null)}   #[2, 1, 15, 5]
+        StaticText = 'Common'   #[2, 1, 15, 6]
+        StaticText = 'Keyword'   #[2, 1, 15, 7]
+        StaticText = 'Comment'   #[2, 1, 15, 8]
+        StaticText = 'String'   #[2, 1, 15, 9]
+        StaticText = 'Background'   #[2, 1, 15, 10]
+        StaticText = 'Number'   #[2, 1, 15, 11]
+        StaticText = 'Syntax Colors'   #[2, 1, 15, 12]
+      StaticText = 'Preview'   #[2, 1, 16]
+      ScrollArea {ScrollLeftByPage,ScrollRightByPage,ScrollUpByPage,ScrollDownByPage}   #[2, 1, 17]
+        TextArea = '/* SQL Editor Preview */\nSELECT `navicat` FROM `db_admin_tool`\nWHERE\n\tnumber = 1' {ShowMenu}   #[2, 1, 17, 0]
+        ScrollBar   #[2, 1, 17, 1]
+          ValueIndicator   #[2, 1, 17, 1, 0]
+          Button {Press}   #[2, 1, 17, 1, 1]
+          Button {Press}   #[2, 1, 17, 1, 2]
+          Button {Press}   #[2, 1, 17, 1, 3]
+          Button {Press}   #[2, 1, 17, 1, 4]
+        ScrollBar   #[2, 1, 17, 2]
+        Ruler {Press}   #[2, 1, 17, 3]
+    Button "Restore Defaults" {Press}   #[2, 2]
+    StaticText = 'Box'   #[2, 3]
+  Toolbar {ShowMenu}   #[3]
+    Button "General" {Press,Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 0]
+    Button "Tabs" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 1]
+    Button "Code Completion" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 2]
+    Button "Editor" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 3]
+    Button "Records" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 4]
+    Button "Auto Recovery" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 5]
+    Button "AI" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 6]
+    Button "Environment" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 7]
+    Button "Advanced" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 8]
+  Button {Press}   #[4]
+  Button {Press,ShowMenu}   #[5]
+    Group   #[5, 0]
+      Group   #[5, 0, 0]
+  Button {Press}   #[6]
+  StaticText = 'Editor'   #[7]

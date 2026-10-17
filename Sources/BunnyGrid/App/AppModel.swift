@@ -96,6 +96,19 @@ final class AppModel {
         for group in Set(connections.compactMap(\.group)) { expanded.insert(.group(group)) }
         assistant.app = self
         openLaunchArguments()
+        // Plain launches restore the last session (Options › Tabs / Auto Recovery); launches with files or flags don't.
+        if CommandLine.arguments.dropFirst().allSatisfy({ $0.hasPrefix("-NS") || $0.hasPrefix("-Apple") }) {
+            restoreWorkspaceIfNeeded()
+        }
+        markWorkspaceRunning()
+        startAutosave()
+        // Connections marked "Auto connect" (Advanced tab) open at launch.
+        for config in connections where config.autoConnect == true && sessions[config.id] == nil {
+            connect(config.id)
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.saveWorkspace(cleanExit: true) }
+        }
     }
 
     /// Application Support/BunnyGrid, or `BUNNYGRID_DATA_DIR` for development and tests.
@@ -334,7 +347,8 @@ final class AppModel {
     // MARK: - Tabs
 
     func openTable(_ object: DatabaseObject, in context: DatabaseContext) {
-        if let existing = tabs.first(where: {
+        // Options › Tabs › "Allow opening multiple forms for same object".
+        if !AppOptions.shared.values.allowMultipleForms, let existing = tabs.first(where: {
             if case .table(let model) = $0 {
                 model.object == object && model.databaseName == context.name && model.connectionID == context.session?.id
             } else {
@@ -584,6 +598,7 @@ final class AppModel {
     }
 
     private func record(_ entry: QueryHistoryEntry) {
+        DiagnosticLog.write("[query] \(String(format: "%.1f", entry.durationMilliseconds)) ms\(entry.rowCount.map { ", \($0) rows" } ?? "")\(entry.error.map { ", error: \($0)" } ?? ""): \(entry.sql.replacingOccurrences(of: "\n", with: " "))")
         history = historyStore.adding(entry, to: history)
         let snapshot = history
         let store = historyStore
@@ -675,7 +690,7 @@ final class AppModel {
                 assistant.send()
                 guard CommandLine.arguments.contains("--ai-compare") else { return }
                 while assistant.isStreaming { try? await Task.sleep(for: .milliseconds(100)) }
-                if let last = assistant.currentChat?.messages.last, let other = assistant.compareProviders.first {
+                if let last = assistant.currentChat?.messages.last, let other = assistant.compareAssistants.first {
                     assistant.compare(last.id, with: other)
                 }
             }

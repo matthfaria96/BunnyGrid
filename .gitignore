@@ -4,3 +4,6 @@ build/
 *.xcodeproj/xcuserdata/
 DerivedData/
 .DS_Store
+
+# Raw REA captures (large, base64 screenshots); the PNG and .tree.txt next to them are kept.
+docs/navicat-reference/*.json

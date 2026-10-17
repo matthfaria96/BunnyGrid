@@ -77,22 +77,33 @@ public struct AnthropicClient: Sendable {
     /// Builds the request body. Thinking is left at the model default (adaptive);
     /// effort is always sent so the user's choice applies (Opus 5.5 defaults to `medium`).
     public static func requestBody(model: ClaudeModel, system: String, messages: [JSONValue], options: AIRequestOptions = AIRequestOptions()) -> JSONValue {
+        requestBody(modelID: model.rawValue, system: system, messages: messages, options: options)
+    }
+
+    /// Any model ID (typed in an assistant's settings); Haiku models get no server-side fallback.
+    static func supportsDefaultFallback(_ modelID: String) -> Bool { !modelID.lowercased().contains("haiku") }
+
+    public static func requestBody(modelID model: String, system: String, messages: [JSONValue], options: AIRequestOptions = AIRequestOptions()) -> JSONValue {
         var body: [String: JSONValue] = [
-            "model": .string(model.rawValue),
+            "model": .string(model),
             "max_tokens": .int(options.maxTokens ?? 64_000),
             "stream": .bool(true),
             "system": .string(options.system(system)),
             "messages": .array(messages),
             "output_config": .object(["effort": .string(options.effort.rawValue)]),
         ]
-        if model.supportsDefaultFallback {
+        if supportsDefaultFallback(model) {
             body["fallbacks"] = .string("default")
         }
         return .object(body)
     }
 
     public func streamMessage(model: ClaudeModel, system: String, messages: [JSONValue], options: AIRequestOptions = AIRequestOptions()) -> AsyncThrowingStream<AssistantStreamEvent, any Error> {
-        let body = Self.requestBody(model: model, system: system, messages: messages, options: options)
+        streamMessage(modelID: model.rawValue, system: system, messages: messages, options: options)
+    }
+
+    public func streamMessage(modelID model: String, system: String, messages: [JSONValue], options: AIRequestOptions = AIRequestOptions()) -> AsyncThrowingStream<AssistantStreamEvent, any Error> {
+        let body = Self.requestBody(modelID: model, system: system, messages: messages, options: options)
         let apiKey = apiKey
         let url = baseURL.appending(path: "v1/messages")
         return AsyncThrowingStream { continuation in
@@ -105,7 +116,7 @@ public struct AnthropicClient: Sendable {
                     request.setValue("application/json", forHTTPHeaderField: "content-type")
                     request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
                     request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-                    if model.supportsDefaultFallback {
+                    if Self.supportsDefaultFallback(model) {
                         request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
                     }
                     request.httpBody = try JSONEncoder().encode(body)

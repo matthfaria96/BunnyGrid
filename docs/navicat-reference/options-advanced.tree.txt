@@ -1,0 +1,102 @@
+Window "Advanced" {Raise}   #[]
+  Button "OK" {Press}   #[0]
+  Button "Cancel" {Press}   #[1]
+  Group   #[2]
+    ScrollArea {ScrollLeftByPage,ScrollRightByPage,ScrollUpByPage,ScrollDownByPage}   #[2, 0]
+      CheckBox "General" {Press}   #[2, 0, 0]
+      CheckBox "Tabs" {Press}   #[2, 0, 1]
+      CheckBox "Code Completion" {Press}   #[2, 0, 2]
+      CheckBox "Records" {Press}   #[2, 0, 3]
+      CheckBox "Editor" {Press}   #[2, 0, 4]
+      CheckBox "Auto Recovery" {Press}   #[2, 0, 5]
+      CheckBox "Environment" {Press}   #[2, 0, 6]
+      CheckBox "AI" {Press}   #[2, 0, 7]
+      CheckBox "Advanced" {Press}   #[2, 0, 8]
+    Group   #[2, 1]
+      TextField {ShowMenu,Confirm}   #[2, 1, 0]
+      StaticText = 'Logs Location:'   #[2, 1, 1]
+      CheckBox "Enable diagnostic logging *" {Press}   #[2, 1, 2]
+      Button "Register Navicat URI Protocol" {Press}   #[2, 1, 3]
+      CheckBox "Verify server certificate against CA" {Press}   #[2, 1, 4]
+      StaticText = 'General:'   #[2, 1, 5]
+      StaticText = 'Connectivity Diagnosis:'   #[2, 1, 6]
+      Button "Test Connectivity" {Press}   #[2, 1, 7]
+      Image   #[2, 1, 8]
+      StaticText = 'Google'   #[2, 1, 9]
+      Image   #[2, 1, 10]
+      StaticText = 'Navicat Official Site'   #[2, 1, 11]
+      Image   #[2, 1, 12]
+      StaticText = 'Navicat Web Service'   #[2, 1, 13]
+      ScrollArea {ScrollLeftByPage,ScrollRightByPage,ScrollUpByPage,ScrollDownByPage}   #[2, 1, 14]
+        ScrollBar   #[2, 1, 14, 0]
+      StaticText = 'Connectivity'   #[2, 1, 15]
+      StaticText = 'This option only applies to Activation/Subscription, Navicat Updater, Navicat Cl'   #[2, 1, 16]
+      StaticText = '* Changes will take effect after Navicat Premium restarts'   #[2, 1, 17]
+    Button "Restore Defaults" {Press}   #[2, 2]
+    StaticText = 'Box'   #[2, 3]
+  Toolbar {ShowMenu}   #[3]
+    Button "General" {Press,Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 0]
+    Button "Tabs" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 1]
+    Button "Code Completion" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 2]
+    Button "Editor" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 3]
+    Button "Records" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 4]
+    Button "Auto Recovery" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 5]
+    Button "AI" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 6]
+    Button "Environment" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 7]
+    Button "Advanced" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 8]
+  Button {Press}   #[4]
+  Button {Press,ShowMenu}   #[5]
+    Group   #[5, 0]
+      Group   #[5, 0, 0]
+  Button {Press}   #[6]
+  StaticText = 'Advanced'   #[7]

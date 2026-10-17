@@ -63,4 +63,25 @@ public enum ConnectionURI {
         )
         return Parsed(config: config, password: components.password?.removingPercentEncoding)
     }
+
+    /// The connection as a URI (without the password unless one is given), for the URI button.
+    public static func string(for config: ConnectionConfig, password: String? = nil) -> String {
+        if config.kind == .sqlite {
+            return "sqlite://" + (config.filePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? config.filePath)
+        }
+        var components = URLComponents()
+        components.scheme = config.kind == .postgresql ? "postgresql" : config.kind.rawValue
+        components.host = config.host
+        components.port = config.port
+        if !config.username.isEmpty { components.user = config.username }
+        if let password, !password.isEmpty { components.password = password }
+        components.path = config.database.isEmpty ? "" : "/" + config.database
+        switch config.tls {
+        case .disable: components.queryItems = [URLQueryItem(name: config.kind == .postgresql ? "sslmode" : "ssl-mode", value: config.kind == .postgresql ? "disable" : "DISABLED")]
+        case .require: components.queryItems = [URLQueryItem(name: config.kind == .postgresql ? "sslmode" : "ssl-mode", value: config.kind == .postgresql ? "require" : "REQUIRED")]
+        case .prefer: break
+        }
+        return components.string ?? ""
+    }
 }
+

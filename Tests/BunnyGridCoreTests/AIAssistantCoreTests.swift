@@ -136,3 +136,22 @@ import Testing
         #expect(AIPrompts.engineLabel(engine: "MySQL", version: "") == "MySQL")
     }
 }
+
+@Suite struct AssistantConfigTests {
+    @Test func defaultsComeFromTheProvider() {
+        let claude = AIAssistantConfig(provider: .claude)
+        #expect(claude.name == "Claude")
+        #expect(claude.model == "claude-opus-5-5")
+        #expect(claude.baseURL.absoluteString == "https://api.anthropic.com")
+        let gpt = AIAssistantConfig(name: "Work GPT", provider: .chatGPT, apiHost: "  ", maxTokens: 900, effort: .low)
+        #expect(gpt.baseURL.absoluteString == "https://api.openai.com")
+        #expect(gpt.options == AIRequestOptions(maxTokens: 900, effort: .low))
+        #expect(AIProvider.chatGPT.menuTitle == "OpenAI ChatGPT")
+    }
+
+    @Test func roundTripsAsJSON() throws {
+        let config = AIAssistantConfig(provider: .chatGPT, apiHost: "https://proxy.example.com", instruction: "Be brief")
+        let decoded = try JSONDecoder().decode(AIAssistantConfig.self, from: JSONEncoder().encode(config))
+        #expect(decoded == config)
+    }
+}

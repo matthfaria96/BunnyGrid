@@ -81,3 +81,52 @@ public struct AIModelOption: Hashable, Sendable, Identifiable {
         self.name = name
     }
 }
+
+extension AIProvider {
+    /// The name in the "+" menu of Settings › AI, as Navicat lists providers.
+    public var menuTitle: String { "\(company) \(displayName)" }
+
+    /// API Host filled in when the provider is chosen.
+    public var defaultHost: String {
+        switch self {
+        case .claude: "https://api.anthropic.com"
+        case .chatGPT: "https://api.openai.com"
+        }
+    }
+}
+
+/// One configured assistant (Navicat's Settings › AI › AI Assistant list): a provider with its own
+/// host, model and request settings. The API key lives in the Keychain under the assistant's id.
+public struct AIAssistantConfig: Codable, Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var provider: AIProvider
+    public var apiHost: String
+    public var model: String
+    public var maxTokens: Int?
+    public var effort: AIEffort
+    public var instruction: String
+
+    public init(id: UUID = UUID(), name: String? = nil, provider: AIProvider, apiHost: String? = nil, model: String? = nil,
+                maxTokens: Int? = nil, effort: AIEffort = .medium, instruction: String = "") {
+        self.id = id
+        self.name = name ?? provider.displayName
+        self.provider = provider
+        self.apiHost = apiHost ?? provider.defaultHost
+        self.model = model ?? provider.defaultModel
+        self.maxTokens = maxTokens
+        self.effort = effort
+        self.instruction = instruction
+    }
+
+    public var options: AIRequestOptions {
+        AIRequestOptions(maxTokens: maxTokens, effort: effort, instruction: instruction)
+    }
+
+    /// The host as a URL; an empty or invalid host falls back to the provider's.
+    public var baseURL: URL {
+        let trimmed = apiHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: trimmed), url.scheme != nil, url.host != nil { return url }
+        return URL(string: provider.defaultHost)!
+    }
+}

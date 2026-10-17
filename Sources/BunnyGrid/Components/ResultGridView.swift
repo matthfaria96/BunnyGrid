@@ -61,6 +61,10 @@ struct ResultGridView: NSViewRepresentable {
         scrollView.autohidesScrollers = true
         scrollView.automaticallyAdjustsContentInsets = false
         context.coordinator.tableView = tableView
+        // Grid font and row shading come from Options › Records.
+        context.coordinator.optionsObserver = NotificationCenter.default.addObserver(forName: .optionsDidChange, object: nil, queue: .main) { [weak tableView] _ in
+            MainActor.assumeIsolated { tableView?.reloadData() }
+        }
         return scrollView
     }
 
@@ -71,6 +75,7 @@ struct ResultGridView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSTextFieldDelegate {
         weak var tableView: GridTableView?
+        var optionsObserver: NSObjectProtocol?
         private var columns: [String] = []
         private var rows: [[CellValue]] = []
         private var columnTypes: [String: String] = [:]
@@ -83,7 +88,8 @@ struct ResultGridView: NSViewRepresentable {
         private var lastScrollRequest: GridScrollRequest?
         private var lockedColumns: Set<Int> = []
 
-        static let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        /// Options › Records › Grid Font, or the default grid font.
+        static var font: NSFont { AppOptions.shared.values.gridFont?.nsFont ?? NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular) }
         private static let cellID = NSUserInterfaceItemIdentifier("GridCell")
         private static let markerID = NSUserInterfaceItemIdentifier("__marker")
 
@@ -277,7 +283,9 @@ struct ResultGridView: NSViewRepresentable {
         func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-            GridRowView()
+            let view = GridRowView()
+            view.isShaded = GridRowView.isShaded(row: row)
+            return view
         }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -586,6 +594,26 @@ final class RowMarkerView: NSView {
 
 /// Light-blue row selection, so the focused cell (solid accent) stands out, as in Navicat.
 final class GridRowView: NSTableRowView {
+    var isShaded = false
+
+    /// Options › Records › Row Shading: every other or every third row is tinted.
+    @MainActor
+    static func isShaded(row: Int) -> Bool {
+        switch AppOptions.shared.values.rowShading {
+        case .none: false
+        case .everyOtherRow: row % 2 == 1
+        case .everyThirdRow: row % 3 == 2
+        }
+    }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        if isShaded {
+            NSColor.labelColor.withAlphaComponent(0.045).setFill()
+            bounds.fill()
+        }
+    }
+
     override func drawSelection(in dirtyRect: NSRect) {
         guard selectionHighlightStyle != .none else { return }
         NSColor.controlAccentColor.withAlphaComponent(isEmphasized ? 0.18 : 0.10).setFill()

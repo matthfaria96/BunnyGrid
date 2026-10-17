@@ -9,12 +9,16 @@ struct AssistantPanel: View {
     private var assistant: AssistantModel { app.assistant }
 
     var body: some View {
-        VStack(spacing: 0) {
-            AssistantHeader()
-            Divider()
-            messages
-            Composer()
-                .padding(8)
+        if assistant.active == nil {
+            AIDisabledState()
+        } else {
+            VStack(spacing: 0) {
+                AssistantHeader()
+                Divider()
+                messages
+                Composer()
+                    .padding(8)
+            }
         }
     }
 
@@ -34,7 +38,7 @@ struct AssistantPanel: View {
                         EmptyChat()
                     }
                     if assistant.isStreaming {
-                        StreamingReply(provider: assistant.provider, text: assistant.streamingText)
+                        StreamingReply(provider: assistant.provider, name: assistant.active?.name, text: assistant.streamingText)
                     }
                     if let error = assistant.error {
                         ErrorNote(message: error)
@@ -50,6 +54,56 @@ struct AssistantPanel: View {
             }
             .onChange(of: assistant.currentChatID) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
         }
+    }
+}
+
+/// Navicat's AI pane before an assistant exists: the AI mark, a short explanation and Settings.
+private struct AIDisabledState: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            AIMark()
+            Text(app.assistant.aiEnabled
+                 ? "AI Assistant helps you work more efficiently on SQL editing. To get started, add a Claude or ChatGPT assistant in Settings."
+                 : "AI Assistant helps you work more efficiently on SQL editing. To get started, you will need to enable AI Assistant and add at least one Claude or ChatGPT assistant in Settings.")
+                .font(.system(size: 12.5))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 28)
+            Button("Settings") {
+                UserDefaults.standard.set("ai", forKey: "settingsTab")
+                openSettings()
+            }
+            .controlSize(.regular)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// "AI" over chat bubbles with a sparkle, in the assistant's teal.
+struct AIMark: View {
+    var body: some View {
+        let teal = LinearGradient(colors: [Color(red: 0.25, green: 0.85, blue: 0.72), Color(red: 0.1, green: 0.65, blue: 0.62)], startPoint: .top, endPoint: .bottom)
+        VStack(spacing: 2) {
+            Text("AI")
+                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .foregroundStyle(teal)
+            HStack(alignment: .bottom, spacing: 2) {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 22, weight: .regular))
+                    .foregroundStyle(.secondary)
+                Image(systemName: "sparkle")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(teal)
+                    .offset(y: -10)
+            }
+        }
+        .accessibilityLabel("AI Assistant")
     }
 }
 
@@ -196,8 +250,14 @@ private struct APIKeyBanner: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        let provider = app.assistant.provider
-        VStack(alignment: .leading, spacing: 8) {
+        if let active = app.assistant.active {
+            banner(active)
+        }
+    }
+
+    private func banner(_ active: AIAssistantConfig) -> some View {
+        let provider = active.provider
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 AppIcon(name: provider.iconName, size: 22)
                 Text("Connect \(provider.displayName)").font(.system(size: 13, weight: .semibold))
@@ -206,7 +266,7 @@ private struct APIKeyBanner: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            APIKeyEditor(provider: provider, compact: true)
+            APIKeyEditor(assistant: active, compact: true)
         }
         .padding(12)
         .glassBackground(in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -221,8 +281,8 @@ private struct EmptyChat: View {
             HStack(spacing: 8) {
                 AppIcon(name: app.assistant.provider.iconName, size: 26)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Ask \(app.assistant.provider.displayName)").font(.system(size: 15, weight: .semibold))
-                    Text(app.assistant.modelName(for: app.assistant.provider)).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("Ask \(app.assistant.active?.name ?? app.assistant.provider.displayName)").font(.system(size: 15, weight: .semibold))
+                    Text(app.assistant.activeModelName).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
             Text("Write, explain, optimize and fix SQL. Attach schemas or open tabs as context with the buttons below.")
@@ -272,7 +332,7 @@ private struct MessageView: View {
     let isLast: Bool
     @State private var isHovering = false
     /// Which answer is shown when the message has alternates (nil: the original).
-    @State private var shownAlternate: AIProvider?
+    @State private var shownAlternate: String?
 
     var body: some View {
         switch message.role {
@@ -306,78 +366,75 @@ private struct MessageView: View {
         return messages.last(where: { $0.role == .user })?.id == message.id && !app.assistant.isStreaming
     }
 
-    private var answers: [(provider: AIProvider, model: String?, text: String, note: String?)] {
-        [(message.provider ?? .claude, message.model, message.text, message.note)]
-            + (message.alternates ?? []).map { ($0.provider, $0.model, $0.text, $0.note) }
+    /// The original answer and those from other assistants, keyed by assistant name.
+    private var answers: [Answer] {
+        let mine = message.provider ?? .claude
+        return [Answer(name: message.assistantName ?? mine.displayName, provider: mine, model: message.model, text: message.text, note: message.note)]
+            + (message.alternates ?? []).map {
+                Answer(name: $0.assistantName ?? $0.provider.displayName, provider: $0.provider, model: $0.model, text: $0.text, note: $0.note)
+            }
     }
 
     private var assistantReply: some View {
         let assistant = app.assistant
+        let all = answers
         let comparing = assistant.comparingMessageID == message.id
-        let current = answers.first { $0.provider == shownAlternate } ?? answers[0]
+        let comparingWith = assistant.assistants.first { $0.id == assistant.comparingAssistantID }
+        let current = all.first { $0.name == shownAlternate } ?? all[0]
+        let showingCompare = comparing && shownAlternate == comparingWith?.name
         return VStack(alignment: .leading, spacing: 8) {
-            if answers.count > 1 || comparing {
-                AnswerTabs(answers: answers.map(\.provider), comparing: comparing ? otherProvider : nil, selection: Binding(
-                    get: { shownAlternate ?? answers[0].provider },
+            if all.count > 1 || comparing {
+                AnswerTabs(answers: all, comparing: comparing ? comparingWith : nil, selection: Binding(
+                    get: { shownAlternate ?? all[0].name },
                     set: { shownAlternate = $0 }
                 ))
             }
-            if comparing && shownAlternate == otherProvider {
-                StreamingReply(provider: otherProvider ?? .chatGPT, text: assistant.compareText, showsAvatar: false)
+            if showingCompare, let comparingWith {
+                StreamingReply(provider: comparingWith.provider, name: comparingWith.name, text: assistant.compareText, showsAvatar: false)
             } else {
                 MarkdownView(text: current.text)
                 if let note = current.note {
                     Label(note, systemImage: "info.circle").font(.system(size: 11)).foregroundStyle(.orange)
                 }
             }
-            HStack(spacing: 2) {
-                IconButton(systemImage: "doc.on.doc", help: "Copy Answer", tint: .accentColor) { copy(current.text) }
-                IconButton(systemImage: "plus.rectangle.on.rectangle", help: "Copy SQL to New Query", tint: .accentColor,
-                           isEnabled: !MarkdownParser.sqlBlocks(in: current.text).isEmpty) {
-                    app.openQuery(text: MarkdownParser.sqlBlocks(in: current.text).joined(separator: "\n\n"))
-                }
-                if isLast && assistant.canRegenerate {
-                    IconButton(systemImage: "arrow.clockwise", help: "Regenerate with \(assistant.provider.displayName)", tint: .accentColor) {
-                        assistant.regenerate()
-                    }
-                }
-                if assistant.compareEnabled, let other = otherProvider, !answers.contains(where: { $0.provider == other }), !comparing {
-                    Button {
-                        shownAlternate = other
-                        assistant.compare(message.id, with: other)
-                    } label: {
-                        HStack(spacing: 3) {
-                            AppIcon(name: other.iconName, size: 12)
-                            Text("Compare with \(other.displayName)")
-                        }
-                        .font(.system(size: 10.5))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Capsule().strokeBorder(Color(nsColor: .separatorColor)))
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("See how \(other.displayName) answers the same question")
-                }
-                Spacer()
-                if let model = current.model {
-                    HStack(spacing: 3) {
-                        AppIcon(name: current.provider.iconName, size: 10)
-                        Text(model)
-                    }
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                }
-            }
-            .opacity(isHovering || isLast ? 1 : 0.35)
+            actionRow(current: current, all: all, comparing: comparing)
         }
         .onHover { isHovering = $0 }
     }
 
-    /// The platform Compare would ask (the first other one with a key).
-    private var otherProvider: AIProvider? {
-        let mine = message.provider ?? .claude
-        return AIProvider.allCases.first { $0 != mine && app.assistant.hasAPIKey(for: $0) }
+    private func actionRow(current: Answer, all: [Answer], comparing: Bool) -> some View {
+        let assistant = app.assistant
+        let candidates = assistant.compareEnabled ? assistant.assistants.filter { config in
+            assistant.hasAPIKey(for: config) && !all.contains { $0.name == config.name }
+        } : []
+        return HStack(spacing: 2) {
+            IconButton(systemImage: "doc.on.doc", help: "Copy Answer", tint: .accentColor) { copy(current.text) }
+            IconButton(systemImage: "plus.rectangle.on.rectangle", help: "Copy SQL to New Query", tint: .accentColor,
+                       isEnabled: !MarkdownParser.sqlBlocks(in: current.text).isEmpty) {
+                app.openQuery(text: MarkdownParser.sqlBlocks(in: current.text).joined(separator: "\n\n"))
+            }
+            if isLast && assistant.canRegenerate {
+                IconButton(systemImage: "arrow.clockwise", help: "Regenerate with \(assistant.active?.name ?? "the assistant")", tint: .accentColor) {
+                    assistant.regenerate()
+                }
+            }
+            if !candidates.isEmpty && !comparing {
+                CompareMenu(candidates: candidates) { other in
+                    shownAlternate = other.name
+                    assistant.compare(message.id, with: other)
+                }
+            }
+            Spacer()
+            if let model = current.model {
+                HStack(spacing: 3) {
+                    AppIcon(name: current.provider.iconName, size: 10)
+                    Text(model)
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+            }
+        }
+        .opacity(isHovering || isLast ? 1 : 0.35)
     }
 
     private func copy(_ text: String) {
@@ -386,26 +443,81 @@ private struct MessageView: View {
     }
 }
 
+/// One answer shown in a message (the original or another assistant's).
+private struct Answer {
+    let name: String
+    let provider: AIProvider
+    let model: String?
+    let text: String
+    let note: String?
+}
+
+/// "Compare with ChatGPT" (or a menu when several assistants could answer).
+private struct CompareMenu: View {
+    let candidates: [AIAssistantConfig]
+    let compare: (AIAssistantConfig) -> Void
+
+    var body: some View {
+        if candidates.count == 1, let only = candidates.first {
+            Button { compare(only) } label: { label(icon: only.provider.iconName, title: "Compare with \(only.name)") }
+                .buttonStyle(.plain)
+                .help("See how \(only.name) answers the same question")
+        } else {
+            Menu {
+                ForEach(candidates) { candidate in
+                    Button(candidate.name) { compare(candidate) }
+                }
+            } label: {
+                label(icon: "ai-claude", title: "Compare with Other Assistants")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+    }
+
+    private func label(icon: String, title: String) -> some View {
+        HStack(spacing: 3) {
+            AppIcon(name: icon, size: 12)
+            Text(title)
+        }
+        .font(.system(size: 10.5))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().strokeBorder(Color(nsColor: .separatorColor)))
+        .contentShape(Capsule())
+    }
+}
+
 /// "Claude | ChatGPT" switch above an answer that has been compared.
 private struct AnswerTabs: View {
-    let answers: [AIProvider]
-    let comparing: AIProvider?
-    @Binding var selection: AIProvider
+    let answers: [Answer]
+    let comparing: AIAssistantConfig?
+    @Binding var selection: String
+
+    private var tabs: [(name: String, provider: AIProvider, isStreaming: Bool)] {
+        var result = answers.map { (name: $0.name, provider: $0.provider, isStreaming: false) }
+        if let comparing, !answers.contains(where: { $0.name == comparing.name }) {
+            result.append((name: comparing.name, provider: comparing.provider, isStreaming: true))
+        }
+        return result
+    }
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(answers + (comparing.map { answers.contains($0) ? [] : [$0] } ?? []), id: \.self) { provider in
-                Button { selection = provider } label: {
+            ForEach(tabs, id: \.name) { tab in
+                Button { selection = tab.name } label: {
                     HStack(spacing: 4) {
-                        AppIcon(name: provider.iconName, size: 13)
-                        Text(provider.displayName)
-                        if provider == comparing { ProgressView().controlSize(.mini) }
+                        AppIcon(name: tab.provider.iconName, size: 13)
+                        Text(tab.name)
+                        if tab.isStreaming { ProgressView().controlSize(.mini) }
                     }
-                    .font(.system(size: 11, weight: selection == provider ? .semibold : .regular))
+                    .font(.system(size: 11, weight: selection == tab.name ? .semibold : .regular))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
                     .background {
-                        if selection == provider {
+                        if selection == tab.name {
                             Color.clear.glassBackground(in: Capsule(), interactive: true)
                         }
                     }
@@ -422,6 +534,7 @@ private struct AnswerTabs: View {
 /// The answer as it streams in, or an animated "Thinking…" before the first words.
 private struct StreamingReply: View {
     let provider: AIProvider
+    var name: String?
     let text: String
     var showsAvatar = true
 
@@ -430,7 +543,7 @@ private struct StreamingReply: View {
             if text.isEmpty {
                 HStack(spacing: 7) {
                     if showsAvatar { AppIcon(name: provider.iconName, size: 16) }
-                    Text("\(provider.displayName) is thinking").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("\(name ?? provider.displayName) is thinking").font(.system(size: 12)).foregroundStyle(.secondary)
                     ThinkingDots()
                 }
             } else {
@@ -593,17 +706,23 @@ private struct AssistantPicker: View {
     var body: some View {
         let assistant = app.assistant
         Menu {
-            ForEach(AIProvider.allCases) { provider in
-                Section(provider.displayName + (assistant.hasAPIKey(for: provider) ? "" : " — no API key")) {
-                    ForEach(assistant.models(for: provider)) { model in
+            Section("AI Assistants") {
+                ForEach(assistant.assistants) { config in
+                    Button {
+                        assistant.activate(config.id)
+                    } label: {
+                        let title = config.name + (assistant.hasAPIKey(for: config) ? "" : " — no API key")
+                        if assistant.active?.id == config.id { Label(title, systemImage: "checkmark") } else { Text(title) }
+                    }
+                }
+            }
+            if let active = assistant.active {
+                Section("Model for \(active.name)") {
+                    ForEach(assistant.models(for: active.provider)) { option in
                         Button {
-                            assistant.select(provider, model: model.id)
+                            assistant.setModel(option.id, for: active)
                         } label: {
-                            if assistant.provider == provider && assistant.selectedModel(for: provider) == model.id {
-                                Label(model.name, systemImage: "checkmark")
-                            } else {
-                                Text(model.name)
-                            }
+                            if active.model == option.id { Label(option.name, systemImage: "checkmark") } else { Text(option.name) }
                         }
                     }
                 }
@@ -611,18 +730,27 @@ private struct AssistantPicker: View {
             Divider()
             Button("AI Platform…") { app.showingAccountMenu = true }
         } label: {
-            HStack(spacing: 4) {
-                AppIcon(name: assistant.provider.iconName, size: 14)
-                Text(assistant.provider.displayName).foregroundStyle(.primary)
-                Text(assistant.modelName(for: assistant.provider)).foregroundStyle(.secondary).lineLimit(1)
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
-            }
-            .font(.system(size: 11.5))
+            PickerLabel()
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+    }
+}
+
+private struct PickerLabel: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        let assistant = app.assistant
+        HStack(spacing: 4) {
+            AppIcon(name: assistant.provider.iconName, size: 14)
+            Text(assistant.active?.name ?? "No assistant").foregroundStyle(.primary)
+            Text(assistant.activeModelName).foregroundStyle(.secondary).lineLimit(1)
+            Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+        }
+        .font(.system(size: 11.5))
     }
 }
 

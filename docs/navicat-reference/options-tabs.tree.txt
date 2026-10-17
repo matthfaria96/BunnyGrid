@@ -1,0 +1,99 @@
+Window "Tabs" {Raise}   #[]
+  Button "OK" {Press}   #[0]
+  Button "Cancel" {Press}   #[1]
+  Group   #[2]
+    ScrollArea {ScrollLeftByPage,ScrollRightByPage,ScrollUpByPage,ScrollDownByPage}   #[2, 0]
+      CheckBox "General" {Press}   #[2, 0, 0]
+      CheckBox "Tabs" {Press}   #[2, 0, 1]
+      CheckBox "Code Completion" {Press}   #[2, 0, 2]
+      CheckBox "Records" {Press}   #[2, 0, 3]
+      CheckBox "Editor" {Press}   #[2, 0, 4]
+      CheckBox "Auto Recovery" {Press}   #[2, 0, 5]
+      CheckBox "Environment" {Press}   #[2, 0, 6]
+      CheckBox "AI" {Press}   #[2, 0, 7]
+      CheckBox "Advanced" {Press}   #[2, 0, 8]
+    Group   #[2, 1]
+      StaticText = 'On Startup:'   #[2, 1, 0]
+      Group   #[2, 1, 1]
+        RadioButton "Open Objects tab only" {Press}   #[2, 1, 1, 0]
+        RadioButton "Continue where you left off" {Press}   #[2, 1, 1, 1]
+        RadioButton "Open a specific tab or set of tabs" {Press}   #[2, 1, 1, 2]
+        Button "Set Tabs…" {Press}   #[2, 1, 1, 3]
+      StaticText = 'Open Tabs:'   #[2, 1, 2]
+      Group   #[2, 1, 3]
+        RadioButton "Main window" {Press}   #[2, 1, 3, 0]
+        RadioButton "Last tab window" {Press}   #[2, 1, 3, 1]
+        RadioButton "Last tab window (except main window)" {Press}   #[2, 1, 3, 2]
+        RadioButton "New window" {Press}   #[2, 1, 3, 3]
+        StaticText = 'Open new tab in'   #[2, 1, 3, 4]
+      CheckBox "Allow opening multiple forms for same object" {Press}   #[2, 1, 4]
+      StaticText = 'Tab Bar Style:'   #[2, 1, 5]
+      CheckBox "Always show the tab bar" {Press}   #[2, 1, 6]
+    Button "Restore Defaults" {Press}   #[2, 2]
+    StaticText = 'Box'   #[2, 3]
+  Toolbar {ShowMenu}   #[3]
+    Button "General" {Press,Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 0]
+    Button "Tabs" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 1]
+    Button "Code Completion" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 2]
+    Button "Editor" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 3]
+    Button "Records" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 4]
+    Button "Auto Recovery" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 5]
+    Button "AI" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 6]
+    Button "Environment" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Move next
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 7]
+    Button "Advanced" {Press,Name:Move previous
+Target:0x0
+Selector:(null),Name:Remove from toolbar
+Target:0x0
+Selector:(null)}   #[3, 8]
+  Button {Press}   #[4]
+  Button {Press,ShowMenu}   #[5]
+    Group   #[5, 0]
+      Group   #[5, 0, 0]
+  Button {Press}   #[6]
+  StaticText = 'Tabs'   #[7]

@@ -14,7 +14,8 @@ final class AskAIRun: Identifiable {
     /// What the user asked, for "Continue in New Chat".
     let question: String
     let prompt: String
-    let provider: AIProvider
+    let assistantConfig: AIAssistantConfig
+    var provider: AIProvider { assistantConfig.provider }
     private(set) var model: String?
     private(set) var text = ""
     private(set) var note: String?
@@ -29,7 +30,8 @@ final class AskAIRun: Identifiable {
         self.originalSQL = originalSQL
         self.question = question
         self.prompt = prompt
-        self.provider = assistant.provider
+        // AskAI checks there is an active assistant with a key before creating a run.
+        self.assistantConfig = assistant.active ?? AIAssistantConfig(provider: .claude)
         self.assistant = assistant
     }
 
@@ -43,7 +45,7 @@ final class AskAIRun: Identifiable {
         note = nil
         error = nil
         isRunning = true
-        let stream = assistant.stream(provider, messages: [.object(["role": .string("user"), "content": .string(prompt)])])
+        let stream = assistant.stream(assistantConfig, messages: [.object(["role": .string("user"), "content": .string(prompt)])])
         let provider = provider
         task = Task {
             defer { isRunning = false }
@@ -91,7 +93,7 @@ enum AskAI {
             var title = action.title
             if action == .convert { title = "Convert SQL to \([targetEngine, targetVersion].filter { !$0.isEmpty }.joined(separator: " "))" }
             let question = action == .explainError ? "Explain this error: \(query.failureMessage ?? "")" : "\(title):\n\(original)"
-            present(AskAIRun(title: title, format: action.format, originalSQL: original, question: question, prompt: prompt, assistant: app.assistant), on: query)
+            present(AskAIRun(title: title, format: action.format, originalSQL: original, question: question, prompt: withLanguage(prompt), assistant: app.assistant), on: query)
         }
     }
 
@@ -101,9 +103,15 @@ enum AskAI {
             let context = await AIContextBuilder.requestContext(for: query, includeSchema: action.context.contains(.currentSchema))
             let original = action.context.contains(.selectedText) && query.hasSelection ? query.selectedText : query.text
             let run = AskAIRun(title: action.title, format: action.format, originalSQL: original, question: action.prompt,
-                               prompt: AIPrompts.custom(action, context: context), assistant: app.assistant)
+                               prompt: withLanguage(AIPrompts.custom(action, context: context)), assistant: app.assistant)
             present(run, on: query)
         }
+    }
+
+    /// Options › AI › Ask AI › Language: answers in that language unless it is Auto.
+    static func withLanguage(_ prompt: String) -> String {
+        let language = AppOptions.shared.values.askAILanguage
+        return language == "Auto" ? prompt : prompt + "\n\nWrite all explanations and SQL comments in \(language)."
     }
 
     private static func present(_ run: AskAIRun, on query: QueryTabModel) {
@@ -112,7 +120,7 @@ enum AskAI {
     }
 
     private static func ensureKey(_ app: AppModel) -> Bool {
-        guard app.assistant.hasAPIKey else {
+        guard app.assistant.unavailableReason == nil else {
             app.showingAccountMenu = true
             return false
         }
@@ -207,7 +215,7 @@ struct AskAIResultView: View {
             AppIcon(name: run.provider.iconName, size: 24)
             VStack(alignment: .leading, spacing: 1) {
                 Text(run.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
-                Text([run.provider.displayName, run.model ?? app.assistant.modelName(for: run.provider)].joined(separator: " · "))
+                Text([run.assistantConfig.name, run.model ?? app.assistant.modelName(for: run.assistantConfig)].joined(separator: " · "))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Spacer()
@@ -267,7 +275,8 @@ struct AskAIResultView: View {
                 .disabled(run.isRunning || run.code.isEmpty)
             } else {
                 Button {
-                    app.assistant.continueInNewChat(question: run.question, apiPrompt: run.prompt, answer: run.text, provider: run.provider, model: run.model)
+                    app.assistant.continueInNewChat(question: run.question, apiPrompt: run.prompt, answer: run.text, provider: run.provider,
+                                                           assistantName: run.assistantConfig.name, model: run.model)
                     dismiss()
                 } label: {
                     Label("Continue in New Chat", systemImage: "bubble.left.and.bubble.right")
@@ -413,7 +422,7 @@ struct AskAICustomSheet: View {
                 AppIcon(name: app.assistant.provider.iconName, size: 20)
                 Text("Ask \(app.assistant.provider.displayName)").font(.system(size: 15, weight: .semibold))
                 Spacer()
-                Text(app.assistant.modelName(for: app.assistant.provider)).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(app.assistant.activeModelName).font(.system(size: 11)).foregroundStyle(.secondary)
             }
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $editing.prompt)

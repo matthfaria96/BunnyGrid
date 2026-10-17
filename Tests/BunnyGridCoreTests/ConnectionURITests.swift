@@ -34,3 +34,17 @@ import Testing
         #expect(throws: ConnectionURI.ParseError.invalid) { try ConnectionURI.parse("postgresql://") }
     }
 }
+
+@Suite struct ConnectionURIStringTests {
+    @Test func buildsURIsThatParseBack() throws {
+        let config = ConnectionConfig(kind: .postgresql, host: "db.example.com", port: 6543, username: "ana", database: "shop", tls: .require)
+        let uri = ConnectionURI.string(for: config)
+        #expect(uri == "postgresql://ana@db.example.com:6543/shop?sslmode=require")
+        let parsed = try ConnectionURI.parse(ConnectionURI.string(for: config, password: "s3cret"))
+        #expect(parsed.password == "s3cret")
+        #expect(parsed.config.host == "db.example.com")
+        #expect(parsed.config.tls == .require)
+        #expect(ConnectionURI.string(for: ConnectionConfig(kind: .mysql, host: "localhost", username: "root")) == "mysql://root@localhost:3306")
+        #expect(ConnectionURI.string(for: ConnectionConfig(kind: .sqlite, filePath: "/tmp/a b.db")) == "sqlite:///tmp/a%20b.db")
+    }
+}

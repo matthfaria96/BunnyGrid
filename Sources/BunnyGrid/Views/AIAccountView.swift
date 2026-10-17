@@ -79,7 +79,7 @@ struct AccountBadge: View {
     }
 }
 
-/// Profile, AI platform switcher, key entry and model choice.
+/// Profile, assistant switcher, key entry and model choice.
 struct AIAccountPopover: View {
     @Environment(AppModel.self) private var app
 
@@ -90,29 +90,62 @@ struct AIAccountPopover: View {
                 .padding(16)
             Divider()
             VStack(alignment: .leading, spacing: 8) {
-                Text("AI Platform").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                ForEach(AIProvider.allCases) { provider in
-                    PlatformRow(provider: provider)
+                HStack {
+                    Text("AI Assistant").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    Spacer()
+                    Menu {
+                        ForEach(AIProvider.allCases) { provider in
+                            Button {
+                                let added = assistant.addAssistant(provider)
+                                assistant.activate(added.id)
+                            } label: {
+                                if let icon = IconLibrary.image(provider.iconName, size: 16) {
+                                    Label { Text(provider.menuTitle) } icon: { Image(nsImage: icon) }
+                                } else {
+                                    Text(provider.menuTitle)
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.accentColor)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Add Assistant")
                 }
-                if !assistant.hasAPIKey || isFailed(assistant.provider) {
-                    APIKeyEditor(provider: assistant.provider, compact: true)
+                if !assistant.aiEnabled {
+                    Toggle("Enable AI Assistant", isOn: Binding(get: { assistant.aiEnabled }, set: { assistant.aiEnabled = $0 }))
+                        .font(.system(size: 12))
+                } else if assistant.assistants.isEmpty {
+                    Text("Click \"+\" to add a Claude or ChatGPT assistant.").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                ForEach(assistant.aiEnabled ? assistant.assistants : []) { config in
+                    AssistantRow(assistant: config)
+                }
+                if let active = assistant.active, !assistant.hasAPIKey(for: active) || isFailed(active) {
+                    APIKeyEditor(assistant: active, compact: true)
                         .padding(.top, 2)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                HStack {
-                    Text("Model").font(.system(size: 12))
-                    Spacer()
-                    ModelMenu(provider: assistant.provider)
+                if let active = assistant.active {
+                    HStack {
+                        Text("Model").font(.system(size: 12))
+                        Spacer()
+                        ModelMenu(assistant: active)
+                    }
+                    .padding(.top, 4)
                 }
-                .padding(.top, 4)
             }
             .padding(16)
-            .animation(.easeInOut(duration: 0.2), value: assistant.provider)
+            .animation(.easeInOut(duration: 0.2), value: assistant.activeAssistantID)
             .animation(.easeInOut(duration: 0.2), value: assistant.hasAPIKey)
             Divider()
             HStack {
                 SettingsLink { Text("AI Settings…") }
                     .buttonStyle(.link)
+                    .simultaneousGesture(TapGesture().onEnded { UserDefaults.standard.set("ai", forKey: "settingsTab") })
                 Spacer()
                 Button("Open Assistant") {
                     app.showAssistant = true
@@ -127,12 +160,12 @@ struct AIAccountPopover: View {
         }
         .frame(width: 330)
         .onAppear {
-            for provider in AIProvider.allCases { assistant.verifyIfNeeded(provider) }
+            for config in assistant.assistants { assistant.verifyIfNeeded(config) }
         }
     }
 
-    private func isFailed(_ provider: AIProvider) -> Bool {
-        if case .failed = app.assistant.verification[provider] { return true }
+    private func isFailed(_ config: AIAssistantConfig) -> Bool {
+        if case .failed = app.assistant.verification[config.id] { return true }
         return false
     }
 
@@ -154,7 +187,7 @@ struct AIAccountPopover: View {
                 Text(app.profile.name).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                 HStack(spacing: 4) {
                     AppIcon(name: app.assistant.provider.iconName, size: 12)
-                    Text("\(app.assistant.provider.displayName) · \(app.assistant.modelName(for: app.assistant.provider))")
+                    Text(app.assistant.active.map { "\($0.name) · \(app.assistant.modelName(for: $0))" } ?? "No assistant")
                         .lineLimit(1)
                 }
                 .font(.system(size: 11.5))
@@ -165,23 +198,22 @@ struct AIAccountPopover: View {
     }
 }
 
-/// One selectable AI platform with its connection status.
-private struct PlatformRow: View {
+/// One configured assistant with its connection status; click to make it the active one.
+private struct AssistantRow: View {
     @Environment(AppModel.self) private var app
-    let provider: AIProvider
+    let assistant: AIAssistantConfig
     @State private var isHovering = false
 
     var body: some View {
-        let isActive = app.assistant.provider == provider
+        let isActive = app.assistant.active?.id == assistant.id
         Button {
-            app.assistant.provider = provider
-            app.assistant.verifyIfNeeded(provider)
+            app.assistant.activate(assistant.id)
         } label: {
             HStack(spacing: 10) {
-                AppIcon(name: provider.iconName, size: 30)
+                AppIcon(name: assistant.provider.iconName, size: 30)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(provider.displayName).font(.system(size: 13, weight: .semibold))
-                    KeyStatusLabel(provider: provider)
+                    Text(assistant.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    KeyStatusLabel(assistant: assistant)
                 }
                 Spacer()
                 if isActive {
@@ -210,31 +242,32 @@ private struct PlatformRow: View {
     }
 }
 
-/// "Connected", "Checking…", "API key rejected" or "Not connected", by the provider's company name.
+/// "Connected", "Checking…", "Key not accepted" or "Not connected", after the provider's company name.
 struct KeyStatusLabel: View {
     @Environment(AppModel.self) private var app
-    let provider: AIProvider
+    let assistant: AIAssistantConfig
 
     var body: some View {
-        let assistant = app.assistant
+        let model = app.assistant
+        let company = assistant.provider.company
         HStack(spacing: 4) {
-            if !assistant.hasAPIKey(for: provider) {
+            if !model.hasAPIKey(for: assistant) {
                 Circle().fill(Color.secondary.opacity(0.5)).frame(width: 6, height: 6)
-                Text("\(provider.company) · Not connected")
+                Text("\(company) · Not connected")
             } else {
-                switch assistant.verification[provider] ?? .unknown {
+                switch model.verification[assistant.id] ?? .unknown {
                 case .checking:
                     ProgressView().controlSize(.mini)
-                    Text("\(provider.company) · Checking…")
+                    Text("\(company) · Checking…")
                 case .connected:
                     Circle().fill(Color.green).frame(width: 6, height: 6)
-                    Text("\(provider.company) · Connected")
+                    Text("\(company) · Connected")
                 case .failed(let message):
                     Circle().fill(Color.red).frame(width: 6, height: 6)
-                    Text("\(provider.company) · Key not accepted").help(message)
+                    Text("\(company) · Key not accepted").help(message)
                 case .unknown:
                     Circle().fill(Color.green.opacity(0.6)).frame(width: 6, height: 6)
-                    Text("\(provider.company) · \(assistant.usesEnvironmentKey(provider) ? "Key from environment" : "API key saved")")
+                    Text("\(company) · \(model.usesEnvironmentKey(assistant) ? "Key from environment" : "API key saved")")
                 }
             }
         }
@@ -244,38 +277,39 @@ struct KeyStatusLabel: View {
     }
 }
 
-/// The model picker for one platform.
+/// The model picker for one assistant.
 struct ModelMenu: View {
     @Environment(AppModel.self) private var app
-    let provider: AIProvider
+    let assistant: AIAssistantConfig
 
     var body: some View {
-        let assistant = app.assistant
+        let model = app.assistant
         Menu {
-            ForEach(assistant.models(for: provider)) { model in
+            ForEach(model.models(for: assistant.provider)) { option in
                 Button {
-                    assistant.select(provider, model: model.id)
+                    model.setModel(option.id, for: assistant)
                 } label: {
-                    if assistant.selectedModel(for: provider) == model.id { Label(model.name, systemImage: "checkmark") } else { Text(model.name) }
+                    if assistant.model == option.id { Label(option.name, systemImage: "checkmark") } else { Text(option.name) }
                 }
             }
         } label: {
-            Text(assistant.modelName(for: provider)).font(.system(size: 12))
+            Text(model.modelName(for: assistant)).font(.system(size: 12))
         }
         .menuStyle(.button)
         .fixedSize()
     }
 }
 
-/// Paste, save and test an API key; stored in the login Keychain.
+/// Paste, save and test an assistant's API key; stored in the login Keychain.
 struct APIKeyEditor: View {
     @Environment(AppModel.self) private var app
-    let provider: AIProvider
+    let assistant: AIAssistantConfig
     var compact = false
     @State private var key = ""
 
     var body: some View {
-        let assistant = app.assistant
+        let model = app.assistant
+        let provider = assistant.provider
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 SecureField("\(provider.company) API key", text: $key, prompt: Text(provider.keyPlaceholder))
@@ -285,13 +319,13 @@ struct APIKeyEditor: View {
                     .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty)
                 if !compact {
                     Button("Remove", role: .destructive) {
-                        assistant.setAPIKey("", for: provider)
+                        model.setAPIKey("", for: assistant)
                         key = ""
                     }
-                    .disabled(assistant.storedAPIKey(for: provider).isEmpty)
+                    .disabled(model.storedAPIKey(for: assistant).isEmpty)
                 }
             }
-            if case .failed(let message) = assistant.verification[provider] ?? .unknown {
+            if case .failed(let message) = model.verification[assistant.id] ?? .unknown {
                 Text(message).font(.system(size: 11)).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
             }
             HStack(spacing: 4) {
@@ -300,14 +334,14 @@ struct APIKeyEditor: View {
             }
             .font(.system(size: 11))
         }
-        .onAppear { if !compact { key = assistant.storedAPIKey(for: provider) } }
-        .onChange(of: assistant.storedAPIKey(for: provider)) { _, stored in if !compact { key = stored } }
+        .onAppear { if !compact { key = model.storedAPIKey(for: assistant) } }
+        .onChange(of: assistant.id) { _, _ in if !compact { key = model.storedAPIKey(for: assistant) } }
     }
 
     private func save() {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        app.assistant.setAPIKey(trimmed, for: provider)
+        app.assistant.setAPIKey(trimmed, for: assistant)
         if compact { key = "" }
     }
 }

@@ -43,6 +43,7 @@ final class TableTabModel: Identifiable {
     var isInTransaction: Bool { transactionDriver != nil }
     private(set) var transactionError: String?
     @ObservationIgnored private weak var context: DatabaseContext?
+    @ObservationIgnored private var isStartingTransaction = false
     let location: String
     let connectionID: UUID?
     let databaseName: String
@@ -66,7 +67,8 @@ final class TableTabModel: Identifiable {
     private(set) var orderBy: OrderBy?
     private(set) var page: TablePage?
     private(set) var offset = 0
-    var pageSize = 1000
+    /// Options › Records: "Limit records … records per page" (a very large page when unlimited).
+    var pageSize = AppOptions.shared.values.limitRecords ? max(AppOptions.shared.values.recordsPerPage, 1) : 1_000_000
     private(set) var totalRows: Int?
     private(set) var isLoading = false
     private(set) var error: String?
@@ -351,6 +353,16 @@ final class TableTabModel: Identifiable {
 
     func setValue(_ value: CellValue, row: Int, column: Int) {
         guard isEditable, let page, !maskedColumnIndexes.contains(column) else { return }
+        // Options › Records › "Auto begin transaction": the first edit opens a transaction, then applies.
+        if AppOptions.shared.values.autoBeginTransaction, canBeginTransaction, !isStartingTransaction {
+            isStartingTransaction = true
+            Task {
+                await beginTransaction(session: context?.session)
+                isStartingTransaction = false
+                setValue(value, row: row, column: column)
+            }
+            return
+        }
         if row >= page.rows.count {
             insertedRows[row - page.rows.count][column] = value
         } else {
