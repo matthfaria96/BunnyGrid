@@ -6,6 +6,7 @@ import SwiftUI
 /// a title row beside the traffic lights, then the icon toolbar with View and the account on the right.
 struct MainToolbar: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,7 +72,9 @@ struct MainToolbar: View {
                 }
                 objectButton(.queries, "Query", "query")
                 objectButton(.backups, "Backup", "backup")
-                ChromeButton(title: "Automation", comingSoon: "Batch jobs that run queries, exports and backups on a schedule.") {} glyph: {
+                ChromeButton(title: "Automation", help: "Batch jobs that run queries, exports and backups on a schedule") {
+                    openWindow(id: "automation")
+                } glyph: {
                     AppIcon(name: "automation", size: 32)
                 }
                 let modelContext = app.currentContext?.isOpen == true ? app.currentContext : nil

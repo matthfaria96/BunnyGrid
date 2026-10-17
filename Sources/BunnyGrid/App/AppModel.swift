@@ -93,6 +93,8 @@ final class AppModel {
 
     let assistant: AssistantModel
     let profile = ProfileModel(directory: AppModel.dataDirectory)
+    /// Batch jobs, schedules and backups (AutomationCenter.swift).
+    let automation = AutomationCenter(dataDirectory: AppModel.dataDirectory)
 
     @ObservationIgnored private let store: ConnectionStore
     @ObservationIgnored private let historyStore: QueryHistoryStore
