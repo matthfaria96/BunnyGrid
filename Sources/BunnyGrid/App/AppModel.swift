@@ -466,6 +466,24 @@ final class AppModel {
         selectedTabID = tab.id
     }
 
+    /// Model tab (Navicat Modeling) for a database or schema; reuses an open one.
+    func openModel(in context: DatabaseContext, schema: String?) {
+        let schema = context.usesSchemas ? (schema ?? context.defaultSchema) : nil
+        if let existing = tabs.first(where: {
+            if case .model(let model) = $0 {
+                model.connectionID == context.session?.id && model.databaseName == context.name && model.schema == schema
+            } else {
+                false
+            }
+        }) {
+            selectedTabID = existing.id
+            return
+        }
+        let tab = WorkspaceTab.model(ModelTabModel(context: context, schema: schema))
+        tabs.append(tab)
+        selectedTabID = tab.id
+    }
+
     // MARK: - Save (⌘S)
 
     /// Saves whatever the selected tab holds: grid edits, the query, or the table design.
@@ -482,6 +500,8 @@ final class AppModel {
                     model.saveError = nil
                 }
             }
+        case .model(let model):
+            model.savePositions()
         case nil:
             break
         }
@@ -492,6 +512,7 @@ final class AppModel {
         case .table(let model): model.hasChanges
         case .query(let model): !model.text.isEmpty
         case .design(let model): model.hasChanges
+        case .model: false
         case nil: false
         }
     }
@@ -763,6 +784,12 @@ final class AppModel {
             }
         }
         #endif
+        if CommandLine.arguments.contains("--open-model"), let id = opened {
+            Task {
+                while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
+                if let context = sessions[id]?.context(database) { openModel(in: context, schema: context.defaultSchema) }
+            }
+        }
         if CommandLine.arguments.contains("--show-objects"), let id = opened {
             Task {
                 while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
@@ -782,7 +809,8 @@ final class AppModel {
             guard let context = sessions[id]?.context(database) else { return }
             if let query {
                 openQuery(text: query, in: context)
-                selectedQueryTab?.run()
+                // `--explain` opens the query's plan instead of its result.
+                if CommandLine.arguments.contains("--explain") { selectedQueryTab?.explain() } else { selectedQueryTab?.run() }
                 #if DEBUG
                 if let index = CommandLine.arguments.firstIndex(of: "--ask-ai"), CommandLine.arguments.indices.contains(index + 1),
                    let tab = selectedQueryTab {

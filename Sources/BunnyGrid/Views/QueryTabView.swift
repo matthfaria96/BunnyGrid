@@ -40,14 +40,43 @@ struct QueryTabView: View {
     private var editor: some View {
         SQLEditorView(text: $model.text, selectedText: $model.selectedText, completions: { prefix, qualifier in
             model.completions(prefix: prefix, qualifier: qualifier)
-        }, onTextView: { model.textView = $0 }, onCursorChange: { model.updateCursor(in: $0) })
+        }, onTextView: { model.textView = $0 }, onCursorChange: { model.updateCursor(in: $0) }, menuItems: editorMenu)
+    }
+
+    /// Run and format commands at the top of the editor's context menu, as in Navicat.
+    private var editorMenu: [SQLEditorView.MenuItem] {
+        let idle = !model.isRunning
+        return [
+            .init(title: "Run Selected", isEnabled: idle && model.hasSelection) { model.runSelected() },
+            .init(title: "Run Current Statement", key: "\r", modifiers: [.command, .shift], isEnabled: idle) { model.runCurrentStatement() },
+            .init(title: "Explain", isEnabled: idle) { model.explain() },
+            .init(title: "Beautify SQL", key: "b", modifiers: [.command, .shift], isEnabled: true) { model.beautify() },
+        ]
+    }
+
+    /// Shortcuts without a visible button of their own (the Run menu lists them).
+    private var hiddenShortcuts: some View {
+        Group {
+            Button("Run Current Statement") { model.runCurrentStatement() }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+                .disabled(model.isRunning)
+            Button("Beautify SQL") { model.beautify() }
+                .keyboardShortcut("b", modifiers: [.command, .shift])
+            Button("Stop") { model.cancel() }
+                .keyboardShortcut(".", modifiers: .command)
+                .disabled(!model.isRunning)
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     private var toolRow: some View {
         HStack(spacing: 2) {
             ToolIconButton(systemImage: "square.and.arrow.down", help: "Save (⌘S)") { app.saveQuery(model) }
             Divider().frame(height: 16).padding(.horizontal, 6)
-            ToolIconButton(systemImage: "text.alignleft", help: "Beautify SQL") { model.beautify() }
+            ToolIconButton(systemImage: "text.alignleft", help: "Beautify SQL (⌘⇧B)") { model.beautify() }
                 .disabled(model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             ToolIconButton(systemImage: "curlybraces", help: "Code Snippet") {
                 app.showAssistant = true
@@ -82,7 +111,9 @@ struct QueryTabView: View {
             Spacer(minLength: 8)
             Menu {
                 Button("Run") { model.run() }
-                Button("Run Selected") { model.run() }.disabled(!model.hasSelection)
+                Button("Run Selected") { model.runSelected() }.disabled(!model.hasSelection)
+                Button("Run Current Statement") { model.runCurrentStatement() }
+                Button("Run All") { model.runAll() }
                 Divider()
                 Button("Query History…") { showingHistory = true }
             } label: {
@@ -95,7 +126,7 @@ struct QueryTabView: View {
             .fixedSize()
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(model.isRunning)
-            .help("Run (⌘↩). Runs only the selected text when there is a selection.")
+            .help("Run (⌘↩) runs the selection, or the whole editor without one. Run Current Statement (⌘⇧↩) runs the statement under the cursor.")
             .popover(isPresented: $showingHistory, arrowEdge: .bottom) {
                 if let connectionID = model.connectionID {
                     HistoryPopover(connectionID: connectionID) { sql in
@@ -104,14 +135,15 @@ struct QueryTabView: View {
                     }
                 }
             }
-            ToolIconButton(systemImage: "stop.fill", help: "Stop", tint: .red) { model.cancel() }
+            ToolIconButton(systemImage: "stop.fill", help: "Stop (⌘.): cancels the statement on the server", tint: .red) { model.cancel() }
                 .disabled(!model.isRunning)
-            ToolIconButton(systemImage: "list.bullet.indent", help: "Explain") { model.explain() }
+            ToolIconButton(systemImage: "list.bullet.indent", help: "Explain: the plan of the selected statement, or of the one under the cursor") { model.explain() }
                 .disabled(model.isRunning || model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 6)
         .keyboardShortcut("y", modifiers: [.command, .shift])
+        .background { hiddenShortcuts }
     }
 }
 
@@ -221,7 +253,7 @@ private struct QueryResultPanel: View {
                     tab("Message", .message)
                     tab("Summary", .summary)
                     ForEach(Array(model.resultSets.enumerated()), id: \.element.id) { index, result in
-                        tab("Result \(index + 1)", .result(result.id))
+                        tab(model.plan(for: result) != nil ? "Explain" : "Result \(index + 1)", .result(result.id))
                             .help(result.statement)
                     }
                 }
@@ -243,7 +275,7 @@ private struct QueryResultPanel: View {
                 case .summary: SummaryPane(model: model)
                 case .result(let id):
                     if let result = model.resultSets.first(where: { $0.id == id }) {
-                        ResultSetPane(model: model, result: result)
+                        ResultSetPane(model: model, result: result).id(result.id)
                     } else {
                         MessagePane(model: model)
                     }
@@ -288,6 +320,10 @@ private struct MessagePane: View {
                             Text("> Affected rows: \(affected)")
                         } else {
                             Text("> OK")
+                            if let result = execution.result, result.isTruncated {
+                                Text("> Fetched the first \(result.rows.count.formatted()) rows; more are available")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         Text("> Query Time: \(String(format: "%.3f", execution.duration.milliseconds / 1_000))s")
                     }
@@ -385,42 +421,73 @@ private struct SummaryPane: View {
     }
 }
 
-/// One result set: Data | Info, Pin and Export on the right, the grid and its footer.
+/// One result set: Data | Info (Plan | Data | Info for Explain), Export on the right, the grid and its footer.
 private struct ResultSetPane: View {
+    private enum SubTab { case plan, data, info }
+
     let model: QueryTabModel
     let result: QueryResult
-    @State private var showInfo = false
+    @State private var chosenTab: SubTab?
+
+    private var plan: [QueryPlanNode]? { model.plan(for: result) }
+    private var subTab: SubTab { chosenTab ?? (plan != nil ? .plan : .data) }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
-                subTab("Data", selected: !showInfo) { showInfo = false }
-                subTab("Info", selected: showInfo) { showInfo = true }
+                if plan != nil { subTabButton("Plan", .plan) }
+                subTabButton("Data", .data)
+                subTabButton("Info", .info)
                 Spacer()
                 ExportMenu(columns: result.columns, rows: result.rows, suggestedName: model.title)
                     .buttonStyle(.borderless)
-                    .help("Export Result")
+                    .help(result.isTruncated ? "Export the rows fetched so far" : "Export Result")
             }
             .padding(.horizontal, 10)
             .frame(height: 30)
             Divider()
-            if showInfo {
+            switch subTab {
+            case .info:
                 ResultInfo(model: model, result: result)
-            } else {
+            case .plan:
+                QueryPlanView(nodes: plan ?? [])
+            case .data:
                 ResultGridView(columns: result.columns, rows: result.rows)
                 Divider()
-                HStack(spacing: 10) {
-                    Text(result.statement.replacingOccurrences(of: "\n", with: " "))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                }
-                .font(.system(size: 11.5))
-                .padding(.horizontal, 10)
-                .frame(height: 26)
+                footer
             }
         }
+    }
+
+    /// The statement, and for a result cut at the row limit: how many rows came, Load More and Fetch All.
+    private var footer: some View {
+        HStack(spacing: 10) {
+            if result.isTruncated {
+                Text("First \(result.rows.count.formatted()) rows")
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                if model.canLoadMore(result) {
+                    Button("Load More") { model.loadMore(result) }
+                        .help("Run the statement again, fetching \((model.rowLimit ?? 1_000).formatted()) more rows")
+                    Button("Fetch All") { model.fetchAll(result) }
+                        .help("Run the statement again, fetching every row")
+                }
+            }
+            Text(result.statement.replacingOccurrences(of: "\n", with: " "))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.link)
+        .disabled(model.isRunning)
+        .font(.system(size: 11.5))
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+    }
+
+    private func subTabButton(_ title: String, _ tab: SubTab) -> some View {
+        subTab(title, selected: subTab == tab) { chosenTab = tab }
     }
 
     private func subTab(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -457,7 +524,7 @@ private struct ResultInfo: View {
                         label("Database"); Text(model.databaseName)
                     }
                     GridRow {
-                        label("Rows"); Text(result.rows.count.formatted())
+                        label("Rows"); Text(result.rows.count.formatted() + (result.isTruncated ? " (more not fetched)" : ""))
                         Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]); Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
                     }
                 }
@@ -480,6 +547,65 @@ private struct ResultInfo: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return formatter.string(from: date)
+    }
+}
+
+/// An Explain plan as an always-expanded tree: each step with its cost, rows and conditions.
+private struct QueryPlanView: View {
+    let nodes: [QueryPlanNode]
+
+    var body: some View {
+        let rows = nodes.flatMap { $0.flattened() }
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if row.depth > 0 {
+                            Image(systemName: "arrow.turn.down.right")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                        Image(systemName: Self.symbol(for: row.node.title))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.node.title)
+                                .font(.system(size: 12, weight: .medium))
+                            if !row.node.details.isEmpty {
+                                Text(row.node.details.map { "\($0.key): \($0.value)" }.joined(separator: "   "))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(3)
+                            }
+                        }
+                    }
+                    .padding(.leading, 12 + CGFloat(max(row.depth - 1, 0)) * 20 + (row.depth > 0 ? 4 : 0))
+                    .padding(.trailing, 12)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(index.isMultiple(of: 2) ? Color.clear : Color.primary.opacity(0.03))
+                }
+            }
+            .textSelection(.enabled)
+            .padding(.vertical, 6)
+        }
+    }
+
+    /// An SF Symbol for the kind of step.
+    private static func symbol(for title: String) -> String {
+        let t = title.lowercased()
+        if t.contains("join") || t.contains("nested loop") { return "arrow.triangle.merge" }
+        if t.contains("sort") || t.contains("order by") || t.contains("b-tree") { return "arrow.up.arrow.down" }
+        if t.contains("aggregate") || t.contains("group") { return "sum" }
+        if t.contains("index") || t.contains("search") || t.contains("lookup") { return "magnifyingglass" }
+        if t.contains("scan") { return "tablecells" }
+        if t.contains("hash") { return "number" }
+        if t.contains("limit") { return "line.3.horizontal.decrease" }
+        if t.contains("subquery") || t.contains("query block") || t.contains("co-routine") || t.contains("cte") || t.contains("union") {
+            return "square.stack.3d.up"
+        }
+        return "smallcircle.filled.circle"
     }
 }
 

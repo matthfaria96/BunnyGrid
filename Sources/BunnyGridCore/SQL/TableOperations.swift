@@ -91,13 +91,24 @@ public enum SQLDumper {
         if let header { out.append(header.split(separator: "\n", omittingEmptySubsequences: false).map { "-- " + $0 }.joined(separator: "\n")) }
         // Tables first, then views, so views find their tables.
         let ordered = objects.filter { $0.kind == .table } + objects.filter { $0.kind != .table && $0.kind != .routine }
+        // Foreign keys must not depend on the order of the tables: MySQL turns the checks off for the script,
+        // PostgreSQL's ALTER TABLE … ADD … FOREIGN KEY statements move to the end, after every table and its rows.
+        let mysql = d.kind == .mysql || d.kind == .mariadb
+        if mysql && ordered.contains(where: { $0.kind == .table }) { out.append("SET FOREIGN_KEY_CHECKS = 0;") }
+        var deferredKeys: [String] = []
         for object in ordered {
             try Task.checkCancellation()
             out.append("-- \(object.kind == .table ? "Table" : "View"): \(object.qualifiedName)")
             out.append(d.dropObject(object).replacingOccurrences(of: "DROP TABLE ", with: "DROP TABLE IF EXISTS ")
                 .replacingOccurrences(of: "DROP VIEW ", with: "DROP VIEW IF EXISTS ")
                 .replacingOccurrences(of: "DROP MATERIALIZED VIEW ", with: "DROP MATERIALIZED VIEW IF EXISTS ") + ";")
-            let ddl = try await driver.objectDDL(name: object.name, kind: object.kind, schema: object.schema)
+            var ddl = try await driver.objectDDL(name: object.name, kind: object.kind, schema: object.schema)
+            if d.kind == .postgresql, object.kind == .table {
+                let statements = SQLSplitter.split(ddl)
+                let isKey = { (sql: String) in sql.hasPrefix("ALTER TABLE ") && sql.contains(" FOREIGN KEY ") }
+                deferredKeys += statements.filter(isKey).map { $0.hasSuffix(";") ? $0 : $0 + ";" }
+                ddl = statements.filter { !isKey($0) }.map { $0.hasSuffix(";") ? $0 : $0 + ";" }.joined(separator: "\n\n")
+            }
             out.append(ddl.hasSuffix(";") ? ddl : ddl + ";")
             guard includeData, object.kind == .table else { continue }
             let target = d.qualifiedName(object)
@@ -107,6 +118,8 @@ public enum SQLDumper {
                 out.append("INSERT INTO \(target) (\(columns)) VALUES (\(row.map(d.literal).joined(separator: ", ")));")
             }
         }
+        if !deferredKeys.isEmpty { out.append("-- Foreign keys"); out += deferredKeys }
+        if mysql && ordered.contains(where: { $0.kind == .table }) { out.append("SET FOREIGN_KEY_CHECKS = 1;") }
         return out.joined(separator: "\n\n") + "\n"
     }
 }

@@ -14,6 +14,7 @@ struct RightPane: View {
         case .table: panes += [.ddl, .field]
         case .query: panes += [.snippets, .identifiers]
         case .design: panes += [.ddl]
+        case .model: break
         case nil: break
         }
         if showAIFeatures { panes.append(.ai) }
@@ -57,7 +58,7 @@ struct RightPane: View {
         case .ddl:
             switch app.selectedTab {
             case .table(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.object)
-            case .design(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.tableObject)
+            case .design(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.tableObject, revision: model.revision)
             default: InfoContent()
             }
         case .field:

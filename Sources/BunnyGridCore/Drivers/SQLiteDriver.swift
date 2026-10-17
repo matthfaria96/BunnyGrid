@@ -6,6 +6,8 @@ import SQLite3
 public actor SQLiteDriver: DatabaseDriver {
     public nonisolated let config: ConnectionConfig
     private var db: OpaquePointer?
+    /// The handle again, for `sqlite3_interrupt` from outside the actor while a statement runs on it.
+    private nonisolated let interruptHandle = InterruptHandle()
 
     public init(config: ConnectionConfig) {
         self.config = config
@@ -26,11 +28,19 @@ public actor SQLiteDriver: DatabaseDriver {
         }
         sqlite3_busy_timeout(handle, 5_000)
         db = handle
+        interruptHandle.set(handle)
     }
 
     public func disconnect() async {
+        interruptHandle.set(nil)
         if let db { sqlite3_close_v2(db) }
         db = nil
+    }
+
+    /// Statements run synchronously inside the actor, so the interrupt can't wait for it: it goes
+    /// straight to the handle (`sqlite3_interrupt` is safe from any thread while the connection is open).
+    public nonisolated func cancelCurrentQuery() async throws {
+        interruptHandle.interrupt()
     }
 
     public func serverVersion() async throws -> String {
@@ -162,6 +172,10 @@ public actor SQLiteDriver: DatabaseDriver {
 
 
     public func executeStatement(_ sql: String) async throws -> QueryResult {
+        try await executeStatement(sql, maxRows: nil)
+    }
+
+    public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {
         guard let db else { throw DatabaseError.notConnected }
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
@@ -172,6 +186,8 @@ public actor SQLiteDriver: DatabaseDriver {
         let columnCount = Int(sqlite3_column_count(stmt))
         let columns = (0..<columnCount).map { String(cString: sqlite3_column_name(stmt, Int32($0))) }
         var rows: [[CellValue]] = []
+        var truncated = false
+        let readOnly = sqlite3_stmt_readonly(stmt) != 0
 
         while true {
             let rc = sqlite3_step(stmt)
@@ -179,11 +195,17 @@ public actor SQLiteDriver: DatabaseDriver {
             guard rc == SQLITE_ROW else {
                 throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(db)))
             }
+            if let maxRows, rows.count >= max(maxRows, 0) {
+                truncated = true
+                // One step past the cap tells that more rows exist, and a query stops there. A statement that
+                // writes (… RETURNING) still runs to the end; only its extra rows are dropped.
+                if readOnly { break } else { continue }
+            }
             rows.append((0..<columnCount).map { Self.value(stmt, Int32($0)) })
         }
 
         let affected = columnCount == 0 ? Int(sqlite3_changes(db)) : nil
-        return QueryResult(statement: sql, columns: columns, rows: rows, affectedRows: affected)
+        return QueryResult(statement: sql, columns: columns, rows: rows, affectedRows: affected, isTruncated: truncated)
     }
 
     private static func value(_ stmt: OpaquePointer, _ index: Int32) -> CellValue {
@@ -245,5 +267,21 @@ public actor SQLiteDriver: DatabaseDriver {
         }
         let affected = columnCount == 0 ? Int(sqlite3_changes(db)) : nil
         return QueryResult(statement: sql, columns: columns, rows: rows, affectedRows: affected)
+    }
+}
+
+/// The open handle behind a lock, so `sqlite3_interrupt` from another thread never races `sqlite3_close`.
+private final class InterruptHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handle: OpaquePointer?
+
+    func set(_ handle: OpaquePointer?) {
+        lock.withLock { self.handle = handle }
+    }
+
+    func interrupt() {
+        lock.withLock {
+            if let handle { sqlite3_interrupt(handle) }
+        }
     }
 }
