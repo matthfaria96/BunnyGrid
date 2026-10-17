@@ -10,7 +10,7 @@ struct RightPane: View {
 
     private var available: [AppModel.RightPane] {
         var panes: [AppModel.RightPane] = [.info]
-        switch app.selectedTab {
+        switch app.selectedTabKind {
         case .table: panes += [.ddl, .field]
         case .query: panes += [.snippets, .identifiers]
         case .design: panes += [.ddl]
@@ -42,27 +42,9 @@ struct RightPane: View {
             }
             .frame(height: 30)
             Divider()
-            content
+            RightPaneContent(current: current)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch current {
-        case .info: InfoContent()
-        case .ai: AssistantPanel()
-        case .ddl:
-            switch app.selectedTab {
-            case .table(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.object)
-            case .design(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.tableObject, revision: model.revision)
-            default: InfoContent()
-            }
-        case .field:
-            if case .table(let model) = app.selectedTab { FieldPane(table: model) } else { InfoContent() }
-        case .snippets: SnippetsPane(query: app.selectedQueryTab)
-        case .identifiers: IdentifiersPane(query: app.selectedQueryTab)
-        }
     }
 
     private func tab(_ pane: AppModel.RightPane) -> some View {
@@ -106,6 +88,29 @@ struct RightPane: View {
     }
 }
 
+/// The pane under the right pane's tabs; the only part of it that follows the selected tab itself.
+private struct RightPaneContent: View {
+    @Environment(AppModel.self) private var app
+    let current: AppModel.RightPane
+
+    var body: some View {
+        switch current {
+        case .info: InfoContent()
+        case .ai: AssistantPanel()
+        case .ddl:
+            switch app.selectedTab {
+            case .table(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.object)
+            case .design(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.tableObject, revision: model.revision)
+            default: InfoContent()
+            }
+        case .field:
+            if case .table(let model) = app.selectedTab { FieldPane(table: model) } else { InfoContent() }
+        case .snippets: SnippetsPane(query: app.selectedQueryTab)
+        case .identifiers: IdentifiersPane(query: app.selectedQueryTab)
+        }
+    }
+}
+
 /// What the Info tab describes: the selected navigator node, or the open table.
 private struct InfoContent: View {
     @Environment(AppModel.self) private var app
@@ -113,7 +118,7 @@ private struct InfoContent: View {
     var body: some View {
         Group {
             // Design Table describes the table being designed (Navicat's card), whatever the navigator selection.
-            if case .design(let design) = app.selectedTab, let object = design.tableObject,
+            if app.selectedTabKind == .design, case .design(let design) = app.selectedTab, let object = design.tableObject,
                let id = design.connectionID, let config = app.connection(id: id) {
                 ObjectInfo(config: config, context: app.sessions[id]?.context(design.databaseName), object: object)
             } else if let node = app.navSelection, let id = node.connectionID, let config = app.connection(id: id) {

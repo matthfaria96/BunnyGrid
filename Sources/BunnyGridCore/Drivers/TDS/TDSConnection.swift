@@ -17,6 +17,7 @@ struct TDSResponse: Sendable {
     var resultSets: [TDSResultSet] = []
     var affectedRows: Int?
     var messages: [TDSServerMessage] = []
+    var sspi: [UInt8]?
 }
 
 /// A TDS 7.4 session over SwiftNIO: PRELOGIN, TLS (wrapped in PRELOGIN packets during the handshake, as
@@ -34,6 +35,8 @@ actor TDSConnection {
         var database: String
         var serverName: String
         var appName = "BunnyGrid"
+        /// Windows Authentication with NTLMv2: `username` is `DOMAIN\user`.
+        var windowsAuthentication = false
     }
 
     private let channel: any Channel
@@ -111,8 +114,17 @@ actor TDSConnection {
                               password: options.password, appName: options.appName, serverName: options.serverName,
                               database: options.database)
         login.packetSize = 8192
+        let ntlm = NTLMClient(account: options.username, password: options.password, workstation: Host.current().localizedName ?? "")
+        if options.windowsAuthentication { login.sspi = ntlm.negotiate() }
         try await send(.login7, login.encode())
-        let response = try await readResponse(maxRows: nil, isLogin: true)
+        var response = try await readResponse(maxRows: nil, isLogin: true)
+        if options.windowsAuthentication, serverProgram.isEmpty, let token = response.sspi {
+            let challenge = try NTLMClient.parseChallenge(token)
+            var message = ByteBuffer()
+            message.writeBytes(ntlm.authenticate(challenge))
+            try await send(.sspi, message)
+            response = try await readResponse(maxRows: nil, isLogin: true)
+        }
         if serverProgram.isEmpty {
             throw TDSError.server(response.messages.first { $0.severity > 10 }?.text ?? "Login failed.", number: 18456)
         }
@@ -287,6 +299,8 @@ actor TDSConnection {
             case .loginAck(let program, let version):
                 serverProgram = program
                 serverVersion = version
+            case .sspi(let bytes):
+                response.sspi = bytes
             case .returnStatus, .ignored:
                 break
             }

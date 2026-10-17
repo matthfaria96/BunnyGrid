@@ -62,7 +62,9 @@ public actor MongoDriver: DocumentDatabaseDriver {
         }
         let authSource = options.authSource.isEmpty ? (config.database.isEmpty ? "admin" : config.database) : options.authSource
         var helloExtras = BSONDocument()
-        if !config.username.isEmpty, options.authMechanism.isEmpty {
+        if options.authMechanism.uppercased() == "MONGODB-X509" {
+            guard tls != nil || config.tls.isEnforced else { throw DatabaseError.connectionFailed("X.509 authentication needs SSL with a client certificate.") }
+        } else if !config.username.isEmpty, options.authMechanism.isEmpty {
             helloExtras["saslSupportedMechs"] = .string("\(authSource).\(config.username)")
         }
 
@@ -115,6 +117,18 @@ public actor MongoDriver: DocumentDatabaseDriver {
     }
 
     private func authenticate(_ connection: MongoConnection, source: String, mechanism: String) async throws {
+        if mechanism.uppercased() == "MONGODB-X509" {
+            // The client certificate from the SSL tab is the identity; the user name (its subject) is optional.
+            var command: BSONDocument = ["authenticate": .int32(1), "mechanism": .string("MONGODB-X509")]
+            if !config.username.isEmpty { command["user"] = .string(config.username) }
+            do {
+                _ = try await connection.run(command, database: "$external")
+            } catch let error as MongoServerError {
+                await connection.close()
+                throw DatabaseError.connectionFailed("X.509 authentication failed: \(error.message)")
+            }
+            return
+        }
         guard !config.username.isEmpty else { return }
         let offered = connection.hello["saslSupportedMechs"]?.arrayValue?.compactMap(\.stringValue) ?? []
         let chosen: MongoSCRAM.Mechanism = switch mechanism.uppercased() {
@@ -160,6 +174,18 @@ public actor MongoDriver: DocumentDatabaseDriver {
         endpoint = nil
     }
 
+    /// A replica set or a seed list (not a single server, tunnel or socket).
+    private var hasSeveralHosts: Bool { mongo.srv || !mongo.extraHosts.isEmpty || !mongo.replicaSet.isEmpty }
+
+    /// Drops the connection and connects again through the seed list, which prefers the current primary.
+    private func rediscoverPrimary() async {
+        await connection?.close()
+        connection = nil
+        await endpoint?.close()
+        endpoint = nil
+        try? await openConnection()
+    }
+
     private func live() throws -> MongoConnection {
         guard let connection, connection.isActive else { throw DatabaseError.notConnected }
         return connection
@@ -186,7 +212,13 @@ public actor MongoDriver: DocumentDatabaseDriver {
         }
         defer { runningTag = nil }
         do {
-            return try await connection.run(command, database: database)
+            do {
+                return try await connection.run(command, database: database)
+            } catch let error as MongoServerError where error.isNotPrimary && name != "getMore" && hasSeveralHosts {
+                // An election moved the primary: find the new one and run the command there once.
+                await rediscoverPrimary()
+                return try await live().run(command, database: database)
+            }
         } catch let error as MongoServerError {
             throw DatabaseError.queryFailed(error.isInterruption ? "The operation was cancelled (\(error.message))." : error.localizedDescription)
         }

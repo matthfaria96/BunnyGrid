@@ -28,10 +28,26 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
     private var selected = 0
     public private(set) var protocolVersion = 2
     private var hasJSONModule: Bool?
+    /// Redis Cluster: the slot map and a connection per master (the seed connection is `connection`).
+    public private(set) var isCluster = false
+    private var slotRanges: [RedisCluster.SlotRange] = []
+    private var nodes: [RedisCluster.Node: RedisConnection] = [:]
+    private var seedNode: RedisCluster.Node?
+    private var tls: TLSConfiguration?
+    /// Sentinel: the master the sentinels reported.
+    public private(set) var sentinelMasterNode: RedisCluster.Node?
+    private let listener: (@Sendable (RESPValue) -> Void)?
 
     public init(config: ConnectionConfig, secrets: ConnectionSecrets) {
         self.config = config
         self.secrets = secrets
+        listener = nil
+    }
+
+    init(config: ConnectionConfig, secrets: ConnectionSecrets, listener: (@Sendable (RESPValue) -> Void)?) {
+        self.config = config
+        self.secrets = secrets
+        self.listener = listener
     }
 
     /// The Default Database field holds the index ("0"…"15", or "db3").
@@ -47,13 +63,23 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
 
     public func connect() async throws {
         guard connection == nil else { return }
-        let endpoint = try await ConnectionEndpoint.open(for: config, sshSecret: secrets.sshSecret)
+        var target = config
+        if let options = config.redis, options.usesSentinel {
+            let master = try await discoverSentinelMaster(options)
+            sentinelMasterNode = master
+            target.host = master.host
+            target.port = master.port
+            target.ssh = nil
+            target.socketPath = nil
+        }
+        let endpoint = try await ConnectionEndpoint.open(for: target, sshSecret: secrets.sshSecret)
         do {
-            let tls = Self.usesTLS(config, endpoint: endpoint)
-                ? try ConnectionTLS.configuration(for: config, keyPassphrase: secrets.sslKeyPassphrase) : nil
+            let tls = Self.usesTLS(target, endpoint: endpoint)
+                ? try ConnectionTLS.configuration(for: target, keyPassphrase: secrets.sslKeyPassphrase) : nil
+            self.tls = tls
             let connection: RedisConnection
             do {
-                connection = try await RedisConnection.open(address: endpoint.address, tls: tls, serverName: endpoint.tlsServerName)
+                connection = try await RedisConnection.open(address: endpoint.address, tls: tls, serverName: endpoint.tlsServerName, listener: listener)
             } catch {
                 throw DatabaseError.connectionFailed(ConnectionErrorText.describe(error))
             }
@@ -65,10 +91,151 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
             }
             self.connection = connection
             self.endpoint = endpoint
+            if listener == nil { await detectCluster(connection, host: target.host, port: target.port) }
         } catch {
             await endpoint.close()
             throw error
         }
+    }
+
+    // MARK: - Sentinel and Cluster
+
+    /// Asks each sentinel (host/port, then `sentinels`) for the master's address; the first answer wins.
+    private func discoverSentinelMaster(_ options: RedisOptions) async throws -> RedisCluster.Node {
+        var seeds = [RedisCluster.Node(host: config.host, port: config.port == 6379 || config.port == 0 ? 26379 : config.port)]
+        seeds += options.sentinels.compactMap { RedisCluster.Node($0) ?? RedisCluster.Node(host: $0, port: 26379) }
+        var lastError: (any Error)?
+        for seed in seeds {
+            do {
+                let sentinel = try await RedisConnection.open(address: .tcp(host: seed.host, port: seed.port), tls: nil, serverName: nil)
+                defer { Task { await sentinel.close() } }
+                let ask = ["SENTINEL", "GET-MASTER-ADDR-BY-NAME", options.sentinelMaster].map { Data($0.utf8) }
+                var reply = try await sentinel.send([ask])[0]
+                if case .error(let message) = reply, message.uppercased().contains("NOAUTH"), let password = secrets.password, !password.isEmpty {
+                    let user = config.username.trimmingCharacters(in: .whitespaces)
+                    let auth = (user.isEmpty ? ["AUTH", password] : ["AUTH", user, password]).map { Data($0.utf8) }
+                    reply = try await sentinel.send([auth, ask])[1]
+                }
+                if case .error(let message) = reply { throw RedisError.server(message) }
+                if let master = RedisSentinel.masterAddress(reply) { return master }
+                lastError = DatabaseError.connectionFailed("Sentinel \(seed.address) doesn't know a master named “\(options.sentinelMaster)”.")
+            } catch {
+                lastError = error
+            }
+        }
+        throw DatabaseError.connectionFailed("No sentinel answered for “\(options.sentinelMaster)”: \(lastError.map(ConnectionErrorText.describe) ?? "no sentinels")")
+    }
+
+    /// `cluster_enabled:1` → read the slot map; keys then go to the master that owns their slot.
+    private func detectCluster(_ connection: RedisConnection, host: String, port: Int) async {
+        guard let info = try? await connection.send([["INFO", "cluster"].map { Data($0.utf8) }])[0].string,
+              info.contains("cluster_enabled:1") else { return }
+        isCluster = true
+        let seed = RedisCluster.Node(host: host, port: port)
+        seedNode = seed
+        nodes[seed] = connection
+        await refreshSlots()
+    }
+
+    private func refreshSlots() async {
+        guard let connection, let seedNode,
+              let reply = try? await connection.send([["CLUSTER", "SLOTS"].map { Data($0.utf8) }])[0] else { return }
+        let ranges = RedisCluster.slotRanges(reply, defaultHost: seedNode.host)
+        if !ranges.isEmpty { slotRanges = ranges }
+    }
+
+    /// The masters in slot order (one per node), for SCAN and keyspace totals.
+    public var clusterMasters: [RedisCluster.Node] {
+        var seen = Set<RedisCluster.Node>()
+        return slotRanges.map(\.master).filter { seen.insert($0).inserted }
+    }
+
+    private func node(forSlot slot: Int) -> RedisCluster.Node? {
+        slotRanges.first { $0.lower <= slot && slot <= $0.upper }?.master
+    }
+
+    /// A handshaken connection to a cluster node, opened on first use.
+    private func nodeConnection(_ node: RedisCluster.Node) async throws -> RedisConnection {
+        if let existing = nodes[node], existing.isActive { return existing }
+        let opened: RedisConnection
+        do {
+            opened = try await RedisConnection.open(address: .tcp(host: node.host, port: node.port), tls: tls,
+                                                    serverName: ConnectionEndpoint.serverName(for: node.host))
+        } catch {
+            throw DatabaseError.connectionFailed("Cluster node \(node.address): \(ConnectionErrorText.describe(error))")
+        }
+        do {
+            try await handshake(opened)
+        } catch {
+            await opened.close()
+            throw error
+        }
+        nodes[node] = opened
+        return opened
+    }
+
+    /// Sends one command to the node owning its key, following MOVED (refreshing the slot map) and ASK redirects.
+    private func clusterSend(_ command: [Data]) async throws -> RESPValue {
+        var target = RedisCluster.routingKey(command).map(RedisCluster.slot).flatMap(node(forSlot:)) ?? seedNode
+        var asking = false
+        for _ in 0..<6 {
+            guard let node = target else { throw DatabaseError.notConnected }
+            let connection = try await nodeConnection(node)
+            let reply = asking
+                ? try await connection.send([[Data("ASKING".utf8)], command])[1]
+                : try await connection.send([command])[0]
+            guard case .error(let message) = reply, let redirect = RedisCluster.redirect(message) else { return reply }
+            switch redirect {
+            case .moved(let slot, let owner):
+                await refreshSlots()
+                if self.node(forSlot: slot) != owner {
+                    slotRanges.removeAll { $0.lower == slot && $0.upper == slot }
+                    slotRanges.insert(RedisCluster.SlotRange(lower: slot, upper: slot, master: owner), at: 0)
+                }
+                asking = false
+                target = owner
+            case .ask(_, let owner):
+                asking = true
+                target = owner
+            }
+        }
+        throw RedisError.server("Too many cluster redirects.")
+    }
+
+    /// A pipeline in cluster mode: a MULTI … EXEC block goes whole to the node of its first key; other commands one by one.
+    private func clusterPipeline(_ commands: [[Data]]) async throws -> [RESPValue] {
+        if let first = commands.first, String(decoding: first.first ?? Data(), as: UTF8.self).uppercased() == "MULTI" {
+            let key = commands.lazy.compactMap(RedisCluster.routingKey).first
+            guard let target = key.map(RedisCluster.slot).flatMap(node(forSlot:)) ?? seedNode else { throw DatabaseError.notConnected }
+            return try await nodeConnection(target).send(commands)
+        }
+        var replies: [RESPValue] = []
+        for command in commands { replies.append(try await clusterSendSplitting(command)) }
+        return replies
+    }
+
+    /// Multi-key DEL / UNLINK / EXISTS / TOUCH / MGET whose keys live in several slots run per slot and are merged.
+    private func clusterSendSplitting(_ command: [Data]) async throws -> RESPValue {
+        let name = String(decoding: command.first ?? Data(), as: UTF8.self).uppercased()
+        let keys = Array(command.dropFirst())
+        guard ["DEL", "UNLINK", "EXISTS", "TOUCH", "MGET"].contains(name), keys.count > 1,
+              Set(keys.map(RedisCluster.slot)).count > 1 else { return try await clusterSend(command) }
+        if name == "MGET" {
+            var values: [RESPValue] = []
+            for key in keys {
+                let reply = try await clusterSend([command[0], key])
+                if case .error = reply { return reply }
+                values.append(reply.elements?.first ?? .null)
+            }
+            return .array(values)
+        }
+        var total: Int64 = 0
+        for group in Dictionary(grouping: keys, by: RedisCluster.slot).values {
+            let reply = try await clusterSend([command[0]] + group)
+            if case .error = reply { return reply }
+            total += reply.int ?? 0
+        }
+        return .integer(total)
     }
 
     /// HELLO 3 with AUTH when the server has it (Redis 6+); otherwise AUTH and RESP2. Then SELECT.
@@ -114,6 +281,10 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
     }
 
     public func disconnect() async {
+        for (_, node) in nodes where node !== connection { await node.close() }
+        nodes = [:]
+        slotRanges = []
+        isCluster = false
         await connection?.close()
         connection = nil
         await endpoint?.close()
@@ -125,6 +296,17 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
     /// Sends commands back to back on `database` (with a SELECT first when needed) and returns their replies.
     func pipeline(database: Int?, _ commands: [[Data]]) async throws -> [RESPValue] {
         guard let connection else { throw DatabaseError.notConnected }
+        if isCluster {
+            do {
+                return try await clusterPipeline(commands)
+            } catch let error as RedisError {
+                throw error
+            } catch let error as DatabaseError {
+                throw error
+            } catch {
+                throw DatabaseError.queryFailed(ConnectionErrorText.describe(error))
+            }
+        }
         var batch = commands
         var selects = 0
         if let database, database != selected {
@@ -193,7 +375,15 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
     }
 
     public func keyspace() async throws -> [Int: RedisKeyspace] {
-        RedisInfo.keyspace(try await call(nil, ["INFO", "keyspace"]).string ?? "")
+        guard isCluster else { return RedisInfo.keyspace(try await call(nil, ["INFO", "keyspace"]).string ?? "") }
+        var total: [Int: RedisKeyspace] = [:]
+        for master in clusterMasters {
+            let reply = try await nodeConnection(master).send([["INFO", "keyspace"].map { Data($0.utf8) }])[0]
+            for (db, space) in RedisInfo.keyspace(reply.string ?? "") {
+                total[db] = total[db].map { $0.adding(space) } ?? space
+            }
+        }
+        return total
     }
 
     public func scan(database: Int, cursor: String, pattern: String?, type: RedisKeyType?, count: Int) async throws -> RedisScanPage {
@@ -201,9 +391,27 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
         if let pattern, !pattern.isEmpty, pattern != "*" { args += ["MATCH", pattern] }
         args += ["COUNT", String(max(count, 1))]
         if let type { args += ["TYPE", type.typeName] }
+        if isCluster { return try await clusterScan(cursor: cursor, arguments: Array(args.dropFirst(2))) }
         let reply = try await call(database, args)
         guard let parts = reply.elements, parts.count == 2 else { throw RedisError.server("Unexpected SCAN reply") }
         return RedisScanPage(cursor: parts[0].string ?? "0", keys: (parts[1].elements ?? []).compactMap(\.string))
+    }
+
+    /// SCAN over every master in turn; the cursor is `node:cursor` until the last node finishes.
+    private func clusterScan(cursor: String, arguments: [String]) async throws -> RedisScanPage {
+        let masters = clusterMasters
+        var (index, nodeCursor) = RedisCluster.scanCursor(cursor)
+        guard masters.indices.contains(index) else { return RedisScanPage(cursor: "0", keys: []) }
+        let reply = try await nodeConnection(masters[index]).send([(["SCAN", nodeCursor] + arguments).map { Data($0.utf8) }])[0]
+        if case .error(let message) = reply { throw RedisError.server(message) }
+        guard let parts = reply.elements, parts.count == 2 else { throw RedisError.server("Unexpected SCAN reply") }
+        nodeCursor = parts[0].string ?? "0"
+        let keys = (parts[1].elements ?? []).compactMap(\.string)
+        if nodeCursor == "0" {
+            index += 1
+            return RedisScanPage(cursor: index < masters.count ? "\(index):0" : "0", keys: keys)
+        }
+        return RedisScanPage(cursor: "\(index):\(nodeCursor)", keys: keys)
     }
 
     public func keyTypes(database: Int, keys: [String]) async throws -> [String: RedisKeyType] {
@@ -479,6 +687,36 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
             return (reply, db)
         }
         return (reply, database)
+    }
+
+    /// Runs a streaming command (SUBSCRIBE, PSUBSCRIBE, SSUBSCRIBE, MONITOR) on a connection of its own and yields
+    /// every message until the stream is cancelled (its connection is then closed).
+    public nonisolated func stream(_ line: String, database: Int) throws -> AsyncThrowingStream<RESPValue, Error> {
+        let arguments = try RedisCommandLine.parse(line)
+        guard !arguments.isEmpty else { throw RedisError.server("Nothing to run.") }
+        let (stream, continuation) = AsyncThrowingStream<RESPValue, Error>.makeStream()
+        var target = config
+        target.database = String(database)
+        let streaming = RedisDriver(config: target, secrets: secrets, listener: { continuation.yield($0) })
+        let task = Task {
+            do {
+                try await streaming.connect()
+                try await streaming.startStreaming(arguments)
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+        continuation.onTermination = { _ in
+            task.cancel()
+            Task { await streaming.disconnect() }
+        }
+        return stream
+    }
+
+    private func startStreaming(_ arguments: [Data]) async throws {
+        guard let connection else { throw DatabaseError.notConnected }
+        try await connection.startStreaming()
+        _ = connection.enqueue([arguments])
     }
 
     static let readOnlyCommands: Set<String> = [

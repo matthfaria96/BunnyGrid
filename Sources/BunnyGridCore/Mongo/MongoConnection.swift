@@ -16,6 +16,11 @@ public struct MongoServerError: LocalizedError, Sendable, Equatable {
 
     /// `Interrupted`, `MaxTimeMSExpired` or `CursorKilled`: the operation was stopped by killOp.
     public var isInterruption: Bool { [11601, 50, 237].contains(code) }
+
+    /// The server stopped being (or never was) the primary: `NotWritablePrimary`, `NotPrimaryNoSecondaryOk`,
+    /// `NotPrimaryOrSecondary`, `PrimarySteppedDown`, `InterruptedDueToReplStateChange`, `ShutdownInProgress`…
+    /// The command wasn't applied, so it can run again on the new primary.
+    public var isNotPrimary: Bool { [10107, 13435, 13436, 189, 11602, 91, 11600].contains(code) || message.hasPrefix("not master") }
 }
 
 /// OP_MSG framing (opcode 2013): header, flag bits, one section of kind 0 holding the command document.

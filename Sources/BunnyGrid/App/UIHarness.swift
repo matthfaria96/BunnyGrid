@@ -188,18 +188,31 @@ final class UIHarness {
             }
             let count = op == "doubleClick" ? 2 : Int(step["count"] as? Double ?? 1)
             let flags = modifiers(step["modifiers"])
-            if op == "rightClick" || step["button"] as? String == "right" {
-                trackedMenus = []
-                post(.rightMouseDown, window, point, flags: flags)
-                post(.rightMouseUp, window, point, flags: flags)
-            } else {
-                for click in 1...count {
-                    post(.leftMouseDown, window, point, flags: flags, clicks: click)
-                    post(.leftMouseUp, window, point, flags: flags, clicks: click)
+            let isRight = op == "rightClick" || step["button"] as? String == "right"
+            let menuPath = step["menu"] as? [String]
+            // A menu that is still closing would swallow the click meant to open the next one.
+            if menuPath != nil { try? await waitUntil(timeout: 2) { trackedMenus.isEmpty } }
+            for attempt in 0..<(menuPath == nil ? 1 : 2) {
+                if isRight {
+                    trackedMenus = []
+                    post(.rightMouseDown, window, point, flags: flags)
+                    post(.rightMouseUp, window, point, flags: flags)
+                } else {
+                    for click in 1...count {
+                        post(.leftMouseDown, window, point, flags: flags, clicks: click)
+                        post(.leftMouseUp, window, point, flags: flags, clicks: click)
+                    }
                 }
+                try await drain()
+                guard let menuPath else { break }
+                // No menu at all: the click went nowhere (nothing happened), so try it once more.
+                if attempt == 0, (try? await waitUntil(timeout: 2) { trackedMenus.contains { $0.supermenu == nil } }) == nil {
+                    logs.append("step \(results.count): no menu after the first click, clicking again")
+                    continue
+                }
+                try await choose(menuPath)
+                break
             }
-            try await drain()
-            if let path = step["menu"] as? [String] { try await choose(path) }
         case "drag":
             let (window, from) = try await settledLocate(step["from"] as? [String: Any] ?? [:])
             let to: NSPoint

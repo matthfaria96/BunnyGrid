@@ -307,8 +307,14 @@ enum Benchmarks {
             report("table.open", Double(end &- start) / 1_000_000, String(format: "page loaded at %.1f ms, %d rows", loaded, tab.page?.rows.count ?? 0))
             try? await Task.sleep(for: .milliseconds(300))
             guard let grid = views(GridTableView.self).last, let scroll = grid.enclosingScrollView else { return }
-            if scenario == "scroll" { await scrollGrid(grid, scroll: scroll, name: "grid") }
-            if scenario == "resize" { await resizeColumns(grid) }
+            if scenario == "scroll" {
+                await scrollGrid(grid, scroll: scroll, name: "grid")
+                await reportBlankCells(grid, "grid.blankCells")
+            }
+            if scenario == "resize" {
+                await resizeColumns(grid)
+                await reportBlankCells(grid, "grid.blankCells")
+            }
 
         case "tabs":
             guard let context = await openContext(), let objects = context.objects(in: nil) else { return }
@@ -358,7 +364,21 @@ enum Benchmarks {
             RunLoopMonitor.shared.isRecording = false
             report("editor.beautify", replaced, String(format: "text replaced; coloured at %.1f ms, %d -> %d chars", coloured, before, editor.string.utf16.count))
             reportStretches("editor.beautify.mainBusy", RunLoopMonitor.shared.stretches)
+            _ = await RunLoopMonitor.shared.settle()
+            RunLoopMonitor.shared.isRecording = true
             _ = await timeToIdle("editor.undoBeautify") { editor.undoManager?.undo() }
+            await waitFor { editor.colouredUpTo == .max }
+            _ = await RunLoopMonitor.shared.nextIdle()
+            RunLoopMonitor.shared.isRecording = false
+            reportStretches("editor.undoBeautify.mainBusy", RunLoopMonitor.shared.stretches)
+            if CommandLine.arguments.contains("--bench-hot") {
+                // Redo / undo for a profiler to sample.
+                for round in 0..<8 {
+                    if round % 2 == 0 { editor.undoManager?.redo() } else { editor.undoManager?.undo() }
+                    await waitFor { editor.colouredUpTo == .max }
+                    _ = await RunLoopMonitor.shared.nextIdle()
+                }
+            }
 
         case "typing", "autocomplete":
             guard let context = await openContext() else { return }
@@ -490,19 +510,34 @@ enum Benchmarks {
     static func scrollGrid(_ grid: NSTableView, scroll: NSScrollView, name: String) async {
         let maxY = max(grid.bounds.height - scroll.contentSize.height, 1)
         // A fast fling: 180 pt per frame down the whole page and back.
+        // `--bench-horizontal`: only the horizontal pass, on a grid that has been idle (all columns filled in).
+        let horizontalOnly = CommandLine.arguments.contains("--bench-horizontal")
+        if !horizontalOnly {
         await driveFrames("\(name).scrollVertical", duration: .seconds(CommandLine.arguments.contains("--bench-hot") ? 6 : 3)) { frame in
             var y = CGFloat(frame * 180).truncatingRemainder(dividingBy: maxY * 2)
             if y > maxY { y = maxY * 2 - y }
             scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX, y: y - (grid.headerView?.frame.height ?? 0)))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
+        }
         let maxX = max(grid.bounds.width - scroll.contentSize.width, 1)
-        await driveFrames("\(name).scrollHorizontal", duration: .seconds(2)) { frame in
+        await driveFrames("\(name).scrollHorizontal", duration: .seconds(horizontalOnly ? 6 : 2)) { frame in
             var x = CGFloat(frame * 60).truncatingRemainder(dividingBy: maxX * 2)
             if x > maxX { x = maxX * 2 - x }
             scroll.contentView.scroll(to: NSPoint(x: x, y: scroll.contentView.bounds.minY))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
+    }
+
+    /// Visible cells without a view (the grid makes cells only for the columns on screen): must stay 0.
+    static func reportBlankCells(_ grid: NSTableView, _ name: String) async {
+        _ = await RunLoopMonitor.shared.nextIdle()
+        let rows = grid.rows(in: grid.visibleRect), columns = grid.columnIndexes(in: grid.visibleRect)
+        var blank = 0
+        for row in rows.lowerBound..<rows.upperBound {
+            for column in columns where grid.view(atColumn: column, row: row, makeIfNecessary: false) == nil { blank += 1 }
+        }
+        report(name, Double(blank), "\(rows.length) rows × \(columns.count) columns on screen")
     }
 
     static func resizeColumns(_ grid: NSTableView) async {

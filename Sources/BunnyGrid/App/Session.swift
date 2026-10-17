@@ -420,6 +420,20 @@ enum WorkspaceTab: Identifiable {
     /// Navicat's Automation, as a workspace tab (one at most).
     case automation(AutomationTabModel)
 
+    enum Kind: Equatable { case table, query, design, model, redis, document, automation }
+
+    var kind: Kind {
+        switch self {
+        case .table: .table
+        case .query: .query
+        case .design: .design
+        case .model: .model
+        case .redis: .redis
+        case .document: .document
+        case .automation: .automation
+        }
+    }
+
     var id: UUID {
         switch self {
         case .automation(let model): model.id

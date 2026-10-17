@@ -279,6 +279,8 @@ final class RedisConsoleModel {
         for line in lines {
             remember(line)
             if line.lowercased() == "clear" { entries = []; continue }
+            let name = line.split(separator: " ").first.map { $0.uppercased() } ?? ""
+            if ["SUBSCRIBE", "PSUBSCRIBE", "SSUBSCRIBE", "MONITOR"].contains(name) { startStream(line); continue }
             let clock = ContinuousClock(), start = clock.now
             do {
                 let (reply, db) = try await driver.runCommandLine(line, database: database)
@@ -311,7 +313,39 @@ final class RedisConsoleModel {
 
     func clear() { entries = [] }
 
+    /// SUBSCRIBE / PSUBSCRIBE / SSUBSCRIBE / MONITOR: messages stream into the output (on a connection of their own) until Stop.
+    private(set) var isStreaming = false
+    @ObservationIgnored private var streamTask: Task<Void, Never>?
+
+    private func startStream(_ line: String) {
+        stopStream()
+        let db = database
+        entries.append(Entry(database: db, command: line, reply: .simpleString("Streaming… press Stop to end."), error: nil, duration: .zero))
+        isStreaming = true
+        let driver = driver
+        streamTask = Task { [weak self] in
+            do {
+                for try await message in try driver.stream(line, database: db) {
+                    guard let self else { return }
+                    self.entries.append(Entry(database: db, command: "", reply: message, error: nil, duration: .zero))
+                    if self.entries.count > 5000 { self.entries.removeFirst(self.entries.count - 5000) }
+                }
+            } catch is CancellationError {
+            } catch {
+                self?.entries.append(Entry(database: db, command: "", reply: nil, error: error.localizedDescription, duration: .zero))
+            }
+            self?.isStreaming = false
+        }
+    }
+
+    func stopStream() {
+        streamTask?.cancel()
+        streamTask = nil
+        isStreaming = false
+    }
+
     func close() {
+        stopStream()
         let driver = driver
         Task { await driver.disconnect() }
     }

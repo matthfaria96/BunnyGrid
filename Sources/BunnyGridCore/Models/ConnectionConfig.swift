@@ -247,6 +247,10 @@ public struct ConnectionConfig: Codable, Hashable, Identifiable, Sendable {
     public var socketPath: String?
     /// MongoDB: SRV, auth source and mechanism, replica set (nil for other engines).
     public var mongo: MongoOptions?
+    /// Redis: Sentinel master name and seeds (nil for other engines; a cluster is detected by itself).
+    public var redis: RedisOptions?
+    /// SQL Server: Windows Authentication (NTLMv2 with `DOMAIN\user` and the password) instead of a SQL Server login.
+    public var windowsAuthentication: Bool?
     /// Databases tab, SQLite: more database files ATTACHed on every connection, beside main.
     public var attachedDatabases: [AttachedDatabase]?
     /// Databases tab, servers: the databases the navigator lists (nil or empty lists them all).

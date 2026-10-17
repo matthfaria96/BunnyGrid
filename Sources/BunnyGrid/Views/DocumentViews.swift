@@ -541,6 +541,7 @@ struct MongoConnectionRows: View {
                 Text("Default").tag("")
                 Text("SCRAM-SHA-256").tag("SCRAM-SHA-256")
                 Text("SCRAM-SHA-1").tag("SCRAM-SHA-1")
+                Text("X.509 (SSL client certificate)").tag("MONGODB-X509")
             }
             .labelsHidden()
         }

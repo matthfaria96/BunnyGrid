@@ -51,8 +51,7 @@ public actor MySQLDriver: DatabaseDriver {
             throw DatabaseError.connectionFailed(ConnectionErrorText.describe(error))
         }
         let connection: MySQLConnection
-        do {
-            connection = try await Self.connectRetryingStalls { loop in
+        let open: @Sendable () async throws -> MySQLConnection = { try await Self.connectRetryingStalls { loop in
                 MySQLConnection.connect(
                     to: address,
                     username: self.config.username,
@@ -63,6 +62,22 @@ public actor MySQLDriver: DatabaseDriver {
                     logger: Logger(label: "BunnyGrid.MySQL"),
                     on: loop
                 )
+            } }
+        do {
+            do {
+                connection = try await open()
+            } catch let error as MySQLError where !(password ?? "").isEmpty && Self.mayNeedFullAuthentication(error) {
+                // caching_sha2_password full authentication MySQLNIO can't do (socket without SSL, or RSA over TCP):
+                // do it on a connection of our own, which fills the server's cache, then MySQLNIO's fast path works.
+                var overSocket = false
+                if case .unixSocket = endpoint.address { overSocket = true }
+                do {
+                    try await MySQLCachingSHA2.authenticate(address: address, username: config.username, password: password ?? "",
+                                                            database: config.database, overSocket: overSocket)
+                } catch {
+                    throw DatabaseError.connectionFailed(error.localizedDescription)
+                }
+                connection = try await open()
             }
         } catch let error as MySQLError {
             throw DatabaseError.connectionFailed(Self.message(error))
@@ -89,13 +104,23 @@ public actor MySQLDriver: DatabaseDriver {
         return try ConnectionTLS.configuration(for: local, keyPassphrase: keyPassphrase)
     }
 
+    /// Errors after which a full `caching_sha2_password` authentication of our own may help.
+    static func mayNeedFullAuthentication(_ error: MySQLError) -> Bool {
+        let text = "\(error)".lowercased()
+        return text.contains("access denied") || text.contains("caching_sha2") || text.contains("public key") || text.contains("1045")
+            || text.contains("authplugin") || text.contains("protocol")
+    }
+
     struct HandshakeTimeout: LocalizedError {
         var errorDescription: String? { "Timed out waiting for the server's handshake." }
     }
 
-    /// Now and then (a few times in a few hundred connections to a local server) MySQLNIO's handshake stalls:
-    /// the client never answers, and the server drops it after `connect_timeout` with "Got timeout reading
-    /// communication packets". A handshake that takes longer than `timeout` is abandoned and tried once more.
+    /// Root cause of the old "handshake stall": `MySQLConnection.connect` starts the TCP connect and only then, in a
+    /// `flatMap` on the returned future, adds its handlers. Called from a thread other than the event loop, the
+    /// connect can finish and the server's greeting be read (and dropped by the bare pipeline) before that callback is
+    /// registered; the client then waits forever and the server drops it after `connect_timeout` ("Got timeout
+    /// reading communication packets"). `withHandshakeTimeout` therefore calls `open` on the event loop itself.
+    /// The timeout and one retry stay as a safety net.
     static func connectRetryingStalls(timeout: TimeAmount = .seconds(6), attempts: Int = 2,
                                       _ open: @escaping @Sendable (any EventLoop) -> EventLoopFuture<MySQLConnection>) async throws -> MySQLConnection {
         var attempt = 1
@@ -109,11 +134,11 @@ public actor MySQLDriver: DatabaseDriver {
     }
 
     private static func withHandshakeTimeout(_ timeout: TimeAmount,
-                                             _ open: @Sendable (any EventLoop) -> EventLoopFuture<MySQLConnection>) async throws -> MySQLConnection {
+                                             _ open: @escaping @Sendable (any EventLoop) -> EventLoopFuture<MySQLConnection>) async throws -> MySQLConnection {
         let loop = MultiThreadedEventLoopGroup.singleton.any()
         let promise = loop.makePromise(of: MySQLConnection.self)
         let timer = loop.scheduleTask(in: timeout) { promise.fail(HandshakeTimeout()) }
-        open(loop).hop(to: loop).whenComplete { result in
+        loop.flatSubmit { open(loop) }.whenComplete { result in
             timer.cancel()
             switch result {
             case .success(let connection):

@@ -39,6 +39,7 @@ enum TDSPacketType: UInt8, Sendable {
     case tabularResult = 0x04
     case attention = 0x06
     case login7 = 0x10
+    case sspi = 0x11
     case prelogin = 0x12
 }
 
@@ -176,6 +177,8 @@ struct TDSLogin7: Sendable {
     var database: String
     var packetSize: UInt32 = 4096
     var clientPID: UInt32 = UInt32(truncatingIfNeeded: ProcessInfo.processInfo.processIdentifier)
+    /// Windows Authentication: the first SSPI (NTLM NEGOTIATE) message; user name and password stay empty.
+    var sspi: [UInt8] = []
 
     /// TDS 7.4.
     static let tdsVersion: UInt32 = 0x7400_0004
@@ -184,7 +187,8 @@ struct TDSLogin7: Sendable {
     func encode() -> ByteBuffer {
         // Variable part, in the order of the offset table.
         let fields: [[UInt8]] = [
-            Self.utf16(hostName), Self.utf16(userName), Self.obfuscate(password), Self.utf16(appName), Self.utf16(serverName),
+            Self.utf16(hostName), sspi.isEmpty ? Self.utf16(userName) : [], sspi.isEmpty ? Self.obfuscate(password) : [],
+            Self.utf16(appName), Self.utf16(serverName),
             [], // extension (unused)
             Self.utf16(libraryName), Self.utf16(language), Self.utf16(database),
         ]
@@ -198,7 +202,12 @@ struct TDSLogin7: Sendable {
             offset += field.count
         }
         table.writeBytes([UInt8](repeating: 0, count: 6)) // ClientID (MAC address)
-        for _ in 0..<3 { // SSPI, AtchDBFile, ChangePassword: empty
+        // SSPI (bytes, not characters), then AtchDBFile and ChangePassword: empty.
+        table.writeInteger(UInt16(offset), endianness: .little)
+        table.writeInteger(UInt16(sspi.count), endianness: .little)
+        data.writeBytes(sspi)
+        offset += sspi.count
+        for _ in 0..<2 {
             table.writeInteger(UInt16(offset), endianness: .little)
             table.writeInteger(UInt16(0), endianness: .little)
         }
@@ -214,7 +223,7 @@ struct TDSLogin7: Sendable {
         // OptionFlags1: fUseDB, fDatabase (fail if the database can't be opened), fSetLang.
         out.writeInteger(UInt8(0xE0))
         // OptionFlags2: fLanguage fatal, fODBC (ANSI_NULLS, QUOTED_IDENTIFIER… on, as SSMS has them).
-        out.writeInteger(UInt8(0x03))
+        out.writeInteger(UInt8(sspi.isEmpty ? 0x03 : 0x83)) // + fIntSecurity for Windows Authentication
         out.writeInteger(UInt8(0x00)) // TypeFlags
         out.writeInteger(UInt8(0x00)) // OptionFlags3
         out.writeInteger(Int32(0), endianness: .little) // client time zone
