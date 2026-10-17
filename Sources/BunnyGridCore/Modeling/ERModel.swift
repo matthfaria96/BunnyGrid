@@ -170,18 +170,14 @@ public struct ERModel: Hashable, Sendable {
     /// table ids and generated SQL (the PostgreSQL schema, nil elsewhere).
     public static func reverseEngineer(driver: any DatabaseDriver, schema: String?, displaySchema: String? = nil) async throws -> ERModel {
         var inputs: [TableInput] = []
-        for object in try await driver.listObjects(schema: schema) where object.kind == .table {
-            try Task.checkCancellation()
-            let columns = try await driver.listColumns(table: object.name, schema: schema)
-            let keys = (try? await driver.listForeignKeys(table: object.name, schema: schema)) ?? []
-            let indexes = (try? await driver.listIndexes(table: object.name, schema: schema)) ?? []
+        for table in try await driver.describeTables(schema: schema) {
             // Keys that stay inside the schema keep the model's own (display) schema.
-            let local = keys.map { key -> TableForeignKey in
+            let local = table.foreignKeys.map { key -> TableForeignKey in
                 var key = key
                 if key.referencedSchema == nil || key.referencedSchema == schema { key.referencedSchema = displaySchema }
                 return key
             }
-            inputs.append(TableInput(schema: displaySchema, name: object.name, columns: columns, foreignKeys: local, indexes: indexes))
+            inputs.append(TableInput(schema: displaySchema, name: table.object.name, columns: table.columns, foreignKeys: local, indexes: table.indexes))
         }
         return ERModel(sourceKind: driver.config.kind, inputs: inputs)
     }

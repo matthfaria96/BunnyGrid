@@ -39,6 +39,8 @@ public struct TableStatistics: Sendable, Equatable {
     public var rootPage: Int?
     public var hasIndexes: Bool?
     public var hasTriggers: Bool?
+    /// `rows` is an estimate (SQLite: from `sqlite_stat1` or the largest rowid of a big file), not a COUNT(*).
+    public var rowsAreEstimated: Bool?
     /// MongoDB collection stats (Navicat's Objects columns): storage size, index count and average document size.
     public var storageBytes: Int?
     public var indexCount: Int?

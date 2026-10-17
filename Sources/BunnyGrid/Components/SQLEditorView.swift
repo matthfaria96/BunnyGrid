@@ -71,6 +71,7 @@ struct SQLEditorView: NSViewRepresentable {
         EditorOptionsApplier.apply(AppOptions.shared.values, to: scrollView, textView: textView)
         onTextView?(textView)
         DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
+        CompletionWarmUp.scheduleOnce()
         return scrollView
     }
 
@@ -228,6 +229,30 @@ final class SQLTextView: NSTextView {
     var colouredUpTo = Int.max
     var colourGeneration = 0
 
+    /// Replaces the whole text (Beautify, AI "Replace All") as one undoable step. NSTextView's own undo would put
+    /// back the old text as an attributed string with tens of thousands of colour runs, which NSTextStorage inserts
+    /// run by run (12 s for a 20,000-line script); here both directions are plain strings, and the new text is
+    /// coloured in chunks after the edit like a newly opened file. Ends with the whole text selected.
+    func replaceAllText(_ newText: String) {
+        guard let storage = textStorage else { return }
+        let oldText = string
+        breakUndoCoalescing()
+        undoManager?.registerUndo(withTarget: self) { view in
+            MainActor.assumeIsolated { view.replaceAllText(oldText) }
+        }
+        // The per-edit colouring is skipped; `highlight` rebuilds the line table and colours in chunks.
+        let delegate = storage.delegate
+        storage.delegate = nil
+        storage.beginEditing()
+        storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: newText)
+        storage.endEditing()
+        storage.delegate = delegate
+        SQLHighlighter.highlight(self)
+        didChangeText()
+        setSelectedRange(NSRange(location: 0, length: storage.length))
+        scrollRangeToVisible(NSRange(location: 0, length: 0))
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
         guard !menuItems.isEmpty else { return menu }
@@ -291,6 +316,52 @@ final class SQLTextView: NSTextView {
             return
         }
         super.keyDown(with: event)
+    }
+}
+
+/// The first completion popup of a launch pays for AppKit's one-time setup of its table-based window (classes,
+/// cells, fonts). Once an editor has appeared and the app is idle, the same kind of window is built and drawn
+/// off screen (never ordered in), so the first "." in the editor doesn't stall.
+@MainActor
+enum CompletionWarmUp {
+    private static var scheduled = false
+
+    static func scheduleOnce() {
+        guard !scheduled else { return }
+        scheduled = true
+        // In the default mode only: not during scrolling or a drag.
+        RunLoop.main.perform(inModes: [.default]) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                RunLoop.main.perform(inModes: [.default]) { MainActor.assumeIsolated { warmUp() } }
+            }
+        }
+    }
+
+    private static func warmUp() {
+        PerfTrace.measure("editor.completionWarmUp") {
+            let panel = NSPanel(contentRect: NSRect(x: -10_000, y: -10_000, width: 240, height: 160),
+                                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+            panel.isReleasedWhenClosed = false
+            let table = NSTableView(frame: NSRect(x: 0, y: 0, width: 240, height: 160))
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("completion"))
+            column.width = 240
+            table.addTableColumn(column)
+            table.headerView = nil
+            let scroll = NSScrollView(frame: table.frame)
+            scroll.documentView = table
+            scroll.hasVerticalScroller = true
+            panel.contentView = scroll
+            let cell = NSTextFieldCell(textCell: "warm_up_identifier")
+            cell.font = SQLHighlighter.font
+            let image = NSImage(size: NSSize(width: 240, height: 20), flipped: false) { rect in
+                cell.draw(withFrame: rect, in: table)
+                return true
+            }
+            _ = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            scroll.layoutSubtreeIfNeeded()
+            if let rep = scroll.bitmapImageRepForCachingDisplay(in: scroll.bounds) { scroll.cacheDisplay(in: scroll.bounds, to: rep) }
+            panel.close()
+        }
     }
 }
 

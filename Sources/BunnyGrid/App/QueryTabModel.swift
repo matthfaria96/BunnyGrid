@@ -478,10 +478,21 @@ final class QueryTabModel: Identifiable {
     func plan(for result: QueryResult) -> [QueryPlanNode]? { plans[result.id] }
 
     /// Navicat's Beautify SQL: keywords uppercased and one clause per line (done locally, no AI).
+    /// A long script is formatted off the main thread (a 20,000-line script takes over a second), then put in
+    /// the editor if it wasn't edited meanwhile.
     func beautify() {
-        let source = hasSelection ? selectedText : text
-        let formatted = SQLBeautifier.format(source)
-        insert(formatted, mode: hasSelection ? .replaceSelection : .replaceAll)
+        let selection = hasSelection
+        let source = selection ? selectedText : text
+        let mode: EditorInsertMode = selection ? .replaceSelection : .replaceAll
+        guard source.utf16.count > 50_000 else {
+            insert(SQLBeautifier.format(source), mode: mode)
+            return
+        }
+        Task { [weak self] in
+            let formatted = await Task.detached(priority: .userInitiated) { SQLBeautifier.format(source) }.value
+            guard let self, (selection ? self.selectedText : self.text) == source else { return }
+            self.insert(formatted, mode: mode)
+        }
     }
 
     func updateCursor(in textView: NSTextView) {
@@ -531,6 +542,12 @@ final class QueryTabModel: Identifiable {
         case .append:
             range = NSRange(location: string.length, length: 0)
             if string.length > 0, !textView.string.hasSuffix("\n") { insertion = "\n\n" + code } else if string.length > 0 { insertion = "\n" + code }
+        }
+        if range.length == string.length, let editor = textView as? SQLTextView {
+            // The whole text: one plain-string replacement with its own undo, coloured in chunks like a loaded file.
+            editor.replaceAllText(insertion)
+            textView.window?.makeFirstResponder(textView)
+            return
         }
         guard textView.shouldChangeText(in: range, replacementString: insertion) else { return }
         textView.textStorage?.replaceCharacters(in: range, with: insertion)
