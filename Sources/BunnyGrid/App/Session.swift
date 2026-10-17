@@ -11,6 +11,9 @@ enum ObjectCategory: String, CaseIterable, Hashable {
     case functions = "Functions"
     case queries = "Queries"
     case backups = "Backups"
+    /// SQLite's Index and Trigger toolbar buttons (listed in Objects, not as navigator folders).
+    case indexes = "Indexes"
+    case triggers = "Triggers"
 
     var objectKind: DatabaseObjectKind? {
         switch self {
@@ -18,7 +21,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
         case .views: .view
         case .materializedViews: .materializedView
         case .functions: .routine
-        case .queries, .backups: nil
+        case .queries, .backups, .indexes, .triggers: nil
         }
     }
 
@@ -31,6 +34,8 @@ enum ObjectCategory: String, CaseIterable, Hashable {
         case .functions: "Function"
         case .queries: "Query"
         case .backups: "Backup"
+        case .indexes: "Index"
+        case .triggers: "Trigger"
         }
     }
 
@@ -39,6 +44,15 @@ enum ObjectCategory: String, CaseIterable, Hashable {
         case .postgresql: allCases
         case .mysql, .mariadb: [.tables, .views, .functions, .queries, .backups]
         case .sqlite: [.tables, .views, .queries, .backups]
+        }
+    }
+
+    /// The object buttons of the main toolbar, which differ per engine as in Navicat.
+    static func toolbarCategories(for kind: DatabaseKind?) -> [ObjectCategory] {
+        switch kind {
+        case .sqlite: [.tables, .views, .indexes, .triggers]
+        case .postgresql: [.tables, .views, .materializedViews, .functions]
+        default: [.tables, .views, .functions]
         }
     }
 }

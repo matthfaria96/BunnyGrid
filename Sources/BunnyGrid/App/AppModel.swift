@@ -38,6 +38,10 @@ final class AppModel {
     enum RightPane: String { case info, ddl, field, snippets, identifiers, ai }
     /// Navicat's Enter Focus Mode: navigator and right pane hidden until it is toggled off.
     private(set) var isFocusMode = false
+    /// Items listed by the Index / Trigger buttons, for the status bar ("2 Indexes in main").
+    var listedItemCount = 0
+    /// Connection whose "New Database…" name prompt is showing.
+    var creatingDatabaseFor: UUID?
     @ObservationIgnored private var panesBeforeFocus: (navigator: Bool, assistant: Bool)?
     var favoritesOnly = false
     /// Query tab waiting for a name in the Save Query sheet.
@@ -147,6 +151,21 @@ final class AppModel {
 
     var selectedQueryTab: QueryTabModel? {
         if case .query(let model) = selectedTab { model } else { nil }
+    }
+
+    /// CREATE DATABASE on a server connection, then refreshes its list.
+    func createDatabase(_ name: String, on id: UUID) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let session = sessions[id] else { return }
+        let sql = "CREATE DATABASE \(session.driver.dialect.quoteIdentifier(name))"
+        Task {
+            do {
+                _ = try await session.driver.executeTimed(sql)
+                await session.refreshDatabases()
+            } catch {
+                alertMessage = "Could not create database “\(name)”: \(error.localizedDescription)"
+            }
+        }
     }
 
     func saveSnippet(_ snippet: CodeSnippet) {
@@ -738,6 +757,10 @@ final class AppModel {
                 let schema = sessions[id]?.context(database)?.defaultSchema
                 expanded.insert(.category(id, database, schema, .tables))
                 select(.category(id, database, schema, .tables))
+                if let index = CommandLine.arguments.firstIndex(of: "--category"), CommandLine.arguments.indices.contains(index + 1),
+                   let category = ObjectCategory.allCases.first(where: { $0.rawValue.lowercased() == CommandLine.arguments[index + 1] }) {
+                    showCategory(category)
+                }
             }
         }
         #endif

@@ -78,9 +78,23 @@ struct NavigatorView: View {
         } message: {
             Text("The connection moves into the new group.")
         }
+        .alert("New Database", isPresented: Binding(
+            get: { app.creatingDatabaseFor != nil },
+            set: { if !$0 { app.creatingDatabaseFor = nil } }
+        )) {
+            TextField("Database name", text: $newDatabaseName)
+            Button("Create") {
+                if let id = app.creatingDatabaseFor { app.createDatabase(newDatabaseName, on: id) }
+                newDatabaseName = ""
+            }
+            Button("Cancel", role: .cancel) { newDatabaseName = "" }
+        } message: {
+            Text("Runs CREATE DATABASE on the server.")
+        }
     }
 
     @State private var newGroupName = ""
+    @State private var newDatabaseName = ""
 
     private func isExpandable(_ node: NavNode) -> Bool {
         switch node {
@@ -297,7 +311,10 @@ private struct NavContextMenu: View {
             Button("Delete Connection", role: .destructive) { app.delete(id) }
             Button("Duplicate Connection") { app.duplicate(id) }
             Divider()
-            Button("New Database…") {}.disabled(true)
+            if app.connection(id: id)?.kind != .sqlite {
+                Button("New Database…") { app.creatingDatabaseFor = id }
+                    .disabled(!isOpen)
+            }
             Button("New Query") { app.openQuery(in: app.sessions[id]?.contexts.values.first) }
                 .disabled(!isOpen)
             Divider()
@@ -335,6 +352,9 @@ private struct NavContextMenu: View {
                     Divider()
                     Button("Remove from Group") { app.move(id, toGroup: nil) }
                 }
+            }
+            if let config = app.connection(id: id) {
+                ShareLink("Share…", item: ConnectionURI.string(for: config))
             }
             Divider()
             Button("Refresh") { Task { await app.sessions[id]?.refreshDatabases() } }
@@ -463,6 +483,8 @@ extension ObjectCategory {
         case .functions: "function"
         case .queries: "query"
         case .backups: "backup"
+        case .indexes: "index"
+        case .triggers: "trigger"
         }
     }
 
@@ -474,6 +496,8 @@ extension ObjectCategory {
         case .functions: "function"
         case .queries: "doc.text.magnifyingglass"
         case .backups: "clock.arrow.circlepath"
+        case .indexes: "textformat.abc"
+        case .triggers: "bolt.fill"
         }
     }
 
@@ -484,6 +508,8 @@ extension ObjectCategory {
         case .functions: .indigo
         case .queries: .orange
         case .backups: .gray
+        case .indexes: .blue
+        case .triggers: .yellow
         }
     }
 }

@@ -42,20 +42,20 @@ struct MainToolbar: View {
                     AppIcon(name: "new-query", size: 32, isEnabled: app.currentContext != nil)
                 }
 
-                objectButton(.tables, "Table", "table")
-                objectButton(.views, "View", "view")
-                if app.currentContext?.kind == .postgresql {
-                    objectButton(.materializedViews, "Materialized View", "materialized-view")
+                // Engine-specific object buttons, as Navicat shows them (SQLite: Index and Trigger).
+                ForEach(ObjectCategory.toolbarCategories(for: app.currentContext?.kind), id: \.self) { category in
+                    objectButton(category, category.noun, category.iconName)
                 }
-                objectButton(.functions, "Function", "function")
                 ChromeButton(title: "User", comingSoon: "Manage users, roles and privileges on the server.") {} glyph: {
                     AppIcon(name: "user", size: 32)
                 }
-                ChromeButton(title: "Others", comingSoon: "Triggers, sequences, types, events and other objects.") {} glyph: {
-                    AppIcon(name: "others", size: 32)
-                        .overlay(alignment: .topTrailing) {
-                            Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(.secondary).offset(x: 7, y: 2)
-                        }
+                if app.currentContext?.kind != .sqlite {
+                    ChromeButton(title: "Others", comingSoon: "Triggers, sequences, types, events and other objects.") {} glyph: {
+                        AppIcon(name: "others", size: 32)
+                            .overlay(alignment: .topTrailing) {
+                                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(.secondary).offset(x: 7, y: 2)
+                            }
+                    }
                 }
                 objectButton(.queries, "Query", "query")
                 objectButton(.backups, "Backup", "backup")

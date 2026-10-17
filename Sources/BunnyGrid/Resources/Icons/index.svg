@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5BB4FF"/>
+      <stop offset="1" stop-color="#1F6FE0"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.55"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- A -->
+  <path d="M6 44 L15.5 18 H21.5 L31 44 H25.2 L23.2 38.2 H13.8 L11.8 44 Z M15.4 33.4 H21.6 L18.5 24.2 Z" fill="url(#ink)"/>
+  <!-- dash -->
+  <rect x="30" y="30" width="6" height="4" rx="1" fill="url(#ink)"/>
+  <!-- Z -->
+  <path d="M37.5 18 H58 V22.6 L44.3 39.2 H58.4 V44 H37 V39.4 L50.7 22.8 H37.5 Z" fill="url(#ink)"/>
+  <path d="M6 44 L15.5 18 H21.5 L23 22 H14 Z M37.5 18 H58 V20.5 H37.5 Z" fill="url(#shine)"/>
+  <!-- sort arrow -->
+  <path d="M18 50 H46 L42 46.5 M46 50 L42 53.5" fill="none" stroke="#1F6FE0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" opacity="0.75"/>
+</svg>

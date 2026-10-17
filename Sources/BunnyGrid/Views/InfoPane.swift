@@ -229,6 +229,19 @@ private struct ConnectionInfo: View {
     }
 }
 
+/// "🔌 BunnyGrid Reference" / "🛢 main" lines under the header, as Navicat shows the object's location.
+private struct LocationLine: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon).font(.system(size: 12)).foregroundStyle(.secondary).frame(width: 16)
+            Text(text).font(.system(size: 13)).lineLimit(1)
+        }
+    }
+}
+
 private struct DatabaseInfo: View {
     let config: ConnectionConfig
     let session: Session?
@@ -237,19 +250,18 @@ private struct DatabaseInfo: View {
     var body: some View {
         let context = session?.context(database)
         InfoScroll {
-            InfoHeader(title: database, subtitle: "Database · \(config.displayName)") {
+            InfoHeader(title: database, subtitle: "Database", shareText: ConnectionURI.string(for: config)) {
                 AppIcon(name: context?.isOpen == true ? "database-open" : "database-closed", size: 56)
             }
-            InfoField(label: "Status", value: context?.isOpen == true ? "Open" : "Closed")
+            LocationLine(icon: "powerplug", text: config.displayName)
+                .padding(.bottom, 8)
             if let context, context.usesSchemas {
                 InfoField(label: "Schemas", value: String(context.schemas.count))
             }
             if let objects = context?.objects(in: context?.defaultSchema) {
                 InfoField(label: "Tables", value: String(objects.filter { $0.kind == .table }.count))
                 InfoField(label: "Views", value: String(objects.filter { $0.kind == .view || $0.kind == .materializedView }.count))
-                InfoField(label: "Functions", value: String(objects.filter { $0.kind == .routine }.count))
             }
-            InfoField(label: "Connection", value: "\(config.kind.displayName) · \(config.kind.isFileBased ? config.filePath : "\(config.host):\(config.port)")")
         }
     }
 }
@@ -263,30 +275,27 @@ private struct ObjectInfo: View {
 
     var body: some View {
         InfoScroll {
-            InfoHeader(title: object.name, subtitle: kindName) {
+            InfoHeader(title: object.name, subtitle: kindName, shareText: "\(ConnectionURI.string(for: config)) — \(object.qualifiedName)") {
                 AppIcon(name: object.kind.iconName, size: 56)
             }
-            if let rows = stats?.rows { InfoField(label: "Rows", value: rows.formatted()) }
-            if let size = stats?.sizeBytes, size > 0 { InfoField(label: "Data Length", value: ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)) }
-            if let engine = stats?.engine { InfoField(label: "Engine", value: engine) }
-            InfoField(label: context?.usesSchemas == true ? "Schema" : "Database", value: object.schema ?? context?.name ?? "")
-            if !columns.isEmpty {
-                InfoField(label: "Fields", value: String(columns.count))
-                InfoField(label: "Primary Key", value: columns.filter(\.isPrimaryKey).map(\.name).joined(separator: ", "))
+            VStack(alignment: .leading, spacing: 6) {
+                LocationLine(icon: "powerplug", text: config.displayName)
+                LocationLine(icon: "cylinder", text: object.schema.map { "\(context?.name ?? "") · \($0)" } ?? context?.name ?? "")
             }
-            InfoField(label: "Comment", value: stats?.comment ?? "")
-            if !columns.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Columns").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                    ForEach(columns) { column in
-                        HStack(spacing: 6) {
-                            Image(systemName: GridHeaderCell.symbolName(for: column.dataType)).font(.system(size: 9)).foregroundStyle(.secondary).frame(width: 12)
-                            Text(column.name).font(.system(size: 12))
-                            Spacer()
-                            Text(column.dataType).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
-                        }
-                    }
-                }
+            .padding(.bottom, 8)
+            if context?.kind == .sqlite {
+                if let page = stats?.rootPage { InfoField(label: "Root Page", value: String(page)) }
+                if let indexes = stats?.hasIndexes { InfoField(label: "Has Indexes", value: indexes ? "Yes" : "No") }
+                if let triggers = stats?.hasTriggers { InfoField(label: "Has Triggers", value: triggers ? "Yes" : "No") }
+                if let rows = stats?.rows { InfoField(label: "Rows", value: rows.formatted()) }
+            } else {
+                if let rows = stats?.rows { InfoField(label: "Rows", value: rows.formatted()) }
+                if let size = stats?.sizeBytes, size > 0 { InfoField(label: "Data Length", value: ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)) }
+                if let engine = stats?.engine { InfoField(label: "Engine", value: engine) }
+                if let created = stats?.created { InfoField(label: "Created Date", value: created) }
+                if let modified = stats?.modified { InfoField(label: "Modified Date", value: modified) }
+                if let collation = stats?.collation { InfoField(label: "Collation", value: collation) }
+                InfoField(label: "Comment", value: stats?.comment ?? "")
             }
         }
         .task(id: object.id) { await load() }

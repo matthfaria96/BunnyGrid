@@ -85,6 +85,31 @@ public actor SQLiteDriver: DatabaseDriver {
         return statements.joined(separator: "\n\n")
     }
 
+    /// Root page, indexes and triggers per table and view, from sqlite_master, plus exact row counts
+    /// (SQLite keeps no estimates; counting is cheap for the small files it usually holds).
+    public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] {
+        let result = try await executeStatement("""
+            SELECT o.name, o.rootpage,
+                   (SELECT COUNT(*) FROM sqlite_master i WHERE i.type = 'index' AND i.tbl_name = o.name),
+                   (SELECT COUNT(*) FROM sqlite_master t WHERE t.type = 'trigger' AND t.tbl_name = o.name)
+              FROM sqlite_master o WHERE o.type IN ('table', 'view')
+            """)
+        var stats: [String: TableStatistics] = [:]
+        for row in result.rows where row.count == 4 {
+            func int(_ value: CellValue) -> Int? { if case .integer(let v) = value { Int(v) } else { nil } }
+            var entry = TableStatistics()
+            entry.rootPage = int(row[1]).flatMap { $0 > 0 ? $0 : nil }
+            entry.hasIndexes = (int(row[2]) ?? 0) > 0
+            entry.hasTriggers = (int(row[3]) ?? 0) > 0
+            stats[row[0].displayString] = entry
+        }
+        for object in try await listObjects(schema: nil) where object.kind == .table {
+            let count = try? await executeStatement("SELECT COUNT(*) FROM \(dialect.quoteIdentifier(object.name))").rows.first?.first
+            if case .integer(let n) = count { stats[object.name, default: TableStatistics()].rows = Int(n) }
+        }
+        return stats
+    }
+
     public func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey] {
         // id, seq, table, from, to, on_update, on_delete, match
         let result = try await executeStatement("PRAGMA foreign_key_list(\(dialect.quoteIdentifier(table)))")
@@ -134,15 +159,7 @@ public actor SQLiteDriver: DatabaseDriver {
         return indexes
     }
 
-    /// SQLite keeps no row estimates; exact counts are cheap for the small files it usually holds.
-    public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] {
-        var stats: [String: TableStatistics] = [:]
-        for object in try await listObjects(schema: nil) where object.kind == .table {
-            let count = try? await executeStatement("SELECT COUNT(*) FROM \(dialect.quoteIdentifier(object.name))").rows.first?.first
-            if case .integer(let n) = count { stats[object.name] = TableStatistics(rows: Int(n)) }
-        }
-        return stats
-    }
+
 
     public func executeStatement(_ sql: String) async throws -> QueryResult {
         guard let db else { throw DatabaseError.notConnected }

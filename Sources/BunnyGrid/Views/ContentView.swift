@@ -98,7 +98,10 @@ struct StatusBar: View {
 
     /// "1 Connection in My Connections", "2 Tables in main", …
     private var summary: String {
-        func plural(_ count: Int, _ noun: String) -> String { "\(count) \(noun)\(count == 1 ? "" : "s")" }
+        func plural(_ count: Int, _ noun: String) -> String {
+            guard count != 1 else { return "1 \(noun)" }
+            return "\(count) " + (noun.hasSuffix("x") || noun.hasSuffix("s") ? noun + "es" : noun.hasSuffix("y") ? String(noun.dropLast()) + "ies" : noun + "s")
+        }
         switch app.navSelection {
         case .group(let group):
             return "\(plural(app.connections.filter { $0.group == group }.count, "Connection")) in \(group)"
@@ -114,7 +117,9 @@ struct StatusBar: View {
             if app.objectCategory == .queries {
                 return "\(plural(app.savedQueries(connectionID: id, database: db).count, "Query")) in \(place)"
             }
-            let count = context.objects(in: schema, category: app.objectCategory)?.count ?? 0
+            let count = app.objectCategory == .indexes || app.objectCategory == .triggers
+                ? app.listedItemCount
+                : context.objects(in: schema, category: app.objectCategory)?.count ?? 0
             return "\(plural(count, app.objectCategory.noun)) in \(place)"
         default:
             return app.connections.isEmpty ? "" : "\(plural(app.connections.count, "Connection")) in My Connections"

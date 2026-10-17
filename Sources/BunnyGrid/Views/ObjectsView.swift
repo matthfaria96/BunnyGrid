@@ -179,6 +179,8 @@ struct ObjectsView: View {
                     Text("No saved queries. Write one in New Query and press ⌘S.").foregroundStyle(.tertiary)
                 }
             }
+        } else if let context, category == .indexes || category == .triggers {
+            IndexTriggerList(context: context, category: category, search: search)
         } else if let context {
             if category.objectKind == nil {
                 ContentUnavailableView("No \(category.rawValue)", systemImage: category.systemImage, description: Text("Backups are coming soon."))
@@ -191,6 +193,9 @@ struct ObjectsView: View {
                     ObjectTiles(objects: objects, selection: $selection, tint: category.tint) { open($0) }
                 } else {
                 // Statistics travel inside the row values: SwiftUI's Table doesn't redraw cells for outside state.
+                if context.kind == .sqlite {
+                    sqliteTable(context: context, objects: objects)
+                } else {
                 Table(objects.map { ObjectRow(object: $0, stats: statistics[$0.name]) }, selection: $selection) {
                     TableColumn("Name") { row in
                         let object = row.object
@@ -260,6 +265,7 @@ struct ObjectsView: View {
                     if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
                 }
                 }
+                }
                 if objects.isEmpty {
                     Text(search.isEmpty ? "No \(category.rawValue.lowercased())" : "No matches").foregroundStyle(.tertiary)
                 }
@@ -276,6 +282,53 @@ struct ObjectsView: View {
                 TableColumn("Modified Date") { _ in Text("") }
             }
             .tableStyle(.inset(alternatesRowBackgrounds: false))
+        }
+    }
+
+    /// SQLite's columns in Navicat: Name, Root Page, Has Indexes, Has Triggers.
+    private func sqliteTable(context: DatabaseContext, objects: [DatabaseObject]) -> some View {
+        Table(objects.map { ObjectRow(object: $0, stats: statistics[$0.name]) }, selection: $selection) {
+            TableColumn("Name") { row in
+                Label {
+                    Text(row.object.name)
+                } icon: {
+                    AppIcon(name: row.object.kind.iconName, size: 16)
+                }
+            }
+            .width(min: 160, ideal: 240)
+            TableColumn("Root Page") { row in
+                Text(row.stats?.rootPage.map(String.init) ?? "").monospacedDigit()
+            }
+            .width(min: 70, ideal: 100)
+            TableColumn("Has Indexes") { row in
+                Text(row.stats?.hasIndexes.map { $0 ? "Yes" : "No" } ?? "")
+            }
+            .width(min: 70, ideal: 100)
+            TableColumn("Has Triggers") { row in
+                Text(row.stats?.hasTriggers.map { $0 ? "Yes" : "No" } ?? "")
+            }
+            .width(min: 70, ideal: 100)
+            TableColumn("Rows") { row in
+                Text(row.stats?.rows.map { $0.formatted() } ?? "").monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .width(min: 60, ideal: 90)
+        }
+        .tableStyle(.inset(alternatesRowBackgrounds: false))
+        .task(id: "\(context.session?.id.uuidString ?? "")/\(context.name)/\(category.rawValue)/\(statisticsVersion)") {
+            statistics = (try? await context.driver.tableStatistics(schema: nil)) ?? [:]
+        }
+        .contextMenu(forSelectionType: String.self) { ids in
+            if let object = objects.first(where: { ids.contains($0.id) }) {
+                Button("Open \(category.noun)") { open(object) }
+                if object.kind == .table {
+                    Button("Design Table") { app.openDesign(table: object, in: context) }
+                }
+                Button("Select Top 100 in New Query") {
+                    app.openQuery(text: context.driver.dialect.selectPage(table: object.name, schema: object.schema, offset: 0, limit: 100) + ";", in: context)
+                }
+            }
+        } primaryAction: { ids in
+            if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
         }
     }
 
@@ -396,4 +449,76 @@ private struct ObjectRow: Identifiable {
 private struct DatabaseRow: Identifiable {
     let name: String
     var id: String { name }
+}
+
+/// SQLite's Index and Trigger buttons: every index or trigger in the database, with its table.
+private struct IndexTriggerList: View {
+    struct Entry: Identifiable, Hashable {
+        let id: String
+        let name: String
+        let table: String
+        let detail: String
+        let extra: String
+    }
+
+    @Environment(AppModel.self) private var app
+    let context: DatabaseContext
+    let category: ObjectCategory
+    let search: String
+    @State private var entries: [Entry] = []
+    @State private var loaded = false
+
+    private var shown: [Entry] {
+        search.isEmpty ? entries : entries.filter { $0.name.localizedCaseInsensitiveContains(search) || $0.table.localizedCaseInsensitiveContains(search) }
+    }
+
+    var body: some View {
+        Table(shown) {
+            TableColumn("Name") { entry in
+                Label {
+                    Text(entry.name)
+                } icon: {
+                    AppIcon(name: category.iconName, size: 16)
+                }
+            }
+            .width(min: 160, ideal: 220)
+            TableColumn("Table") { entry in Text(entry.table) }
+                .width(min: 100, ideal: 160)
+            TableColumn(category == .indexes ? "Unique" : "Fires") { entry in Text(entry.detail).foregroundStyle(.secondary) }
+                .width(min: 70, ideal: 100)
+            TableColumn(category == .indexes ? "Fields" : "Events") { entry in Text(entry.extra).foregroundStyle(.secondary).lineLimit(1) }
+        }
+        .tableStyle(.inset(alternatesRowBackgrounds: false))
+        .overlay {
+            if loaded && shown.isEmpty {
+                Text(search.isEmpty ? "No \(category.rawValue.lowercased())" : "No matches").foregroundStyle(.tertiary)
+            } else if !loaded {
+                ProgressView()
+            }
+        }
+        .task(id: "\(context.name)/\(category.rawValue)") { await load() }
+    }
+
+    private func load() async {
+        loaded = false
+        var result: [Entry] = []
+        let tables = (context.objects(in: context.defaultSchema) ?? []).filter { $0.kind == .table }
+        for table in tables {
+            let schema = context.driverSchema(table.schema)
+            if category == .indexes {
+                for index in (try? await context.driver.listIndexes(table: table.name, schema: schema)) ?? [] where !index.primary {
+                    result.append(Entry(id: "\(table.name).\(index.name)", name: index.name, table: table.name,
+                                        detail: index.unique ? "Yes" : "No", extra: index.columns.joined(separator: ", ")))
+                }
+            } else {
+                for trigger in (try? await context.driver.listTriggers(table: table.name, schema: schema)) ?? [] {
+                    result.append(Entry(id: "\(table.name).\(trigger.name)", name: trigger.name, table: table.name,
+                                        detail: trigger.timing, extra: trigger.events.joined(separator: ", ")))
+                }
+            }
+        }
+        entries = result.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        app.listedItemCount = entries.count
+        loaded = true
+    }
 }

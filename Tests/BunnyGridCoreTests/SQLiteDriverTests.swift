@@ -123,3 +123,21 @@ import Testing
         #expect(SQLDialect(kind: .postgresql).dropTrigger(named: "t1", table: "books", schema: "public") == #"DROP TRIGGER "t1" ON "public"."books""#)
     }
 }
+
+@Suite struct SQLiteStatisticsTests {
+    @Test func reportsRootPageIndexesAndTriggers() async throws {
+        let driver = SQLiteDriver(config: ConnectionConfig(kind: .sqlite, filePath: ""))
+        try await driver.connect()
+        _ = try await driver.execute("""
+            CREATE TABLE a (id INTEGER PRIMARY KEY, n TEXT);
+            CREATE INDEX a_n ON a(n);
+            CREATE TABLE b (id INTEGER PRIMARY KEY);
+            CREATE TRIGGER b_t AFTER INSERT ON b BEGIN SELECT 1; END;
+            """)
+        let stats = try await driver.tableStatistics(schema: nil)
+        #expect(stats["a"]?.hasIndexes == true)
+        #expect(stats["a"]?.hasTriggers == false)
+        #expect(stats["b"]?.hasTriggers == true)
+        #expect((stats["a"]?.rootPage ?? 0) > 0)
+    }
+}

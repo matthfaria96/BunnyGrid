@@ -35,6 +35,10 @@ public struct TableStatistics: Sendable, Equatable {
     public var modified: String?
     /// Table collation (MySQL / MariaDB).
     public var collation: String?
+    /// SQLite: the table's first b-tree page, and whether it has indexes and triggers (Navicat's SQLite columns).
+    public var rootPage: Int?
+    public var hasIndexes: Bool?
+    public var hasTriggers: Bool?
 
     public init(rows: Int? = nil, sizeBytes: Int? = nil, comment: String? = nil, engine: String? = nil, created: String? = nil, modified: String? = nil,
                 collation: String? = nil) {
