@@ -2,30 +2,11 @@
   "fill" : "automatic",
   "groups" : [
     {
-      "name" : "Bunny",
+      "name" : "Artwork",
       "layers" : [
         {
-          "name" : "bunny",
-          "image-name" : "bunny.png",
-          "glass" : false
-        }
-      ],
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 0.5
-      },
-      "specular" : false,
-      "translucency" : {
-        "enabled" : false,
-        "value" : 0.5
-      }
-    },
-    {
-      "name" : "Background",
-      "layers" : [
-        {
-          "name" : "background",
-          "image-name" : "background.png",
+          "name" : "artwork",
+          "image-name" : "artwork.png",
           "glass" : false
         }
       ],
