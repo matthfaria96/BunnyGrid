@@ -934,6 +934,7 @@ final class AppModel {
                 // `--explain` opens the query's plan instead of its result.
                 if CommandLine.arguments.contains("--explain") { selectedQueryTab?.explain() } else { selectedQueryTab?.run() }
                 #if DEBUG
+                if CommandLine.arguments.contains("--query-builder") { selectedQueryTab?.showingQueryBuilder = true }
                 if let index = CommandLine.arguments.firstIndex(of: "--ask-ai"), CommandLine.arguments.indices.contains(index + 1),
                    let tab = selectedQueryTab {
                     try? await Task.sleep(for: .milliseconds(800))
