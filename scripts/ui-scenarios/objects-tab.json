@@ -1,0 +1,15 @@
+{
+  "name": "objects-tab",
+  "args": ["{{DB}}", "--show-objects", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "view": "ObjectNSTableView", "anchor": "rowTitled:orders", "exists": true, "timeout": 10},
+    {"op": "rightClick", "view": "ObjectNSTableView", "anchor": "rowTitled:customers", "menu": ["Design Table"], "note": "Objects list context menu"},
+    {"op": "waitFor", "probe": "tabKind", "equals": "design"},
+    {"op": "click", "label": "Objects", "role": "AXRadioButton", "optional": true},
+    {"op": "action", "name": "closeAllTabs"},
+    {"op": "waitFor", "view": "ObjectNSTableView", "anchor": "rowTitled:orders", "exists": true, "timeout": 10},
+    {"op": "doubleClick", "view": "ObjectNSTableView", "anchor": "rowTitled:orders", "note": "double-click opens the table"},
+    {"op": "waitFor", "probe": "tabKind", "equals": "table"},
+    {"op": "assert", "probe": "tabTitle", "contains": "orders"}
+  ]
+}

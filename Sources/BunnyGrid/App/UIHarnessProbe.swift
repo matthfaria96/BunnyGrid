@@ -16,6 +16,11 @@ enum UIHarnessProbe {
         if path.hasPrefix("sql:"), let bar = path.firstIndex(of: "|") {
             return sqliteValue(file: String(path[path.index(path.startIndex, offsetBy: 4)..<bar]), sql: String(path[path.index(after: bar)...]))
         }
+        // "file:PATH": the file's text (first 4 KB), or "missing".
+        if path.hasPrefix("file:") {
+            guard let data = FileManager.default.contents(atPath: String(path.dropFirst(5))) else { return "missing" }
+            return String(decoding: data.prefix(4096), as: UTF8.self)
+        }
         var segments = path.split(separator: ".").map(String.init)
         guard let head = segments.first else { return nil }
         segments.removeFirst()
@@ -68,6 +73,7 @@ enum UIHarnessProbe {
         case "navSelection": return app.navSelection.map { "\($0)" } ?? "nil"
         case "expandedCount": return app.expanded.count
         case "sheet": return NSApp.windows.contains { $0.isVisible && $0.isSheet }
+        case "opened": return UIHarness.opened.joined(separator: "|")
         case "popover": return NSApp.windows.contains { $0.isVisible && String(describing: type(of: $0)).contains("Popover") }
         case "windowCount": return NSApp.windows.filter { $0.isVisible && $0.level == .normal }.count
         case "keyWindow": return NSApp.keyWindow?.title ?? "nil"

@@ -30,6 +30,10 @@ struct ObjectListTable: NSViewRepresentable {
     var onOpen: (Set<String>) -> Void = { _ in }
     /// Remembers column widths per list kind ("tables-sqlite", …).
     var autosaveName: String?
+    /// The right-click menu for the selected rows' ids (a right-click first selects the clicked row). SwiftUI's
+    /// `.contextMenu` on this representable never showed: the table's own context-menu handling found no menu
+    /// and did not pass the click up to SwiftUI.
+    var contextMenu: ((Set<String>) -> AnyView)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -51,6 +55,7 @@ struct ObjectListTable: NSViewRepresentable {
         table.target = context.coordinator
         table.doubleAction = #selector(Coordinator.doubleClicked(_:))
         table.onReturn = { [weak coordinator = context.coordinator] in coordinator?.openSelection() }
+        table.menuProvider = { [weak coordinator = context.coordinator] in coordinator?.contextMenu() }
 
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -146,12 +151,21 @@ struct ObjectListTable: NSViewRepresentable {
             let ids = Set(table.selectedRowIndexes.compactMap { $0 < rows.count ? rows[$0].id : nil })
             if !ids.isEmpty { parent.onOpen(ids) }
         }
+
+        func contextMenu() -> NSMenu? {
+            guard let table, let content = parent.contextMenu else { return nil }
+            let ids = Set(table.selectedRowIndexes.compactMap { $0 < rows.count ? rows[$0].id : nil })
+            guard !ids.isEmpty else { return nil }
+            if #available(macOS 14.4, *) { return NSHostingMenu(rootView: content(ids)) }
+            return nil
+        }
     }
 }
 
 /// Return opens the selection; a right-click selects the clicked row first so the context menu acts on it.
 private final class ObjectNSTableView: NSTableView {
     var onReturn: () -> Void = {}
+    var menuProvider: (() -> NSMenu?)?
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76 { onReturn() } else { super.keyDown(with: event) }
@@ -162,7 +176,7 @@ private final class ObjectNSTableView: NSTableView {
         if row >= 0, !selectedRowIndexes.contains(row) {
             selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
-        return super.menu(for: event)
+        return menuProvider?() ?? super.menu(for: event)
     }
 }
 

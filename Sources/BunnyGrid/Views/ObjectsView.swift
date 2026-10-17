@@ -165,14 +165,15 @@ struct ObjectsView: View {
                 },
                 selection: Binding(get: { Set(querySelection.map(\.uuidString)) },
                                    set: { querySelection = Set($0.compactMap(UUID.init(uuidString:))) }),
-                onOpen: { ids in openQueries(Set(ids.compactMap(UUID.init(uuidString:))), queries: queries, in: context) }
-            )
-            .contextMenu {
-                if !querySelection.isEmpty {
-                    Button("Open Query") { openQueries(querySelection, queries: queries, in: context) }
-                    Button("Delete Query", role: .destructive) { for id in querySelection { app.deleteSavedQuery(id) } }
+                onOpen: { ids in openQueries(Set(ids.compactMap(UUID.init(uuidString:))), queries: queries, in: context) },
+                contextMenu: { ids in
+                    let chosen = Set(ids.compactMap(UUID.init(uuidString:)))
+                    return AnyView(Group {
+                        Button("Open Query") { openQueries(chosen, queries: queries, in: context) }
+                        Button("Delete Query", role: .destructive) { for id in chosen { app.deleteSavedQuery(id) } }
+                    }.environment(app))
                 }
-            }
+            )
             .overlay {
                 if queries.isEmpty {
                     Text("No saved queries. Write one in New Query and press ⌘S.").foregroundStyle(.tertiary)
@@ -240,10 +241,11 @@ struct ObjectsView: View {
         }
         return ObjectListTable(columns: columns, rows: rows, selection: $selection, onOpen: { ids in
             if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
-        }, autosaveName: "objects-mongodb")
-        .contextMenu {
-            if let object = selectedObject { ObjectActionItems(object: object, context: context) }
-        }
+        }, autosaveName: "objects-mongodb", contextMenu: { ids in
+            AnyView(Group {
+                if let object = objects.first(where: { ids.contains($0.id) }) { ObjectActionItems(object: object, context: context) }
+            }.environment(app))
+        })
     }
 
     private func objectList(context: DatabaseContext) -> some View {
@@ -277,9 +279,8 @@ struct ObjectsView: View {
         }
         return AnyView(ObjectListTable(columns: columns, rows: rows, selection: $selection, onOpen: { ids in
             if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
-        }, autosaveName: "objects-\(context.kind.rawValue)")
-        .contextMenu {
-            if let object = selectedObject {
+        }, autosaveName: "objects-\(context.kind.rawValue)", contextMenu: { ids in AnyView(Group {
+            if let object = objects.first(where: { ids.contains($0.id) }) {
                 if let connectionID {
                     Button(app.isFavorite(object, connectionID: connectionID, database: context.name) ? "Remove from Favorites" : "Add to Favorites") {
                         app.toggleFavorite(object, connectionID: connectionID, database: context.name)
@@ -292,8 +293,7 @@ struct ObjectsView: View {
                 }
                 ObjectActionItems(object: object, context: context)
             }
-        }
-        )
+        }.environment(app)) }))
     }
 
     /// "1,234", or "~1,234" for an estimate (big SQLite files: `sqlite_stat1` or the largest rowid).

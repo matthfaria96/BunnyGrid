@@ -1,0 +1,31 @@
+{
+  "name": "import-export",
+  "args": ["{{DB}}", "--window-size", "1400x900"],
+  "files": {"in.csv": "name,email,city\nImported One,imp1@example.com,Recife\nImported Two,imp2@example.com,Natal\n", "out/.keep": ""},
+  "steps": [
+    {"op": "waitFor", "probe": "openSessions", "equals": 1},
+    {"op": "waitFor", "id": "nav.toggle.Tables", "exists": true},
+    {"op": "click", "id": "nav.toggle.Tables"},
+    {"op": "waitFor", "label": "customers", "role": "AXStaticText", "exists": true},
+    {"op": "rightClick", "label": "customers", "role": "AXStaticText", "index": 0, "menu": ["Export Wizard…"], "note": "table context menu → Export Wizard"},
+    {"op": "waitFor", "sheet": true, "equals": "true"},
+    {"op": "screenshot", "name": "export"},
+    {"op": "panel", "path": "$RUN/out", "note": "the folder panel answers with run/out"},
+    {"op": "click", "label": "Export…", "role": "AXButton", "window": "sheet"},
+    {"op": "waitFor", "sheet": true, "equals": "false", "timeout": 20},
+    {"op": "waitFor", "probe": "file:$RUN/out/customers.csv", "contains": "c1@example.com", "note": "CSV written"},
+    {"op": "assert", "probe": "opened", "contains": "reveal", "note": "Reveal in Finder requested (not performed)"},
+    {"op": "rightClick", "label": "customers", "role": "AXStaticText", "index": 0, "menu": ["Import Wizard…"], "note": "table context menu → Import Wizard"},
+    {"op": "waitFor", "sheet": true, "equals": "true"},
+    {"op": "panel", "path": "$RUN/in.csv"},
+    {"op": "click", "label": "Choose…", "role": "AXButton", "window": "sheet", "note": "choose the CSV file"},
+    {"op": "waitFor", "label": "Import 2 Records", "role": "AXButton", "window": "sheet", "exists": true, "timeout": 10, "note": "file parsed, fields mapped by name"},
+    {"op": "screenshot", "name": "import"},
+    {"op": "click", "label": "Import 2 Records", "role": "AXButton", "window": "sheet"},
+    {"op": "waitFor", "probe": "sql:$RUN/demo.sqlite|SELECT count(*) FROM customers WHERE email LIKE 'imp%'", "equals": "2", "timeout": 15},
+    {"op": "assert", "probe": "sql:$RUN/demo.sqlite|SELECT city FROM customers WHERE email = 'imp2@example.com'", "equals": "Natal"},
+    {"op": "waitFor", "label": "Close", "role": "AXButton", "window": "sheet", "exists": true},
+    {"op": "click", "label": "Close", "role": "AXButton", "window": "sheet"},
+    {"op": "waitFor", "sheet": true, "equals": "false"}
+  ]
+}

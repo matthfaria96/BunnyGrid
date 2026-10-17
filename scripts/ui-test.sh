@@ -52,7 +52,7 @@ s = json.load(open(sys.argv[1]))
 print(" ".join(s.get("requires", [])))
 print(s.get("fixture", "demo"))
 print("1" if s.get("knownIssue") else "0")
-print(json.dumps(s.get("setupSQL", {})))
+print(json.dumps({"sql": s.get("setupSQL", {}), "files": s.get("files", {})}))
 for a in s.get("args", []): print(a)
 PY
 )}")
@@ -76,11 +76,14 @@ PY
   # A second copy and an empty database, for transfers and sync ({{RUN}}/demo2.sqlite, {{RUN}}/empty.sqlite).
   cp "$ROOT/Resources/Samples/demo.sqlite" "$run/demo2.sqlite"
   : > "$run/empty.sqlite"
-  # "setupSQL": {"demo2.sqlite": "UPDATE …"} prepares those copies before launch.
+  # "setupSQL": {"demo2.sqlite": "UPDATE …"} prepares those copies; "files": {"in.csv": "text"} writes input files.
   /usr/bin/python3 -I -c '
 import json, sqlite3, sys
-for name, sql in json.loads(sys.argv[2]).items():
-    db = sqlite3.connect(sys.argv[1] + "/" + name); db.executescript(sql); db.commit(); db.close()' "$run" "$setup"
+setup = json.loads(sys.argv[2])
+for name, sql in setup["sql"].items():
+    db = sqlite3.connect(sys.argv[1] + "/" + name); db.executescript(sql); db.commit(); db.close()
+for name, text in setup["files"].items():
+    import os; os.makedirs(os.path.dirname(sys.argv[1] + "/" + name), exist_ok=True); open(sys.argv[1] + "/" + name, "w").write(text)' "$run" "$setup"
   # A scenario may seed the data dir (connections.json with {{PORT}} placeholders) from scripts/ui-scenarios/fixtures.
   if [[ "$fixture" != "demo" && -d "$SCENARIOS/fixtures/$fixture" ]]; then
     for f in "$SCENARIOS/fixtures/$fixture"/*; do

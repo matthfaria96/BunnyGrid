@@ -88,6 +88,7 @@ final class UIHarness {
             Self.virtualizeKeyWindow()
         }
         Self.privatePasteboard()
+        Self.scriptPanels()
         if ProcessInfo.processInfo.environment["BUNNYGRID_UI_TRACE"] != nil {
             // Every event the app dispatches, with the view under it: why a synthesized event went nowhere.
             _ = NSEvent.addLocalMonitorForEvents(matching: .any) { event in
@@ -255,6 +256,13 @@ final class UIHarness {
             let url = shotsDir.appendingPathComponent("\(scenarioName)-menus.txt")
             try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
             return url.path
+        case "panel":
+            if step["cancel"] as? Bool == true {
+                Self.panelCancels = true
+            } else {
+                let paths = (step["paths"] as? [String]) ?? [(step["path"] as? String) ?? ""]
+                Self.panelURLs = paths.map { URL(fileURLWithPath: substitute($0)) }
+            }
         case "release":
             guard let (window, point, flags) = held else { throw Failure("no drag is held") }
             held = nil
@@ -413,6 +421,54 @@ final class UIHarness {
         let general: @convention(block) (AnyObject) -> NSPasteboard = { _ in UIHarness.scenarioPasteboard }
         if let method = class_getClassMethod(NSPasteboard.self, #selector(getter: NSPasteboard.general)) {
             method_setImplementation(method, imp_implementationWithBlock(general))
+        }
+    }
+
+    /// Open and save panels answer from the scenario instead of showing: `{"op": "panel", "path": "$RUN/out.csv"}`
+    /// makes the next panel return OK with that URL ("cancel": true returns Cancel). Revealing files in Finder and
+    /// opening URLs in other apps are recorded and not done (`opened` probe).
+    nonisolated(unsafe) static var panelURLs: [URL]?
+    nonisolated(unsafe) static var panelCancels = false
+    nonisolated(unsafe) static var opened: [String] = []
+
+    private static func scriptPanels() {
+        let run: @convention(block) (NSSavePanel) -> Int = { _ in
+            if UIHarness.panelCancels { UIHarness.panelCancels = false; return NSApplication.ModalResponse.cancel.rawValue }
+            return UIHarness.panelURLs == nil ? NSApplication.ModalResponse.cancel.rawValue : NSApplication.ModalResponse.OK.rawValue
+        }
+        if let method = class_getInstanceMethod(NSSavePanel.self, #selector(NSSavePanel.runModal)) {
+            method_setImplementation(method, imp_implementationWithBlock(run))
+        }
+        let sheet: @convention(block) (NSSavePanel, NSWindow?, @escaping (NSApplication.ModalResponse) -> Void) -> Void = { _, _, handler in
+            let ok = UIHarness.panelURLs != nil && !UIHarness.panelCancels
+            UIHarness.panelCancels = false
+            DispatchQueue.main.async { handler(ok ? .OK : .cancel) }
+        }
+        if let method = class_getInstanceMethod(NSSavePanel.self, #selector(NSSavePanel.beginSheetModal(for:completionHandler:))) {
+            method_setImplementation(method, imp_implementationWithBlock(sheet))
+        }
+        if let method = class_getInstanceMethod(NSSavePanel.self, #selector(NSSavePanel.begin(completionHandler:))) {
+            let begin: @convention(block) (NSSavePanel, @escaping (NSApplication.ModalResponse) -> Void) -> Void = { _, handler in
+                let ok = UIHarness.panelURLs != nil
+                DispatchQueue.main.async { handler(ok ? .OK : .cancel) }
+            }
+            method_setImplementation(method, imp_implementationWithBlock(begin))
+        }
+        let url: @convention(block) (NSSavePanel) -> URL? = { _ in UIHarness.panelURLs?.first }
+        if let method = class_getInstanceMethod(NSSavePanel.self, #selector(getter: NSSavePanel.url)) {
+            method_setImplementation(method, imp_implementationWithBlock(url))
+        }
+        let urls: @convention(block) (NSOpenPanel) -> [URL] = { _ in UIHarness.panelURLs ?? [] }
+        if let method = class_getInstanceMethod(NSOpenPanel.self, #selector(getter: NSOpenPanel.urls)) {
+            method_setImplementation(method, imp_implementationWithBlock(urls))
+        }
+        let reveal: @convention(block) (NSWorkspace, [URL]) -> Void = { _, urls in UIHarness.opened += urls.map { "reveal " + $0.path } }
+        if let method = class_getInstanceMethod(NSWorkspace.self, #selector(NSWorkspace.activateFileViewerSelecting(_:))) {
+            method_setImplementation(method, imp_implementationWithBlock(reveal))
+        }
+        let open: @convention(block) (NSWorkspace, URL) -> Bool = { _, url in UIHarness.opened.append("open " + url.absoluteString); return true }
+        if let method = class_getInstanceMethod(NSWorkspace.self, #selector(NSWorkspace.open(_:) as (NSWorkspace) -> (URL) -> Bool)) {
+            method_setImplementation(method, imp_implementationWithBlock(open))
         }
     }
 
