@@ -947,6 +947,7 @@ final class AppModel {
                         }
                     }
                 }
+                if CommandLine.arguments.contains("--query-builder") { selectedQueryTab?.showingQueryBuilder = true }
                 if let index = CommandLine.arguments.firstIndex(of: "--ask-ai"), CommandLine.arguments.indices.contains(index + 1),
                    let tab = selectedQueryTab {
                     try? await Task.sleep(for: .milliseconds(800))

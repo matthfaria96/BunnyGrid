@@ -344,6 +344,8 @@ private struct GridFooter: View {
                     .buttonStyle(.plain)
                     .font(.system(size: 12))
                     .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .fixedSize()
                     .help("Preview the SQL that Apply will run")
                     .popover(isPresented: $showingSQLPreview, arrowEdge: .top) { SQLPreview(sql: model.pendingSQL) }
             } else if let reason = model.readOnlyReason {
@@ -700,7 +702,7 @@ private struct FormField: View {
                             .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color(nsColor: focused ? .keyboardFocusIndicatorColor : .separatorColor)))
                     } else {
                         // Read-only: every line, selectable (a disabled field shows only the first).
-                        Text(value.isNull ? "(Null)" : text)
+                        Text(value.isNull ? "(NULL)" : text)
                             .foregroundStyle(value.isNull ? .tertiary : .secondary)
                             .lineLimit(10)
                             .textSelection(.enabled)
@@ -719,7 +721,7 @@ private struct FormField: View {
                 }
                 .frame(maxWidth: 520)
             } else {
-                TextField(value.isNull ? "(Null)" : "", text: $text)
+                TextField(value.isNull ? "(NULL)" : "", text: $text)
                     .focused($focused)
             }
         }

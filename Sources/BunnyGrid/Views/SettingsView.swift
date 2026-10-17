@@ -650,7 +650,7 @@ private struct AIPane: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
-                .frame(height: 350)
+                .frame(height: 350, alignment: .top)
                 .disabled(!ai.enabled)
             }
             SectionHeader(title: "AI Assistant UI")
@@ -716,6 +716,8 @@ private struct AssistantForm: View {
             row("API Endpoint") {
                 Text(assistant.baseURL.appending(path: assistant.provider == .claude ? "v1/messages" : "v1/responses").absoluteString)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .textSelection(.enabled)
             }
             row("API Key") {
@@ -749,6 +751,8 @@ private struct AssistantForm: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 220)
+                // As a tooltip: a caption row here pushed the form past the list and over "AI Assistant UI".
+                .help("Effort replaces Temperature: current Claude and GPT models no longer take a sampling temperature.")
             }
             row("Instructions") {
                 TextEditor(text: $assistant.instruction)
@@ -774,12 +778,6 @@ private struct AssistantForm: View {
                     }
                 }
                 .disabled(testing)
-            }
-            GridRow {
-                Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-                Text("Effort replaces Temperature: current Claude and GPT models no longer take a sampling temperature.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .textFieldStyle(.roundedBorder)
