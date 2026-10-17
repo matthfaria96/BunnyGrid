@@ -433,6 +433,7 @@ final class AppModel {
     // MARK: - Tabs
 
     func openTable(_ object: DatabaseObject, in context: DatabaseContext) {
+        if context.kind.isDocumentStore { return openCollection(object, in: context) }
         // Options › Tabs › "Allow opening multiple forms for same object".
         if !AppOptions.shared.values.allowMultipleForms, let existing = tabs.first(where: {
             if case .table(let model) = $0 {
@@ -454,6 +455,7 @@ final class AppModel {
             alertMessage = "Open a connection and a database first."
             return
         }
+        if context.kind.isDocumentStore { return openMongoShell(text: text, in: context) }
         queryCounter += 1
         let tab = WorkspaceTab.query(QueryTabModel(title: "Query \(queryCounter)", text: text, context: context))
         tabs.append(tab)
@@ -508,6 +510,12 @@ final class AppModel {
         selectedTabID = tab.id
     }
 
+    /// Adds and selects a tab (for tab kinds opened from extensions, e.g. MongoDB's).
+    func appendTab(_ tab: WorkspaceTab) {
+        tabs.append(tab)
+        selectedTabID = tab.id
+    }
+
     // MARK: - Save (⌘S)
 
     /// Saves whatever the selected tab holds: grid edits, the query, or the table design.
@@ -526,6 +534,8 @@ final class AppModel {
             }
         case .model(let model):
             model.savePositions()
+        case .document(let tab):
+            tab.save()
         case nil:
             break
         }
@@ -537,6 +547,7 @@ final class AppModel {
         case .query(let model): !model.text.isEmpty
         case .design(let model): model.hasChanges
         case .model: false
+        case .document(let tab): tab.canSave
         case nil: false
         }
     }
@@ -835,6 +846,14 @@ final class AppModel {
                    let category = ObjectCategory.allCases.first(where: { $0.rawValue.lowercased() == CommandLine.arguments[index + 1] }) {
                     showCategory(category)
                 }
+            }
+        }
+        #endif
+        #if DEBUG
+        if let id = opened, CommandLine.arguments.contains(where: { $0 == "--open-collection" || $0 == "--mongo-shell" }) {
+            Task {
+                while sessions[id]?.contexts.values.first(where: \.isOpen) == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                if let context = sessions[id]?.contexts.values.first(where: \.isOpen) { openMongoLaunchArguments(context: context) }
             }
         }
         #endif

@@ -78,7 +78,7 @@ final class TableDesignModel: Identifiable {
             let idType = switch context.kind {
             case .sqlite: "INTEGER"
             case .postgresql: "serial"
-            case .mysql, .mariadb: "int"
+            case .mysql, .mariadb, .mongodb: "int"
             }
             columns = [ColumnDesign(name: "id", type: idType, nullable: false, isPrimaryKey: true)]
         }
@@ -92,7 +92,7 @@ final class TableDesignModel: Identifiable {
     private var driverSchema: String? {
         switch kind {
         case .postgresql: schema
-        case .mysql, .mariadb: databaseName
+        case .mysql, .mariadb, .mongodb: databaseName
         case .sqlite: nil
         }
     }
@@ -174,7 +174,7 @@ final class TableDesignModel: Identifiable {
         case .postgresql:
             referenceSchemas = ((try? await driver.listSchemas()) ?? [])
                 .filter { !$0.hasPrefix("pg_") && $0 != "information_schema" }
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             referenceSchemas = ((try? await driver.listDatabases()) ?? [])
                 .filter { !["information_schema", "performance_schema", "mysql", "sys"].contains($0) }
         case .sqlite:
@@ -201,7 +201,7 @@ final class TableDesignModel: Identifiable {
         let name = "\(tableName.isEmpty ? "table" : tableName)_trigger\(triggers.count + newTriggers.count + 1)"
         let template: String = switch kind {
         case .sqlite: "CREATE TRIGGER \(name) AFTER UPDATE ON \(table)\nBEGIN\n  -- statements\n  SELECT 1;\nEND"
-        case .mysql, .mariadb: "CREATE TRIGGER \(name) BEFORE INSERT ON \(table)\nFOR EACH ROW\nSET NEW.created_at = NOW()"
+        case .mysql, .mariadb, .mongodb: "CREATE TRIGGER \(name) BEFORE INSERT ON \(table)\nFOR EACH ROW\nSET NEW.created_at = NOW()"
         case .postgresql: "CREATE TRIGGER \(name) BEFORE UPDATE ON \(table)\nFOR EACH ROW EXECUTE FUNCTION function_name()"
         }
         newTriggers.append(template)
@@ -252,7 +252,7 @@ final class TableDesignModel: Identifiable {
             if comment != originalComment {
                 switch kind {
                 case .postgresql: statements.append("COMMENT ON TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) IS \(dialect.quoteLiteral(comment))")
-                case .mysql, .mariadb: statements.append("ALTER TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) COMMENT = \(dialect.quoteLiteral(comment))")
+                case .mysql, .mariadb, .mongodb: statements.append("ALTER TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) COMMENT = \(dialect.quoteLiteral(comment))")
                 case .sqlite: break
                 }
             }

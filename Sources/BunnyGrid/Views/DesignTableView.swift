@@ -388,6 +388,8 @@ struct DesignTableView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(width: 360, alignment: .leading)
                 }
+            case .mongodb:
+                EmptyView()
             }
         }
         .textFieldStyle(.roundedBorder)

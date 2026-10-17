@@ -175,6 +175,7 @@ public enum DriverFactory {
         case .sqlite: SQLiteDriver(config: config)
         case .postgresql: PostgresDriver(config: config, secrets: secrets)
         case .mysql, .mariadb: MySQLDriver(config: config, secrets: secrets)
+        case .mongodb: MongoDriver(config: config, secrets: secrets)
         }
     }
 }

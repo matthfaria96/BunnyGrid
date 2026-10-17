@@ -1,7 +1,7 @@
 # BunnyGrid
 
 Cliente de bancos de dados nativo para macOS, em Swift e SwiftUI.
-Conecta em **SQLite, PostgreSQL, MySQL e MariaDB**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
+Conecta em **SQLite, PostgreSQL, MySQL, MariaDB e MongoDB**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
 
 Referências:
 - **Beekeeper Studio**: arquitetura (contrato de driver, fluxo conexão → árvore → abas). Usado só como referência; nenhum código foi copiado (veja [Licenças](#licenças)).
@@ -71,6 +71,20 @@ O usuário precisa de CREATE/DROP DATABASE: cada teste cria e apaga um banco pr�
 
 Os testes de SSL, socket e túnel SSH (`ConnectivityIntegrationTests.swift`) usam outras variáveis: `BUNNYGRID_TLS_PG_PORT`, `BUNNYGRID_TLS_PG_USER` e `BUNNYGRID_TLS_PG_CERTS` (PostgreSQL com `ssl = on` e uma CA própria), `BUNNYGRID_PG_SOCKET_DIR`, e `BUNNYGRID_SSH_PORT`, `BUNNYGRID_SSH_USER` e `BUNNYGRID_SSH_KEYS` (um `sshd` com chaves de teste). O comentário no topo do arquivo descreve os arquivos esperados. Com o Remote Login desligado, um `sshd -D -f <config>` do próprio usuário numa porta alta serve.
 
+### Testes de integração com MongoDB
+
+Com um `mongod` acessível (ex.: `brew install mongodb-community`). No macOS o `--fork` não é aceito; rode em segundo plano:
+
+```sh
+mongod --dbpath /tmp/bg-mongo --port 27071 --bind_ip 127.0.0.1 --logpath /tmp/bg-mongo.log &
+BUNNYGRID_MONGO_PORT=27071 swift test --filter Mongo
+# Com autenticação (mongod --auth e um usuário root em admin; opcionalmente outro criado com mechanisms: ["SCRAM-SHA-1"]):
+BUNNYGRID_MONGO_PORT=27071 BUNNYGRID_MONGO_USER=bunny BUNNYGRID_MONGO_PASSWORD=… \
+  BUNNYGRID_MONGO_SHA1_USER=sha1user BUNNYGRID_MONGO_SHA1_PASSWORD=… swift test --filter Mongo
+```
+
+Cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MONGO_PORT` esses testes são pulados. No build de debug, com `--connect-first` numa conexão MongoDB: `--open-collection NOME [--mongo-view grid|tree|json] [--mongo-filter '{…}'] [--edit-document]` abre o visualizador de coleção e `--mongo-shell 'db.c.find()' [--explain]` abre uma aba de shell e executa.
+
 No build de debug, `--edit-connection` abre o editor da primeira conexão salva (`-connectionTab ssl|ssh|advanced` escolhe a aba) e `--test-connection` roda o Test Connection ao abrir.
 
 ## Estrutura
@@ -79,7 +93,8 @@ No build de debug, `--edit-connection` abre o editor da primeira conexão salva 
 Sources/
   BunnyGridCore/          núcleo sem UI (testável)
     Models/               ConnectionConfig, objetos, colunas, CellValue, QueryResult
-    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO)
+    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO), MongoDB (cliente próprio)
+    Mongo/                BSON, OP_MSG sobre SwiftNIO, SCRAM, mongodb+srv (dnssd), parser do shell, DocumentDatabaseDriver, achatamento para o grid
     SQL/                  SQLDialect (aspas, SELECT paginado, EXPLAIN), SQLSplitter (divide scripts, comando sob o cursor) e QueryPlan (árvore do plano)
     Network/              túnel SSH (Citadel), host keys, configuração SSL e endpoint (TCP, socket ou túnel) usado pelos drivers
     Transfer/             zip e Excel (.xlsx), leitura de JSON para importar, execução de scripts .sql com progresso
@@ -152,9 +167,13 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - **Fix with AI** e **Ask AI** (explicar o erro) aparecem quando uma consulta falha, usando a instrução que falhou e a mensagem do banco.
   - **Opções** (Settings › AI Assistant): por plataforma, Max Tokens, Effort (Low/Medium/High; os modelos atuais não aceitam temperature) e Instruction; Action for Enter key, Enable Compare with Other Assistants e Show AI features.
 - **Model** (barra principal ou "Reverse Database to Model" no menu de contexto do banco/schema): aba com o diagrama ER do banco ou schema, lido do catálogo (tabelas, colunas, chaves primárias e estrangeiras). Layout automático em camadas (tabelas referenciadas à esquerda, relacionadas próximas), arrastar cartões, zoom (⌘+ / ⌘-, pinça, ajustar), clicar destaca as relações; linhas com pés de galinha (1:N, 1:1, opcional). As posições ficam em `model-layouts.json` por conexão, banco e schema. Exporta PNG/PDF e **Generate SQL** gera CREATE TABLE + chaves estrangeiras para SQLite, PostgreSQL, MySQL ou MariaDB (com tradução de tipos), para copiar, salvar ou abrir numa consulta. Flags de debug: `--open-model`, `--model-select TABELA`, `--model-export arquivo.png|pdf`, `--model-sql`.
+- **MongoDB** (cliente próprio em Swift sobre SwiftNIO, sem dependências novas): BSON completo (inclusive Decimal128), OP_MSG, `hello`, SCRAM-SHA-256 e SCRAM-SHA-1, TLS pela aba SSL, túnel SSH e socket pelo mesmo `ConnectionEndpoint`, `mongodb://` com vários hosts (conecta no primário do replica set) e `mongodb+srv://` (registros SRV/TXT via dnssd, TLS ligado). New Connection com MongoDB e MongoDB Atlas; o formulário ganha Connection Type (Standalone/Replica Set ou SRV), outros hosts, Replica Set, Auth Database e Auth Mechanism, e New Connection with URI aceita `mongodb://` e `mongodb+srv://`.
+  - **Navegação**: conexão → bancos → Collections / Views / GridFS / Indexes / Queries. O driver implementa `DatabaseDriver` (coleções como tabelas com a união das chaves de primeiro nível, aninhados como JSON) e `DocumentDatabaseDriver` (find, aggregate, insert, update, delete, runCommand, explain, índices, `$collStats`). Os drivers SQL não mudaram.
+  - **Visualizador de coleção**: Grid View (cabeçalho com o tipo BSON de cada campo), Tree View e JSON View; barra Filter / Sort / Projection com a sintaxe do shell; paginação com o total; clicar no cabeçalho ordena; edições de célula pendentes com Apply/Discard (`$set` por `_id`, preservando o tipo do campo); Add / Edit / Duplicate / Delete abrem um editor JSON com Beautify e Validate (`ObjectId("…")`, `ISODate("…")`, `NumberLong`…); Import (JSON, JSON Lines, CSV) e Export (JSON em Extended JSON relaxado, JSON Lines, CSV); estatísticas (documentos, tamanho, índices); GridFS: Save File remonta o arquivo dos chunks.
+  - **Shell** (New Query numa conexão MongoDB): `db.coll.find({…}).sort({…}).skip(n).limit(n)`, `findOne`, `aggregate([…])`, `countDocuments`, `estimatedDocumentCount`, `distinct`, `insertOne/Many`, `updateOne/Many`, `replaceOne`, `deleteOne/Many`, `createIndex`, `dropIndex`, `getIndexes`, `drop`, `stats`, `renameCollection`, `db.runCommand`, `db.adminCommand`, `db.createCollection`, `db.createView`, `show dbs|collections|users`, `use`, `db.getSiblingDB(…)`, `db.getCollection(…)`. O parser aceita chaves sem aspas, aspas simples, vírgula final, comentários, regex `/…/i`, `ObjectId`, `ISODate`, `new Date`, `NumberLong`, `NumberInt`, `NumberDecimal`, `Timestamp`, `BinData`, `UUID`, `MinKey/MaxKey` e Extended JSON. Um resultado por comando, em Grid/Tree/JSON; **Explain** mostra a árvore do plano vencedor (COLLSCAN, IXSCAN, FETCH… com nReturned e documentos examinados); **Stop** acha a operação pelo `comment` e roda `killOp` por uma segunda conexão.
 - **Menus**: File, View (painéis), Table, Favorites (em breve), Tools.
 
 ## Licenças
 
 - **Beekeeper Studio Community** é GPL-3 (e `src-commercial/` tem licença comercial). Copiar ou traduzir o código dele para Swift faz do BunnyGrid uma obra derivada sob GPL-3. Até que se decida isso, o Beekeeper serve só como referência de arquitetura e comportamento.
-- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema.
+- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O MongoDB não usa o MongoKitten: o cliente é próprio (BSON + OP_MSG + SCRAM, ~2 mil linhas), sem pacotes novos, testado contra o MongoDB 9.0 (wire version 29).

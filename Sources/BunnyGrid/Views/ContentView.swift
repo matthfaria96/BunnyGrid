@@ -175,6 +175,8 @@ struct StatusBar: View {
             return ["Number of Fields: \(model.columns.count)"]
         case .model(let model):
             return [model.summary]
+        case .document(let tab):
+            return [tab.recordText]
         case nil:
             return []
         }
@@ -193,6 +195,7 @@ struct StatusBar: View {
         case .query(let model): model.lastSQL
         case .design(let model): model.statements.joined(separator: "; ")
         case .model: ""
+        case .document(let tab): tab.lastStatement
         case nil: ""
         }
     }
@@ -203,6 +206,7 @@ struct StatusBar: View {
         case .query(let model): model.error
         case .design(let model): model.planError
         case .model(let model): model.error
+        case .document(let tab): tab.warning
         case nil: nil
         }
     }
@@ -213,6 +217,7 @@ struct StatusBar: View {
         case .query(let model): model.selectedResult.map { "\($0.rows.count.formatted()) records" } ?? ""
         case .design(let model): model.columns.count == 1 ? "1 field" : "\(model.columns.count) fields"
         case .model(let model): model.summary
+        case .document(let tab): tab.recordText
         case nil: app.currentContext.map { "\($0.objects(in: app.currentSchema, category: app.objectCategory)?.count ?? 0) \(app.objectCategory.rawValue.lowercased())" } ?? ""
         }
     }

@@ -14,6 +14,8 @@ enum ObjectCategory: String, CaseIterable, Hashable {
     /// SQLite's Index and Trigger toolbar buttons (listed in Objects, not as navigator folders).
     case indexes = "Indexes"
     case triggers = "Triggers"
+    /// MongoDB GridFS buckets.
+    case gridFS = "GridFS"
 
     var objectKind: DatabaseObjectKind? {
         switch self {
@@ -21,6 +23,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
         case .views: .view
         case .materializedViews: .materializedView
         case .functions: .routine
+        case .gridFS: .table
         case .queries, .backups, .indexes, .triggers: nil
         }
     }
@@ -36,6 +39,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
         case .backups: "Backup"
         case .indexes: "Index"
         case .triggers: "Trigger"
+        case .gridFS: "Bucket"
         }
     }
 
@@ -44,6 +48,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
         case .postgresql: allCases
         case .mysql, .mariadb: [.tables, .views, .functions, .queries, .backups]
         case .sqlite: [.tables, .views, .queries, .backups]
+        case .mongodb: [.tables, .views, .gridFS, .indexes, .queries]
         }
     }
 
@@ -197,7 +202,7 @@ final class Session: Identifiable {
     func makeDedicatedDriver(database: String) -> any DatabaseDriver {
         var databaseConfig = config
         switch config.kind {
-        case .postgresql, .mysql, .mariadb: databaseConfig.database = database
+        case .postgresql, .mysql, .mariadb, .mongodb: databaseConfig.database = database
         case .sqlite: break
         }
         return DriverFactory.make(config: databaseConfig, secrets: secrets)
@@ -293,16 +298,18 @@ final class DatabaseContext: Identifiable {
     func driverSchema(_ schema: String?) -> String? {
         switch kind {
         case .postgresql: schema
-        case .mysql, .mariadb: name
+        case .mysql, .mariadb, .mongodb: name
         case .sqlite: nil
         }
     }
 
     func objects(in schema: String?) -> [DatabaseObject]? {
-        objectsBySchema[usesSchemas ? (schema ?? "") : ""]
+        if kind.isDocumentStore { return objectsBySchema[""]?.filter(DocumentCatalog.isBrowsable) }
+        return objectsBySchema[usesSchemas ? (schema ?? "") : ""]
     }
 
     func objects(in schema: String?, category: ObjectCategory) -> [DatabaseObject]? {
+        if kind.isDocumentStore { return documentObjects(objectsBySchema[""], category: category) }
         guard let kind = category.objectKind else { return [] }
         return objects(in: schema)?.filter { $0.kind == kind }
     }
@@ -365,6 +372,7 @@ enum WorkspaceTab: Identifiable {
     case query(QueryTabModel)
     case design(TableDesignModel)
     case model(ModelTabModel)
+    case document(any DocumentTab)
 
     var id: UUID {
         switch self {
@@ -372,6 +380,7 @@ enum WorkspaceTab: Identifiable {
         case .query(let model): model.id
         case .design(let model): model.id
         case .model(let model): model.id
+        case .document(let tab): tab.id
         }
     }
 
@@ -382,6 +391,7 @@ enum WorkspaceTab: Identifiable {
         case .query(let model): "\(model.title) \(model.location)"
         case .design(let model): "\(model.displayName) \(model.location)"
         case .model(let model): "Model \(model.location)"
+        case .document(let tab): tab.title
         }
     }
 
@@ -392,6 +402,7 @@ enum WorkspaceTab: Identifiable {
         case .query: "Query"
         case .design: "Table Design"
         case .model: "Model"
+        case .document(let tab): tab.kindName
         }
     }
 
@@ -402,6 +413,7 @@ enum WorkspaceTab: Identifiable {
         case .query: "query"
         case .design: "table"
         case .model: "model"
+        case .document(let tab): tab.systemImage
         }
     }
 
@@ -411,6 +423,7 @@ enum WorkspaceTab: Identifiable {
         case .query(let model): model.connectionID
         case .design(let model): model.connectionID
         case .model(let model): model.connectionID
+        case .document(let tab): tab.connectionID
         }
     }
 
@@ -421,6 +434,7 @@ enum WorkspaceTab: Identifiable {
         case .query(let model): model.isDirty && (model.savedQueryID != nil || (AppOptions.shared.values.askToSaveNewQueries && !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
         case .design(let model): model.hasChanges
         case .model: false
+        case .document(let tab): tab.hasUnsavedChanges
         }
     }
 
@@ -433,6 +447,7 @@ enum WorkspaceTab: Identifiable {
         case .query(let model): model.close()
         case .table(let model): model.abandonTransaction()
         case .design, .model: break
+        case .document(let tab): tab.cancel()
         }
     }
 }

@@ -45,7 +45,7 @@ extension SQLDialect {
         switch kind {
         case .postgresql:
             "SELECT rolname, rolsuper, rolcanlogin, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname"
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             "SELECT User, Host, Super_priv, Create_priv FROM mysql.user ORDER BY User, Host"
         case .sqlite: nil
         }
@@ -81,7 +81,7 @@ extension SQLDialect {
 
     func account(_ name: String, host: String?) -> String {
         switch kind {
-        case .mysql, .mariadb: "\(quoteLiteral(name))@\(quoteLiteral(host ?? "%"))"
+        case .mysql, .mariadb, .mongodb: "\(quoteLiteral(name))@\(quoteLiteral(host ?? "%"))"
         default: quoteIdentifier(name)
         }
     }
@@ -96,7 +96,7 @@ extension SQLDialect {
             if draft.createDatabases { options.append("CREATEDB") }
             if !draft.password.isEmpty { options.append("PASSWORD \(quoteLiteral(draft.password))") }
             return ["CREATE ROLE \(quoteIdentifier(name)) \(options.joined(separator: " "))"]
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             var statements = ["CREATE USER \(account(name, host: draft.host)) IDENTIFIED BY \(quoteLiteral(draft.password))"]
             if draft.superuser { statements.append("GRANT ALL PRIVILEGES ON *.* TO \(account(name, host: draft.host)) WITH GRANT OPTION") }
             else if draft.createDatabases { statements.append("GRANT CREATE ON *.* TO \(account(name, host: draft.host))") }
@@ -129,7 +129,7 @@ extension SQLDialect {
               FROM information_schema.role_table_grants WHERE grantee = \(quoteLiteral(user.name))
              GROUP BY table_schema, table_name ORDER BY 1
             """
-        case .mysql, .mariadb: "SHOW GRANTS FOR \(account(user.name, host: user.host))"
+        case .mysql, .mariadb, .mongodb: "SHOW GRANTS FOR \(account(user.name, host: user.host))"
         case .sqlite: nil
         }
     }
@@ -144,7 +144,7 @@ extension SQLDialect {
              ("Indexes", "SELECT schemaname AS schema, tablename AS table_name, indexname, indexdef FROM pg_indexes WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY 1, 2, 3"),
              ("Extensions", "SELECT extname AS name, extversion AS version FROM pg_extension ORDER BY 1"),
              ("Schemas", "SELECT schema_name, schema_owner FROM information_schema.schemata WHERE schema_name NOT LIKE 'pg\\_%' AND schema_name <> 'information_schema' ORDER BY 1")]
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             [("Triggers", "SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE, ACTION_TIMING, EVENT_MANIPULATION FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() ORDER BY 1"),
              ("Events", "SELECT EVENT_NAME, STATUS, EVENT_TYPE, EXECUTE_AT, INTERVAL_VALUE, INTERVAL_FIELD FROM information_schema.EVENTS WHERE EVENT_SCHEMA = DATABASE() ORDER BY 1"),
              ("Indexes", "SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS columns FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() GROUP BY 1, 2, 3 ORDER BY 1, 2")]

@@ -181,7 +181,7 @@ struct NavigatorView: View {
         for category in ObjectCategory.categories(for: context.kind) {
             let node = NavNode.category(id, context.name, schema, category)
             let isExpanded = app.expanded.contains(node) || (filtering && category.objectKind != nil)
-            var row = NavRow(node: node, depth: depth, title: category.rawValue, icon: category.systemImage,
+            var row = NavRow(node: node, depth: depth, title: category.title(for: context.kind), icon: category.systemImage,
                              iconColor: category.tint, isExpandable: true, isExpanded: isExpanded)
             let objects = context.objects(in: schema, category: category)
             row.isLoading = objects == nil && isExpanded
@@ -453,6 +453,7 @@ extension DatabaseKind {
         case .sqlite: "doc.text.fill"
         case .postgresql: "cylinder.split.1x2.fill"
         case .mysql, .mariadb: "cylinder.fill"
+        case .mongodb: "leaf.fill"
         }
     }
 
@@ -462,6 +463,7 @@ extension DatabaseKind {
         case .postgresql: .blue
         case .mysql: .orange
         case .mariadb: .brown
+        case .mongodb: .green
         }
     }
 }
@@ -477,6 +479,7 @@ extension ObjectCategory {
         case .backups: "backup"
         case .indexes: "index"
         case .triggers: "trigger"
+        case .gridFS: "backup"
         }
     }
 
@@ -490,6 +493,7 @@ extension ObjectCategory {
         case .backups: "clock.arrow.circlepath"
         case .indexes: "textformat.abc"
         case .triggers: "bolt.fill"
+        case .gridFS: "doc.on.doc.fill"
         }
     }
 
@@ -502,6 +506,7 @@ extension ObjectCategory {
         case .backups: .gray
         case .indexes: .blue
         case .triggers: .yellow
+        case .gridFS: .teal
         }
     }
 }
