@@ -42,11 +42,13 @@ struct ResultGridView: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> GridContainerView {
         let tableView = GridTableView()
         tableView.style = .plain
         tableView.usesAlternatingRowBackgroundColors = false
-        tableView.gridStyleMask = [.solidVerticalGridLineMask, .solidHorizontalGridLineMask]
+        // The vertical lines come from `GridLinesView` (rows) and `GridTableView.drawGrid` (below the last row).
+        tableView.gridStyleMask = [.solidHorizontalGridLineMask]
+        tableView.drawsVerticalGrid = true
         tableView.gridColor = .gridColor
         tableView.allowsMultipleSelection = true
         tableView.allowsColumnReordering = true
@@ -80,10 +82,10 @@ struct ResultGridView: NSViewRepresentable {
                 tableView?.reloadData()
             }
         }
-        return scrollView
+        return GridContainerView(scrollView: scrollView)
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    func updateNSView(_ container: GridContainerView, context: Context) {
         context.coordinator.update(self)
     }
 
@@ -156,10 +158,22 @@ struct ResultGridView: NSViewRepresentable {
             })
             revision = view.editing?.revision
             if columnsChanged { rebuildColumns(tableView) }
+            var hiddenChanged = false
             for column in tableView.tableColumns where column.identifier != Self.markerID {
-                column.isHidden = view.hiddenColumns.contains(column.title)
+                let hidden = view.hiddenColumns.contains(column.title)
+                if column.isHidden != hidden {
+                    column.isHidden = hidden
+                    hiddenChanged = true
+                }
             }
-            if contentChanged { tableView.reloadData() }
+            if hiddenChanged || columnsChanged {
+                loadVisibleColumns()
+                (tableView as? GridTableView)?.invalidateGridLines()
+            }
+            if contentChanged {
+                tableView.reloadData()
+                didReloadAllColumns(tableView)
+            }
             if view.focusedCell != focusedCell { setFocus(view.focusedCell, notify: false) }
             updateSortIndicators(tableView, sort: view.sort)
             if let request = view.scrollRequest, request != lastScrollRequest, request.row < rows.count {
@@ -264,6 +278,103 @@ struct ResultGridView: NSViewRepresentable {
             return estimatedWidth(column: index, title: column.title, type: columnTypes[column.title], sample: 1000, cap: 800)
         }
 
+        // MARK: Column virtualization
+
+        // NSTableView makes a cell for every column of every row it shows: with twenty columns and five on screen, a
+        // column resize moved (and a vertical scroll made) four times the cells anyone could see. Here a new row gets
+        // cells for the visible columns (and one either side), a column resize first drops the cells that are off
+        // screen, and once the grid is idle the other columns are filled in one per run-loop turn, so a horizontal
+        // scroll afterwards finds them ready.
+
+        /// Table positions with cells in every row on hand.
+        private var loadedColumns = IndexSet()
+        /// Columns `viewFor` also makes cells for, while they are being filled in.
+        private var backfillColumns = IndexSet()
+        private var backfillGeneration = 0
+
+        /// The columns to make cells for, or nil for all of them (before the table has a visible area).
+        func columnsToLoad(_ tableView: NSTableView) -> IndexSet? {
+            let visible = tableView.visibleRect
+            guard !visible.isEmpty, tableView.numberOfColumns > 0 else { return nil }
+            let indexes = tableView.columnIndexes(in: visible)
+            guard let first = indexes.first, let last = indexes.last else { return IndexSet() }
+            return IndexSet(integersIn: max(first - 1, 0)...min(last + 1, tableView.numberOfColumns - 1))
+        }
+
+        func makesCell(_ tableView: NSTableView, position: Int) -> Bool {
+            guard let wanted = columnsToLoad(tableView) else { return true }
+            return wanted.contains(position) || backfillColumns.contains(position)
+        }
+
+        private func reloadCells(_ tableView: NSTableView, columns: IndexSet) {
+            var rows = IndexSet()
+            tableView.enumerateAvailableRowViews { _, row in rows.insert(row) }
+            if !rows.isEmpty, !columns.isEmpty { tableView.reloadData(forRowIndexes: rows, columnIndexes: columns) }
+        }
+
+        /// Fills in the cells of columns that came on screen (horizontal scroll, a wider view, shown columns).
+        func loadVisibleColumns() {
+            guard let tableView else { return }
+            let wanted = columnsToLoad(tableView) ?? IndexSet(integersIn: 0..<tableView.numberOfColumns)
+            let missing = wanted.subtracting(loadedColumns)
+            if !missing.isEmpty {
+                reloadCells(tableView, columns: missing)
+                loadedColumns.formUnion(missing)
+            }
+            scheduleBackfill()
+        }
+
+        /// A column resize moves every cell right of the resized column: drop the ones off screen first.
+        func columnsDidResize() {
+            guard let tableView, let wanted = columnsToLoad(tableView) else { return }
+            let offScreen = loadedColumns.subtracting(wanted)
+            if !offScreen.isEmpty {
+                backfillGeneration += 1
+                reloadCells(tableView, columns: offScreen)
+                loadedColumns.subtract(offScreen)
+            }
+            loadVisibleColumns()
+        }
+
+        /// A row brought on screen (vertical scroll) has cells for the visible columns only.
+        func rowWasAdded() {
+            guard let tableView, let wanted = columnsToLoad(tableView) else { return }
+            if !loadedColumns.isSubset(of: wanted) { loadedColumns.formIntersection(wanted) }
+            scheduleBackfill()
+        }
+
+        /// After a full reload every row has exactly the columns `columnsToLoad` returned.
+        private func didReloadAllColumns(_ tableView: NSTableView) {
+            loadedColumns = columnsToLoad(tableView) ?? IndexSet(integersIn: 0..<tableView.numberOfColumns)
+            scheduleBackfill()
+        }
+
+        /// Fills in the off-screen columns once nothing has moved for a moment, nearest first.
+        private func scheduleBackfill() {
+            backfillGeneration += 1
+            let generation = backfillGeneration
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300)) { [weak self] in
+                self?.backfillStep(generation)
+            }
+        }
+
+        private func backfillStep(_ generation: Int) {
+            guard generation == backfillGeneration, let tableView, tableView.window != nil else { return }
+            // Never under an open cell editor: a reload would end the edit.
+            if tableView.currentEditor() != nil { return scheduleBackfill() }
+            let missing = IndexSet(integersIn: 0..<tableView.numberOfColumns).subtracting(loadedColumns)
+            guard let wanted = columnsToLoad(tableView), let center = wanted.first, !missing.isEmpty else { return }
+            let next = missing.min { abs($0 - center) < abs($1 - center) } ?? missing.first!
+            backfillColumns = [next]
+            reloadCells(tableView, columns: [next])
+            backfillColumns = []
+            loadedColumns.insert(next)
+            // One column per run-loop turn, so input and frames keep going in between.
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1)) { [weak self] in
+                self?.backfillStep(generation)
+            }
+        }
+
         // MARK: Keyboard
 
         /// ← / → move the focused cell between visible columns.
@@ -291,6 +402,8 @@ struct ResultGridView: NSViewRepresentable {
             }
             guard let tableView, let cell = focusedCell, canEdit(row: cell.row, column: cell.column),
                   let position = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == String(cell.column) }) else { return false }
+            tableView.scrollColumnToVisible(position)
+            loadVisibleColumns()
             tableView.editColumn(position, row: cell.row, with: nil, select: true)
             if let text, let editor = tableView.currentEditor() {
                 editor.string = text
@@ -374,9 +487,12 @@ struct ResultGridView: NSViewRepresentable {
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
             guard let tableColumn else { return nil }
+            // Only the columns on screen get cells (see `loadVisibleColumns`).
+            if !makesCell(tableView, position: tableView.column(withIdentifier: tableColumn.identifier)) { return nil }
             if tableColumn.identifier == Self.markerID {
                 let marker = tableView.makeView(withIdentifier: Self.markerID, owner: nil) as? RowMarkerView ?? {
                     let view = RowMarkerView()
+                    view.wantsLayer = true
                     view.identifier = Self.markerID
                     return view
                 }()
@@ -459,10 +575,14 @@ struct ResultGridView: NSViewRepresentable {
             field.lineBreakMode = .byTruncatingTail
             field.cell?.truncatesLastVisibleLine = true
             field.delegate = self
+            // Its own layer: a column resize or a horizontal scroll moves the cell instead of redrawing it into the
+            // row (see `GridRowView`).
+            field.wantsLayer = true
             return field
         }
 
         func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
+            rowWasAdded()
             guard isEditable, !columns.isEmpty else { return }
             switch state(row: row, column: 0) {
             case .deleted: rowView.backgroundColor = NSColor.systemRed.withAlphaComponent(0.12)
@@ -681,6 +801,73 @@ struct ResultGridView: NSViewRepresentable {
 
 final class GridTableView: NSTableView {
     weak var coordinator: ResultGridView.Coordinator?
+    private var visibleSpan: (CGFloat, CGFloat)?
+    /// Solid vertical grid lines, drawn by the rows' `GridLinesView`s and, under the last row, here.
+    var drawsVerticalGrid = false
+
+    // Inside a scroll view the table's own size is all that matters: an intrinsic-size change on every column-width
+    // change only made the enclosing SwiftUI host lay itself out again each frame of a resize.
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
+    override func invalidateIntrinsicContentSize() {}
+
+    override func drawGrid(inClipRect clipRect: NSRect) {
+        super.drawGrid(inClipRect: clipRect)
+        guard drawsVerticalGrid else { return }
+        let top = numberOfRows > 0 ? rect(ofRow: numberOfRows - 1).maxY : bounds.minY
+        guard clipRect.maxY > top else { return }
+        gridColor.setFill()
+        var x: CGFloat = 0
+        for column in tableColumns where !column.isHidden {
+            x += column.width + intercellSpacing.width
+            guard x - 1 >= clipRect.minX - 1, x - 1 <= clipRect.maxX else { continue }
+            NSRect(x: x - 1, y: max(top, clipRect.minY), width: 1, height: clipRect.maxY - max(top, clipRect.minY)).fill()
+        }
+    }
+
+    /// Re-places the rows' vertical grid lines (`GridLinesView`) after columns moved, resized or scrolled sideways.
+    func invalidateGridLines() {
+        enumerateAvailableRowViews { rowView, _ in
+            (rowView as? GridRowView)?.needsLayout = true
+        }
+    }
+
+    private var observedClip: NSClipView?
+    private var observesColumns = false
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        let center = NotificationCenter.default
+        if !observesColumns {
+            observesColumns = true
+            for name in [NSTableView.columnDidResizeNotification, NSTableView.columnDidMoveNotification] {
+                center.addObserver(self, selector: #selector(columnsChanged(_:)), name: name, object: self)
+            }
+        }
+        if let old = observedClip { center.removeObserver(self, name: NSView.boundsDidChangeNotification, object: old) }
+        observedClip = superview as? NSClipView
+        if let clip = observedClip {
+            clip.postsBoundsChangedNotifications = true
+            center.addObserver(self, selector: #selector(clipBoundsChanged(_:)), name: NSView.boundsDidChangeNotification, object: clip)
+        }
+    }
+
+    @objc private func columnsChanged(_ notification: Notification) {
+        if notification.name == NSTableView.columnDidResizeNotification {
+            coordinator?.columnsDidResize()
+        } else {
+            coordinator?.loadVisibleColumns()
+        }
+        invalidateGridLines()
+    }
+
+    @objc private func clipBoundsChanged(_ notification: Notification) {
+        // Only a horizontal scroll or a new width brings other columns on screen.
+        let span = (visibleRect.minX, visibleRect.width)
+        guard span.0 != visibleSpan?.0 || span.1 != visibleSpan?.1 else { return }
+        visibleSpan = span
+        coordinator?.loadVisibleColumns()
+        invalidateGridLines()
+    }
 
     @objc func copy(_ sender: Any?) {
         guard let coordinator, !selectedRowIndexes.isEmpty else { return }
@@ -717,6 +904,26 @@ final class GridTableView: NSTableView {
 
 /// Keeps the first row below the header: when the header height changes around the first layout,
 /// AppKit can leave the scroll offset at the old height and hide part of row 1.
+/// The view SwiftUI hosts: a plain frame around the scroll view, so nothing the table does while resizing
+/// columns or scrolling (frame, layout and intrinsic-size changes) reaches SwiftUI and re-lays out the whole tab.
+final class GridContainerView: NSView {
+    let scrollView: NSScrollView
+
+    init(scrollView: NSScrollView) {
+        self.scrollView = scrollView
+        super.init(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        scrollView.frame = bounds
+        scrollView.autoresizingMask = [.width, .height]
+        addSubview(scrollView)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
+    override func invalidateIntrinsicContentSize() {}
+}
+
 final class GridScrollView: NSScrollView {
     override func tile() {
         super.tile()
@@ -787,8 +994,31 @@ final class RowMarkerView: NSView {
 }
 
 /// Light-blue row selection, so the focused cell (solid accent) stands out, as in Navicat.
+///
+/// A row looks the same all along its width (background, shading, selection, the grid line below), so when it gets
+/// wider or narrower its layer scales what it drew instead of drawing it again: a row as wide as twenty columns
+/// used to redraw and upload its whole bitmap on every frame of a column resize, which is what made that slow. The
+/// cells have their own layers and the vertical grid lines are colour layers (`GridLinesView`), so moving columns
+/// redraws nothing but the resized column's cells.
 final class GridRowView: NSTableRowView {
-    var isShaded = false
+    var isShaded = false {
+        didSet { if isShaded != oldValue { needsDisplay = true } }
+    }
+    private let lines = GridLinesView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+        layerContentsPlacement = .scaleAxesIndependently
+        lines.frame = bounds
+        addSubview(lines)
+        // Above the cells, which AppKit adds later (a line crosses the grid line below the row, as before).
+        lines.layer?.zPosition = 1
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
 
     /// Options › Records › Row Shading: every other or every third row is tinted.
     @MainActor
@@ -812,6 +1042,78 @@ final class GridRowView: NSTableRowView {
         guard selectionHighlightStyle != .none else { return }
         NSColor.controlAccentColor.withAlphaComponent(isEmphasized ? 0.18 : 0.10).setFill()
         bounds.fill()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let height = frame.height, hadWidth = frame.width > 0
+        super.setFrameSize(newSize)
+        // Only a new height (or a first real size) needs a new drawing; a new width is a stretch.
+        if newSize.height != height || !hadWidth { needsDisplay = true }
+        placeGridLines()
+    }
+
+    override func layout() {
+        super.layout()
+        placeGridLines()
+    }
+
+    private func placeGridLines() {
+        lines.frame = bounds
+        lines.needsLayout = true
+        lines.layoutSubtreeIfNeeded()
+    }
+}
+
+/// The vertical grid lines of a row: one colour layer per column edge (no bitmap), moved when columns change.
+final class GridLinesView: NSView {
+    private var edges: [CALayer] = []
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func updateLayer() {
+        let color = ((superview as? NSTableRowView).flatMap { $0.superview as? NSTableView }?.gridColor ?? .gridColor).cgColor
+        for edge in edges { edge.backgroundColor = color }
+    }
+
+    override func layout() {
+        super.layout()
+        guard let table = superview?.superview as? GridTableView, table.drawsVerticalGrid else {
+            edges.forEach { $0.isHidden = true }
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let color = table.gridColor.cgColor
+        var index = 0
+        var x: CGFloat = 0
+        let visible = table.visibleRect
+        for column in table.tableColumns where !column.isHidden {
+            x += column.width + table.intercellSpacing.width
+            // Only the edges on screen get a layer.
+            guard x - 1 >= visible.minX - 1, x - 1 <= visible.maxX + 1 else { continue }
+            if index == edges.count {
+                let edge = CALayer()
+                edge.backgroundColor = color
+                layer?.addSublayer(edge)
+                edges.append(edge)
+            }
+            edges[index].isHidden = false
+            edges[index].frame = CGRect(x: x - 1, y: 0, width: 1, height: bounds.height)
+            index += 1
+        }
+        for edge in edges[index...] { edge.isHidden = true }
+        CATransaction.commit()
     }
 }
 
@@ -883,8 +1185,7 @@ final class GridHeaderCell: NSTableHeaderCell {
 
         var x = inset.minX
         let typeY = cellFrame.minY + 21
-        if let symbol = NSImage(systemSymbolName: Self.symbolName(for: typeName), accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular).applying(.init(hierarchicalColor: .systemBlue))) {
+        if let symbol = Self.symbol(for: typeName) {
             symbol.draw(in: NSRect(x: x, y: typeY + 1, width: 11, height: 11), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             x += 15
         }
@@ -892,6 +1193,19 @@ final class GridHeaderCell: NSTableHeaderCell {
             .font: NSFont.systemFont(ofSize: 11),
             .foregroundColor: NSColor.systemBlue,
         ]).draw(with: NSRect(x: x, y: typeY, width: inset.maxX - x - 10, height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+    }
+
+    /// Configured type glyphs, one per symbol name: building one (`withSymbolConfiguration`, hierarchical layers) on
+    /// every header draw was half the cost of a column-resize frame.
+    private static var symbols: [String: NSImage] = [:]
+
+    static func symbol(for typeName: String) -> NSImage? {
+        let name = symbolName(for: typeName)
+        if let cached = symbols[name] { return cached }
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular).applying(.init(hierarchicalColor: .systemBlue)))
+        symbols[name] = image
+        return image
     }
 
     /// "#" for numbers, a clock for dates, and so on, like Navicat's type glyphs.

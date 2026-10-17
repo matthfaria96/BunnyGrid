@@ -190,8 +190,10 @@ final class QueryTabModel: Identifiable {
         results.first { $0.id == selectedResultID } ?? results.last
     }
 
+    /// Read by the run row on every update: stops at the first non-blank character instead of trimming a copy
+    /// of the selection (a whole selected 20,000-line script took milliseconds per read).
     var hasSelection: Bool {
-        !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        selectedText.unicodeScalars.contains { !CharacterSet.whitespacesAndNewlines.contains($0) }
     }
 
     /// Runs the selection if there is one, otherwise the whole editor (⌘↩).
