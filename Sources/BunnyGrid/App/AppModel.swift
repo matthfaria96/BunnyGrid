@@ -550,7 +550,7 @@ final class AppModel {
             if case .key(let key) = model.content, key.hasUnsavedText { Task { await key.saveText() } }
         case .document(let tab):
             tab.save()
-        case nil:
+        case .automation, nil:
             break
         }
     }
@@ -563,7 +563,7 @@ final class AppModel {
         case .model: false
         case .redis(let model): model.hasUnsavedChanges
         case .document(let tab): tab.canSave
-        case nil: false
+        case .automation, nil: false
         }
     }
 

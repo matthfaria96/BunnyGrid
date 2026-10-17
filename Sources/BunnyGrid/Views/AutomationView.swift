@@ -5,10 +5,9 @@ import SwiftUI
 /// Tools menu entries for Automation.
 struct AutomationMenuItems: View {
     let model: AppModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Automation") { openWindow(id: "automation") }
+        Button("Automation") { model.openAutomation() }
             .keyboardShortcut("j", modifiers: [.command, .shift])
         Button("New Backup…") {
             if let context = model.currentContext { model.automation.backupTarget = BackupTarget(context: context, schema: model.currentSchema) }

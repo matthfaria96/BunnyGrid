@@ -158,13 +158,6 @@ struct BunnyGridApp: App {
             }
         }
 
-        Window("Automation", id: "automation") {
-            AutomationView()
-                .environment(model)
-                .frame(minWidth: 900, minHeight: 560)
-        }
-        .defaultSize(width: 1100, height: 700)
-
         Settings {
             SettingsView()
                 .environment(model)

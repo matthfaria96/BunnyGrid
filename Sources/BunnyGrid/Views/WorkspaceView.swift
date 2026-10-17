@@ -47,6 +47,7 @@ private struct TabContent: View {
         case .model(let model): ModelTabView(model: model)
         case .redis(let model): RedisTabView(model: model)
         case .document(let tab): DocumentTabView(tab: tab)
+        case .automation: AutomationView()
         }
     }
 }

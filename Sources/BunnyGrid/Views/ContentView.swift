@@ -187,7 +187,7 @@ struct StatusBar: View {
         case .redis(let model): return [model.statusText].filter { !$0.isEmpty }
         case .document(let tab):
             return [tab.recordText]
-        case nil:
+        case .automation, nil:
             return []
         }
     }
@@ -207,7 +207,7 @@ struct StatusBar: View {
         case .model: ""
         case .redis: ""
         case .document(let tab): tab.lastStatement
-        case nil: ""
+        case .automation, nil: ""
         }
     }
 
@@ -219,7 +219,7 @@ struct StatusBar: View {
         case .model(let model): model.error
         case .redis(let model): model.error
         case .document(let tab): tab.warning
-        case nil: nil
+        case .automation, nil: nil
         }
     }
 
@@ -231,6 +231,7 @@ struct StatusBar: View {
         case .model(let model): model.summary
         case .redis(let model): model.statusText
         case .document(let tab): tab.recordText
+        case .automation: "\(app.automation.jobs.count) batch jobs"
         case nil: app.currentContext.map { "\($0.objects(in: app.currentSchema, category: app.objectCategory)?.count ?? 0) \(app.objectCategory.rawValue.lowercased())" } ?? ""
         }
     }
