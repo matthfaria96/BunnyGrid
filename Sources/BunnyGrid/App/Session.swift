@@ -325,10 +325,10 @@ final class DatabaseContext: Identifiable {
         }
     }
 
-    /// "@dvdrental.public (PostgreSQL)", as in Navicat's tab titles.
+    /// "@dvdrental.public (My Server)", as in Navicat's tab titles: the place, then the connection name.
     func location(schema: String?) -> String {
         let place = usesSchemas && schema != nil ? "\(name).\(schema!)" : name
-        return "@\(place) (\(kind.displayName))"
+        return "@\(place) (\(session?.config.displayName ?? kind.displayName))"
     }
 
     // MARK: - Autocomplete
@@ -375,12 +375,12 @@ enum WorkspaceTab: Identifiable {
         }
     }
 
-    /// "payment @dvdrental.public (PostgreSQL)".
+    /// "payment@dvdrental.public (My Server)".
     @MainActor var title: String {
         switch self {
-        case .table(let model): "\(model.object.name) \(model.location)"
-        case .query(let model): "\(model.title) \(model.location)"
-        case .design(let model): "\(model.displayName) \(model.location)"
+        case .table(let model): "\(model.object.name)\(model.location)"
+        case .query(let model): "\(model.title)\(model.location)"
+        case .design(let model): "\(model.displayName)\(model.location)"
         case .model(let model): "Model \(model.location)"
         }
     }

@@ -34,13 +34,14 @@ struct NavigatorView: View {
                 ForEach(rows) { row in
                     NavRowView(row: row)
                         .tag(row.node)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 6))
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
                         .selectionDisabled(row.isDisabled)
+                        .listRowSeparator(.hidden)
                 }
             }
-            .listStyle(.sidebar)
+            .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .environment(\.defaultMinListRowHeight, 24)
+            .environment(\.defaultMinListRowHeight, 22)
             .overlay {
                 if app.connections.isEmpty {
                     Text("No Items").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -215,28 +216,28 @@ struct NavRowView: View {
     var body: some View {
         HStack(spacing: 4) {
             Group {
-                if row.isExpandable {
+                if row.isExpandable && row.node != .myConnections {
                     Button {
                         withAnimation(.easeInOut(duration: 0.18)) { app.setExpanded(row.node, !row.isExpanded) }
                     } label: {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 10, weight: .semibold))
                             .rotationEffect(.degrees(row.isExpanded ? 90 : 0))
                             .foregroundStyle(.secondary)
-                            .frame(width: 12, height: 16)
+                            .frame(width: 14, height: 16)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Color.clear.frame(width: 12, height: 16)
+                    Color.clear.frame(width: 14, height: 16)
                 }
             }
             if let engine = row.engine {
-                DatabaseBadge(kind: engine, size: 18, isActive: row.engineActive)
-                    .frame(width: 20)
+                DatabaseBadge(kind: engine, size: 16, isActive: row.engineActive)
+                    .frame(width: 16)
             } else if let asset = iconName {
-                AppIcon(name: asset.name, size: 18, isEnabled: !asset.dimmed)
-                    .frame(width: 20)
+                AppIcon(name: asset.name, size: 16, isEnabled: !asset.dimmed)
+                    .frame(width: 16)
             } else {
                 Image(systemName: row.icon)
                     .symbolRenderingMode(.hierarchical)
@@ -265,7 +266,7 @@ struct NavRowView: View {
             }
         }
         .font(.system(size: 13))
-        .padding(.leading, CGFloat(row.depth) * 14)
+        .padding(.leading, CGFloat(row.depth) * 18)
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture(count: 2).onEnded {
             withAnimation(.easeInOut(duration: 0.18)) { app.activate(row.node) }
@@ -307,9 +308,9 @@ private struct NavContextMenu: View {
             }
             Divider()
             Button("Edit Connection…") { app.edit(id) }
-            Button("New Connection…") { app.newConnection() }
+            Button("New Connection") { app.newConnection() }
             Button("Delete Connection", role: .destructive) { app.delete(id) }
-            Button("Duplicate Connection") { app.duplicate(id) }
+            Button("Duplicate Connection…") { app.duplicate(id) }
             Divider()
             if app.connection(id: id)?.kind != .sqlite {
                 Button("New Database…") { app.creatingDatabaseFor = id }
@@ -358,6 +359,7 @@ private struct NavContextMenu: View {
             }
             Divider()
             Button("Refresh") { Task { await app.sessions[id]?.refreshDatabases() } }
+                .keyboardShortcut("r")
                 .disabled(!isOpen)
         case .database(let id, let db):
             if let context = app.sessions[id]?.context(db), context.isOpen {
