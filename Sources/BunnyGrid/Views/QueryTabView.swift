@@ -210,7 +210,7 @@ private struct ConnectionPicker: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
         .disabled(model.isRunning)
     }
 }
@@ -242,7 +242,7 @@ private struct DatabasePicker: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
         .disabled(model.isRunning || session == nil)
     }
 }
@@ -506,8 +506,10 @@ private struct ResultSetPane: View {
                     .fixedSize()
                 if model.canLoadMore(result) {
                     Button("Load More") { model.loadMore(result) }
+                        .fixedSize()
                         .help("Run the statement again, fetching \((model.rowLimit ?? 1_000).formatted()) more rows")
                     Button("Fetch All") { model.fetchAll(result) }
+                        .fixedSize()
                         .help("Run the statement again, fetching every row")
                 }
             }
@@ -734,7 +736,7 @@ private struct QueryResultForm: View {
                             GridRow {
                                 Text(column).font(.system(size: 12, weight: .semibold)).gridColumnAlignment(.trailing)
                                 let value = result.rows[row][index]
-                                Text(value.isNull ? "(Null)" : value.displayString)
+                                Text(value.isNull ? "(NULL)" : value.displayString)
                                     .foregroundStyle(value.isNull ? .secondary : .primary)
                                     .textSelection(.enabled)
                                     .lineLimit(4)
@@ -776,7 +778,8 @@ extension View {
         .font(.system(size: 13))
         .padding(.leading, 6)
         .padding(.trailing, 8)
-        .frame(width: width, height: 24)
+        // Navicat's width, shrinking (never below 96) when the pane is narrow so the run row isn't clipped.
+        .frame(minWidth: min(width, 96), maxWidth: width, minHeight: 24, maxHeight: 24)
         .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)))
         .contentShape(Rectangle())
     }

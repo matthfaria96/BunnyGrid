@@ -83,7 +83,7 @@ struct DataGenerationView: View {
                             if case .insert(let values) = change {
                                 GridRow {
                                     ForEach(values, id: \.column) { value in
-                                        Text(value.value.isNull ? "(Null)" : value.value.displayString)
+                                        Text(value.value.isNull ? "(NULL)" : value.value.displayString)
                                             .font(.system(size: 11))
                                             .foregroundStyle(value.value.isNull ? .tertiary : .primary)
                                             .lineLimit(1)

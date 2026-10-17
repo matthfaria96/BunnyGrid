@@ -16,7 +16,7 @@ struct BIWorkspaceView: View {
             Divider()
             HSplitView {
                 BISidebar(model: model)
-                    .frame(minWidth: 190, idealWidth: 210, maxWidth: 340)
+                    .frame(minWidth: 170, idealWidth: 210, maxWidth: 340)
                 Group {
                     if let chart = model.selectedChart {
                         BIChartEditor(model: model, chart: chart)
@@ -35,7 +35,7 @@ struct BIWorkspaceView: View {
                         }
                     }
                 }
-                .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
                 if let chart = model.selectedChart {
                     BIPropertiesPane(model: model, chart: chart)
                         .frame(minWidth: 210, idealWidth: 230, maxWidth: 320)
@@ -80,7 +80,7 @@ struct BIWorkspaceView: View {
             if !model.loading.isEmpty { ProgressView().controlSize(.small).padding(.trailing, 6) }
             TextField("Workspace", text: $model.workspace.name)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 180)
+                .frame(minWidth: 80, maxWidth: 180)
                 .font(.system(size: 12))
         }
         .padding(.horizontal, 8)

@@ -197,7 +197,7 @@ struct ImportWizardView: View {
 
     private func preview(_ value: CellValue) -> String {
         switch value {
-        case .null: "(Null)"
+        case .null: "(NULL)"
         case .text(let s) where s.isEmpty: "—"
         default: value.displayString
         }

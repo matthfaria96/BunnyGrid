@@ -472,12 +472,11 @@ struct DesignTableView: View {
             TableColumn("Name") { column in
                 TextField("", text: binding(column.id, \.name)).textFieldStyle(.plain)
             }
-            .width(min: 120, ideal: 180)
+            .width(min: 80, ideal: 100)
             TableColumn("Type") { column in
                 HStack(spacing: 2) {
                     TextField("", text: typePart(column.id, \.base))
                         .textFieldStyle(.plain)
-                        .font(.system(size: 12, design: .monospaced))
                     Menu {
                         ForEach(model.dialect.suggestedTypes, id: \.self) { type in
                             Button(type) { binding(column.id, \.type).wrappedValue = type }
@@ -492,7 +491,7 @@ struct DesignTableView: View {
                     .fixedSize()
                 }
             }
-            .width(min: 110, ideal: 140)
+            .width(min: 90, ideal: 100)
             TableColumn("Size") { column in
                 TextField("", text: typePart(column.id, \.size)).textFieldStyle(.plain).monospacedDigit()
             }
@@ -522,7 +521,7 @@ struct DesignTableView: View {
                 .buttonStyle(.plain)
                 .help(column.isPrimaryKey ? "Primary key" : "Make primary key")
             }
-            .width(60)
+            .width(40)
             TableColumn("") { column in
                 if column.originalName == nil {
                     Text("new").font(.system(size: 10)).foregroundStyle(.green)

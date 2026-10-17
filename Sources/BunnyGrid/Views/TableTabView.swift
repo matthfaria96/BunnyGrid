@@ -344,6 +344,8 @@ private struct GridFooter: View {
                     .buttonStyle(.plain)
                     .font(.system(size: 12))
                     .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .fixedSize()
                     .help("Preview the SQL that Apply will run")
                     .popover(isPresented: $showingSQLPreview, arrowEdge: .top) { SQLPreview(sql: model.pendingSQL) }
             } else if let reason = model.readOnlyReason {
@@ -672,7 +674,7 @@ private struct FormField: View {
 
     var body: some View {
         let editable = model.isEditable && model.cellState(row: row, column: column) != .deleted
-        TextField(value.isNull ? "(Null)" : "", text: $text)
+        TextField(value.isNull ? "(NULL)" : "", text: $text)
             .textFieldStyle(.roundedBorder)
             .font(.system(size: 12, design: value.isNumeric ? .monospaced : .default))
             .disabled(!editable)

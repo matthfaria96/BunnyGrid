@@ -417,7 +417,7 @@ private struct NavContextMenu: View {
                 }
             }
             if let config = app.connection(id: id) {
-                ShareLink("Share…", item: ConnectionURI.string(for: config))
+                ShareLink(item: ConnectionURI.string(for: config)) { Text("Share…") }  // text only, like the other items
             }
             Divider()
             Button("Refresh") { Task { await app.sessions[id]?.refreshDatabases() } }
