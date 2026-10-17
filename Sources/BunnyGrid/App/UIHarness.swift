@@ -173,7 +173,7 @@ final class UIHarness {
             // {"op": "remember", "as": "before", "probe": ...}; later checks compare with "$before".
             variables[step["as"] as? String ?? "value"] = try evaluate(step)
         case "click", "doubleClick", "rightClick", "hover":
-            let (window, point) = try locate(step)
+            let (window, point) = try await settledLocate(step)
             if op == "hover" {
                 post(.mouseMoved, window, point)
                 try await drain()
@@ -195,12 +195,12 @@ final class UIHarness {
             try await drain()
             if let path = step["menu"] as? [String] { try await choose(path) }
         case "drag":
-            let (window, from) = try locate(step["from"] as? [String: Any] ?? [:])
+            let (window, from) = try await settledLocate(step["from"] as? [String: Any] ?? [:])
             let to: NSPoint
             if let delta = step["by"] as? [Double], delta.count == 2 {
                 to = NSPoint(x: from.x + delta[0], y: from.y - delta[1])
             } else {
-                let (other, point) = try locate(step["to"] as? [String: Any] ?? [:])
+                let (other, point) = try await settledLocate(step["to"] as? [String: Any] ?? [:])
                 guard other == window else { throw Failure("drag must stay in one window") }
                 to = point
             }
@@ -272,7 +272,7 @@ final class UIHarness {
         case "dragDrop":
             guard let raw = step["payload"] as? String else { throw Failure("dragDrop needs a payload string") }
             let payload = variables.keys.sorted { $0.count > $1.count }.reduce(raw) { $0.replacingOccurrences(of: "$" + $1, with: variables[$1]!) }
-            let (window, point) = try locate(step["to"] as? [String: Any] ?? [:])
+            let (window, point) = try await settledLocate(step["to"] as? [String: Any] ?? [:])
             try await deliverDrop(payload, in: window, at: point)
         case "key":
             let window = try targetWindow(step)
@@ -282,7 +282,7 @@ final class UIHarness {
         case "type":
             let window = try targetWindow(step)
             if let target = step["target"] as? [String: Any] {
-                let (_, point) = try locate(target)
+                let (_, point) = try await settledLocate(target)
                 post(.leftMouseDown, window, point)
                 post(.leftMouseUp, window, point)
                 try await drain()
@@ -291,7 +291,10 @@ final class UIHarness {
                 focusText(at: pointer, in: window)
             }
             if step["replace"] as? Bool == true {
-                postKey("a", flags: .command, window: window)
+                // What ⌘A does in a text field, sent to the field itself once it has focus.
+                try await waitUntil(timeout: 2, describe: { "no text field has focus" }) { window.firstResponder is NSText }
+                let box = UncheckedBox(window)
+                await onRunLoop { (box.value.firstResponder as? NSText)?.selectAll(nil) }
                 try await drain()
             }
             for character in (step["text"] as? String ?? "") {
@@ -300,11 +303,11 @@ final class UIHarness {
             }
             try await drain()
         case "scroll":
-            let (window, point) = try locate(step)
+            let (window, point) = try await settledLocate(step)
             try scroll(window, point, dx: step["dx"] as? Double ?? 0, dy: step["dy"] as? Double ?? 0, ticks: Int(step["ticks"] as? Double ?? 6))
             try await drain()
         case "magnify":
-            let (window, point) = try locate(step)
+            let (window, point) = try await settledLocate(step)
             magnify(window, point, amount: step["amount"] as? Double ?? 0.25)
             try await drain()
         case "menu":
@@ -733,6 +736,19 @@ final class UIHarness {
             for area in enteredBox.value { send(.mouseEntered, area, windowBox.value) }
         }
         hovered = inside.map { ($0, window) }
+    }
+
+    /// `locate`, once the target has stopped moving (rows animating open, a sheet sliding in): a person aims at
+    /// where things are, not where they are passing through.
+    private func settledLocate(_ spec: [String: Any]) async throws -> (NSWindow, NSPoint) {
+        var last = try locate(spec)
+        for _ in 0..<20 {
+            try await Task.sleep(for: .milliseconds(60))
+            let next = try locate(spec)
+            if next.0 === last.0, abs(next.1.x - last.1.x) < 0.5, abs(next.1.y - last.1.y) < 0.5 { return next }
+            last = next
+        }
+        return last
     }
 
     /// Scrolls the innermost scroll view whose document holds `frame` (window coordinates) so its centre is visible.

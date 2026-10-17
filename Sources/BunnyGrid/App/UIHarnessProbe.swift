@@ -72,6 +72,8 @@ enum UIHarnessProbe {
         case "connectionCount": return app.connections.count
         case "navSelection": return app.navSelection.map { "\($0)" } ?? "nil"
         case "expandedCount": return app.expanded.count
+        case "expandedConnections": return app.expanded.filter { if case .connection = $0 { true } else { false } }.count
+        case "expandedDatabases": return app.expanded.filter { if case .database = $0 { true } else { false } }.count
         case "sheet": return NSApp.windows.contains { $0.isVisible && $0.isSheet }
         case "opened": return UIHarness.opened.joined(separator: "|")
         case "options": return AppOptions.shared.values

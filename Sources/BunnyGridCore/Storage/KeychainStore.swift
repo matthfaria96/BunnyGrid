@@ -85,7 +85,12 @@ final class MemoryKeychain: @unchecked Sendable {
     static let shared: MemoryKeychain? = ProcessInfo.processInfo.environment["BUNNYGRID_MEMORY_KEYCHAIN"] == "1" ? MemoryKeychain() : nil
 
     private let lock = NSLock()
-    private var items: [String: String] = [:]
+    /// `BUNNYGRID_MEMORY_KEYCHAIN_SEED`: `{"<connection id>": "password"}` for the connections service.
+    private var items: [String: String] = {
+        guard let seed = ProcessInfo.processInfo.environment["BUNNYGRID_MEMORY_KEYCHAIN_SEED"],
+              let values = try? JSONDecoder().decode([String: String].self, from: Data(seed.utf8)) else { return [:] }
+        return Dictionary(uniqueKeysWithValues: values.map { ("app.bunnygrid.connections/" + $0.key, $0.value) })
+    }()
 
     func get(_ key: String) -> String? { lock.withLock { items[key] } }
 

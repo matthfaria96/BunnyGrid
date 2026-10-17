@@ -181,6 +181,7 @@ struct ConnectionEditorView: View {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 10) {
                 row("Connection Name") {
                     TextField("", text: $config.name, prompt: Text(type?.name ?? config.kind.displayName))
+                        .accessibilityIdentifier("connection.name")
                 }
                 if config.kind.isFileBased { fileRows } else { serverRows }
             }
@@ -215,12 +216,14 @@ struct ConnectionEditorView: View {
     private var serverRows: some View {
         row("Host") {
             TextField("", text: $config.host, prompt: Text(type?.vendor?.hostHint ?? "localhost"))
+                .accessibilityIdentifier("connection.host")
                 .disabled(usesSocket)
                 .help(usesSocket ? "Ignored: the connection uses the socket file set in the Advanced tab." : "")
         }
         row("Port") {
             TextField("", value: $config.port, format: .number.grouping(.never)).frame(width: 90)
                 .disabled(usesSocket && config.kind != .postgresql)
+                .accessibilityIdentifier("connection.port")
         }
         if config.kind == .sqlserver {
             row("Authentication") {
@@ -236,10 +239,11 @@ struct ConnectionEditorView: View {
             }
         }
         if config.kind.isDocumentStore { MongoConnectionRows(config: $config) }
-        row("User Name") { TextField("", text: $config.username, prompt: config.kind == .sqlserver ? Text("sa") : nil) }
-        row("Password") { SecureField("", text: $password) }
+        row("User Name") { TextField("", text: $config.username, prompt: config.kind == .sqlserver ? Text("sa") : nil).accessibilityIdentifier("connection.user") }
+        row("Password") { SecureField("", text: $password).accessibilityIdentifier("connection.password") }
         row(config.kind.connectsPerDatabase ? "Initial Database" : "Default Database") {
             TextField("", text: $config.database, prompt: Text(config.kind.serverDatabase ?? (config.kind == .redis ? "0 (database index)" : "Optional")))
+                .accessibilityIdentifier("connection.database")
         }
     }
 

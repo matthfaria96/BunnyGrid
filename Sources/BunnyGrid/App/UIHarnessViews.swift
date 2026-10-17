@@ -47,9 +47,10 @@ extension NSTableView: UIHarnessAnchors {
         }
     }
 
-    /// Column order and widths: "id:80 name:120 …".
+    /// Column order and widths, then the first visible row: "id:80 name:120 … | top:0".
     var harnessValue: String? {
         tableColumns.map { "\($0.title.isEmpty ? $0.identifier.rawValue : $0.title):\(Int($0.width))" }.joined(separator: " ")
+            + " | top:\(rows(in: visibleRect).location)"
     }
 }
 

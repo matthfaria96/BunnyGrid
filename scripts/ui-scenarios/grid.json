@@ -44,6 +44,10 @@
     {"op": "remember", "as": "columns2", "view": "GridTableView"},
     {"op": "drag", "from": {"view": "GridTableView", "anchor": "header:email"}, "to": {"view": "GridTableView", "anchor": "header:name"}, "steps": 20, "note": "drag the email column before name"},
     {"op": "assert", "view": "GridTableView", "notEquals": "$columns2"},
-    {"op": "screenshot", "name": "columns"}
+    {"op": "screenshot", "name": "columns"},
+    {"op": "remember", "as": "scrolled", "view": "GridTableView"},
+    {"op": "scroll", "view": "GridTableView", "dy": -3000, "ticks": 10, "note": "scroll wheel down the grid"},
+    {"op": "wait", "ms": 300},
+    {"op": "assert", "view": "GridTableView", "notEquals": "$scrolled", "note": "rows scrolled"}
   ]
 }

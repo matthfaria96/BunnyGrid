@@ -60,10 +60,10 @@ PY
   missing=""
   for need in ${=requires}; do
     case "$need" in
-      postgres) pg_isready -q -h 127.0.0.1 -p "${UI_TEST_PG_PORT:-55432}" 2>/dev/null || missing+=" postgres" ;;
-      mysql) nc -z 127.0.0.1 "${UI_TEST_MYSQL_PORT:-53306}" 2>/dev/null || missing+=" mysql" ;;
-      mongo) nc -z 127.0.0.1 "${UI_TEST_MONGO_PORT:-57017}" 2>/dev/null || missing+=" mongo" ;;
-      redis) nc -z 127.0.0.1 "${UI_TEST_REDIS_PORT:-56379}" 2>/dev/null || missing+=" redis" ;;
+      postgres) nc -z 127.0.0.1 "${UI_TEST_PG_PORT:-55432}" >/dev/null 2>&1 || missing+=" postgres" ;;
+      mysql) nc -z 127.0.0.1 "${UI_TEST_MYSQL_PORT:-53306}" >/dev/null 2>&1 || missing+=" mysql" ;;
+      mongo) nc -z 127.0.0.1 "${UI_TEST_MONGO_PORT:-57017}" >/dev/null 2>&1 || missing+=" mongo" ;;
+      redis) nc -z 127.0.0.1 "${UI_TEST_REDIS_PORT:-56379}" >/dev/null 2>&1 || missing+=" redis" ;;
       mock-ai) ;;
     esac
   done
@@ -92,6 +92,9 @@ for name, text in setup["files"].items():
           -e "s|{{RUN}}|$run|g" "$f" > "$run/data/${f:t}"
     done
   fi
+  # fixtures/NAME/secrets.json ({"<connection id>": "password"}) seeds the in-memory Keychain.
+  seed="{}"
+  [[ -f "$run/data/secrets.json" ]] && seed="$(cat "$run/data/secrets.json")" && rm "$run/data/secrets.json"
   mock_pid=""
   if [[ " $requires " == *" mock-ai "* ]]; then
     (cd "$run" && exec /usr/bin/python3 -I "$ROOT/scripts/ui-scenarios/mock-ai.py" 58989) > "$run/mock-ai.log" 2>&1 &
@@ -105,7 +108,7 @@ for name, text in setup["files"].items():
     cd "$run"
     BUNNYGRID_DATA_DIR="$run/data" BUNNYGRID_MEMORY_KEYCHAIN=1 BUNNYGRID_UI_RUN="$run" BUNNYGRID_LAUNCH_AGENTS_DIR="$run/agents" \
     BUNNYGRID_ANTHROPIC_BASE_URL="http://127.0.0.1:58989" BUNNYGRID_OPENAI_BASE_URL="http://127.0.0.1:58989" \
-    ANTHROPIC_API_KEY="mock-key" OPENAI_API_KEY="mock-key" \
+    ANTHROPIC_API_KEY="mock-key" OPENAI_API_KEY="mock-key" BUNNYGRID_MEMORY_KEYCHAIN_SEED="$seed" \
     "$APP" "${final[@]}" -AppleLanguages '(en)' -AppleLocale en_US -ApplePersistenceIgnoreState YES -NSQuitAlwaysKeepsWindows NO \
       --ui-script "$file" --ui-results "$run/results.json" --ui-shots "$run/shots" > "$run/app.log" 2>&1 &
     pid=$!

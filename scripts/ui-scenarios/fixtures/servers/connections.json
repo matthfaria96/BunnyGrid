@@ -1,0 +1,10 @@
+[
+  {"color": "none", "database": "uitest", "filePath": "", "host": "127.0.0.1", "id": "0A000000-0000-4000-8000-000000000001",
+   "kind": "postgresql", "name": "UI PG", "port": {{PG_PORT}}, "readOnly": false, "tls": "disable", "username": "postgres"},
+  {"color": "none", "database": "uitest", "filePath": "", "host": "127.0.0.1", "id": "0A000000-0000-4000-8000-000000000002",
+   "kind": "mysql", "name": "UI MySQL", "port": {{MYSQL_PORT}}, "readOnly": false, "tls": "disable", "username": "root"},
+  {"color": "none", "database": "uitest", "filePath": "", "host": "127.0.0.1", "id": "0A000000-0000-4000-8000-000000000003",
+   "kind": "mongodb", "name": "UI Mongo", "port": {{MONGO_PORT}}, "readOnly": false, "tls": "disable", "username": ""},
+  {"color": "none", "database": "0", "filePath": "", "host": "127.0.0.1", "id": "0A000000-0000-4000-8000-000000000004",
+   "kind": "redis", "name": "UI Redis", "port": {{REDIS_PORT}}, "readOnly": false, "tls": "disable", "username": ""}
+]
