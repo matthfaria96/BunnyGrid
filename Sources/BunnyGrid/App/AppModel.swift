@@ -62,6 +62,8 @@ final class AppModel {
     var pendingObjectAction: PendingObjectAction?
     /// Export Wizard sheet target.
     var exportTarget: ExportTarget?
+    /// Database the Execute SQL File sheet runs against.
+    var sqlFileTarget: SQLFileTarget?
     /// Server whose User manager sheet is open.
     var usersSession: Session?
 
@@ -492,6 +494,24 @@ final class AppModel {
         selectedTabID = tab.id
     }
 
+    /// Model tab (Navicat Modeling) for a database or schema; reuses an open one.
+    func openModel(in context: DatabaseContext, schema: String?) {
+        let schema = context.usesSchemas ? (schema ?? context.defaultSchema) : nil
+        if let existing = tabs.first(where: {
+            if case .model(let model) = $0 {
+                model.connectionID == context.session?.id && model.databaseName == context.name && model.schema == schema
+            } else {
+                false
+            }
+        }) {
+            selectedTabID = existing.id
+            return
+        }
+        let tab = WorkspaceTab.model(ModelTabModel(context: context, schema: schema))
+        tabs.append(tab)
+        selectedTabID = tab.id
+    }
+
     // MARK: - Save (⌘S)
 
     /// Saves whatever the selected tab holds: grid edits, the query, or the table design.
@@ -508,6 +528,8 @@ final class AppModel {
                     model.saveError = nil
                 }
             }
+        case .model(let model):
+            model.savePositions()
         case nil:
             break
         }
@@ -518,6 +540,7 @@ final class AppModel {
         case .table(let model): model.hasChanges
         case .query(let model): !model.text.isEmpty
         case .design(let model): model.hasChanges
+        case .model: false
         case nil: false
         }
     }
@@ -577,20 +600,13 @@ final class AppModel {
         persist()
     }
 
-    /// Opens a .sql file in a new query tab on the connection's first open database and runs it.
+    /// Execute SQL File on the connection's first open database.
     func executeSQLFile(connectionID: UUID) {
         guard let context = sessions[connectionID]?.contexts.values.first else {
             alertMessage = "Open a database on this connection first."
             return
         }
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "sql") ?? .plainText, .plainText]
-        panel.allowsOtherFileTypes = true
-        guard panel.runModal() == .OK, let url = panel.url,
-              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-        openQuery(text: text, in: context)
-        selectedQueryTab?.title = url.deletingPathExtension().lastPathComponent
-        selectedQueryTab?.run()
+        executeSQLFile(in: context)
     }
 
     // MARK: - Table profiles
@@ -601,10 +617,19 @@ final class AppModel {
         }
     }
 
+    /// Saves a profile; one with the same name on the same table is replaced (keeping its default flag).
     func saveProfile(_ profile: TableProfile) {
-        tableProfiles.removeAll { $0.connectionID == profile.connectionID && $0.database == profile.database
-            && $0.schema == profile.schema && $0.table == profile.table && $0.name == profile.name }
-        tableProfiles.append(profile)
+        tableProfiles = tableProfiles.saving(profile)
+        try? profileStore.save(tableProfiles)
+    }
+
+    /// The profile applied when the table opens ("Open with This Profile").
+    func defaultProfile(for tab: TableTabModel) -> TableProfile? {
+        profiles(for: tab).first(where: \.isDefault)
+    }
+
+    func toggleDefaultProfile(_ id: UUID) {
+        tableProfiles = tableProfiles.togglingDefault(id)
         try? profileStore.save(tableProfiles)
     }
 
@@ -736,6 +761,13 @@ final class AppModel {
             switch flag {
             case "--open-table" where !arguments.isEmpty: tableName = arguments.removeFirst()
             case "--query" where !arguments.isEmpty: query = arguments.removeFirst()
+            // Their file arguments are not databases to open (handled after connecting / by the Import Wizard).
+            case "--execute-sql" where !arguments.isEmpty: arguments.removeFirst()
+            case "--import-wizard":
+                if let kind = arguments.first, ImportSourceKind(rawValue: kind) != nil {
+                    arguments.removeFirst()
+                    if let file = arguments.first, !file.hasPrefix("-") { arguments.removeFirst() }
+                }
             case "--connect-first":
                 guard let first = connections.first else { continue }
                 connect(first.id)
@@ -791,6 +823,12 @@ final class AppModel {
             }
         }
         #endif
+        if CommandLine.arguments.contains("--open-model"), let id = opened {
+            Task {
+                while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
+                if let context = sessions[id]?.context(database) { openModel(in: context, schema: context.defaultSchema) }
+            }
+        }
         if CommandLine.arguments.contains("--show-objects"), let id = opened {
             Task {
                 while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
@@ -810,7 +848,8 @@ final class AppModel {
             guard let context = sessions[id]?.context(database) else { return }
             if let query {
                 openQuery(text: query, in: context)
-                selectedQueryTab?.run()
+                // `--explain` opens the query's plan instead of its result.
+                if CommandLine.arguments.contains("--explain") { selectedQueryTab?.explain() } else { selectedQueryTab?.run() }
                 #if DEBUG
                 if let index = CommandLine.arguments.firstIndex(of: "--ask-ai"), CommandLine.arguments.indices.contains(index + 1),
                    let tab = selectedQueryTab {
@@ -829,6 +868,14 @@ final class AppModel {
                 expanded.insert(.category(id, database, context.defaultSchema, .tables))
                 navSelection = .object(id, database, object)
                 openTable(object, in: context)
+                #if DEBUG
+                // Transfer sheets for visual checks: --export-wizard, --import-wizard csv|json|sql [FILE], --execute-sql FILE.
+                if CommandLine.arguments.contains("--export-wizard") { exportTarget = ExportTarget(context: context, objects: [object]) }
+                if CommandLine.arguments.contains("--import-wizard") { importTarget = ImportTarget(context: context, object: object) }
+                if let index = CommandLine.arguments.firstIndex(of: "--execute-sql"), CommandLine.arguments.indices.contains(index + 1) {
+                    sqlFileTarget = SQLFileTarget(context: context, url: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+                }
+                #endif
                 #if DEBUG
                 if let tab = selectedTableTab, ["--demo-edits", "--focus-cell", "--begin-transaction", "--generate", "--profile"].contains(where: CommandLine.arguments.contains) {
                     await tab.loadIfNeeded()

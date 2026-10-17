@@ -10,6 +10,8 @@ public actor PostgresDriver: DatabaseDriver {
     private var connection: PostgresConnection?
     /// The SSH tunnel (if any) the connection goes through; released on disconnect.
     private var endpoint: ConnectionEndpoint?
+    /// `pg_backend_pid()` of `connection`, for `pg_cancel_backend` from a second connection.
+    public private(set) var backendPID: Int?
     private let logger = Logger(label: "BunnyGrid.Postgres")
 
     public init(config: ConnectionConfig, password: String?) {
@@ -32,6 +34,7 @@ public actor PostgresDriver: DatabaseDriver {
             await endpoint.close()
             throw error
         }
+        await captureBackendPID()
     }
 
     /// A new connection to the server through `endpoint` (direct, socket file or SSH tunnel) with the SSL tab's settings.
@@ -75,6 +78,30 @@ public actor PostgresDriver: DatabaseDriver {
         connection = nil
         await endpoint?.close()
         endpoint = nil
+        backendPID = nil
+    }
+
+    private func captureBackendPID() async {
+        if case .integer(let pid)? = try? await executeStatement("SELECT pg_backend_pid()").rows.first?.first {
+            backendPID = Int(pid)
+        }
+    }
+
+    /// Opens a short-lived second connection (same settings, so through the same tunnel or TLS) and runs
+    /// `pg_cancel_backend` on this connection's backend. The actor is free meanwhile: a running statement
+    /// is suspended on the network, not holding it.
+    public func cancelCurrentQuery() async throws {
+        guard connection != nil, let backendPID else { return }
+        // Same secrets, so the second connection goes through the same tunnel lease, socket and SSL settings.
+        let canceller = PostgresDriver(config: config, secrets: secrets)
+        try await canceller.connect()
+        do {
+            _ = try await canceller.executeStatement("SELECT pg_cancel_backend(\(backendPID))")
+        } catch {
+            await canceller.disconnect()
+            throw error
+        }
+        await canceller.disconnect()
     }
 
     public func serverVersion() async throws -> String {
@@ -163,7 +190,7 @@ public actor PostgresDriver: DatabaseDriver {
         let qualified = dialect.qualifiedName(table: name, schema: schema)
         switch kind {
         case .table:
-            return try await generatedTableDDL(name: name, schema: schema)
+            return try await tableDDL(name: name, schema: schema)
         case .view, .materializedView:
             let result = try await executeStatement("SELECT pg_get_viewdef(\(dialect.quoteLiteral(qualified))::regclass, true)")
             let body = result.rows.first?.first?.displayString ?? ""
@@ -177,14 +204,60 @@ public actor PostgresDriver: DatabaseDriver {
         }
     }
 
+    /// CREATE TABLE assembled from the catalog, as pg_dump writes it: columns with primary key, unique, check and
+    /// exclusion constraints inline; then indexes, comments and triggers; foreign keys last as ALTER TABLE so a
+    /// script of several tables runs in any order.
+    func tableDDL(name: String, schema: String?) async throws -> String {
+        let qualified = dialect.qualifiedName(table: name, schema: schema ?? "public")
+        let regclass = "\(dialect.quoteLiteral(qualified))::regclass"
+        let columns = try await listColumns(table: name, schema: schema ?? "public")
+        var parts = columns.map { "  " + dialect.columnDefinition(ColumnDesign($0)) }
+        let constraints = try await executeStatement("""
+            SELECT conname, contype::text, pg_get_constraintdef(oid, true)
+              FROM pg_constraint WHERE conrelid = \(regclass) AND contype IN ('p', 'u', 'c', 'x', 'f')
+             ORDER BY CASE contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'c' THEN 2 WHEN 'x' THEN 3 ELSE 4 END, conname
+            """).rows
+        var foreignKeys: [String] = []
+        for row in constraints where row.count == 3 {
+            let clause = "CONSTRAINT \(dialect.quoteIdentifier(row[0].displayString)) \(row[2].displayString)"
+            if row[1].displayString == "f" {
+                foreignKeys.append("ALTER TABLE \(qualified) ADD \(clause);")
+            } else {
+                parts.append("  " + clause)
+            }
+        }
+        var statements = ["CREATE TABLE \(qualified) (\n\(parts.joined(separator: ",\n"))\n);"]
+        // Indexes that don't back a constraint of this table (those come with the constraint).
+        let indexes = try await executeStatement("""
+            SELECT pg_get_indexdef(i.indexrelid) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+             WHERE i.indrelid = \(regclass)
+               AND NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conindid = i.indexrelid AND k.conrelid = i.indrelid AND k.contype IN ('p', 'u', 'x'))
+             ORDER BY c.relname
+            """).rows
+        statements += indexes.compactMap { $0.first.map { $0.displayString + ";" } }
+        let comments = try await executeStatement("""
+            SELECT NULL::text, obj_description(\(regclass), 'pg_class')
+            UNION ALL
+            SELECT a.attname::text, col_description(a.attrelid, a.attnum) FROM pg_attribute a
+             WHERE a.attrelid = \(regclass) AND a.attnum > 0 AND NOT a.attisdropped AND col_description(a.attrelid, a.attnum) IS NOT NULL
+            """).rows
+        for row in comments where row.count == 2 && !row[1].isNull {
+            let target = row[0].isNull ? "TABLE \(qualified)" : "COLUMN \(qualified).\(dialect.quoteIdentifier(row[0].displayString))"
+            statements.append("COMMENT ON \(target) IS \(dialect.quoteLiteral(row[1].displayString));")
+        }
+        statements += try await listTriggers(table: name, schema: schema ?? "public").map { $0.definition + ";" }
+        statements += foreignKeys
+        return statements.joined(separator: "\n\n")
+    }
+
     public func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey] {
         let result = try await executeStatement("""
             SELECT c.conname, rn.nspname, r.relname,
                    array_to_string(ARRAY(SELECT a.attname FROM unnest(c.conkey) WITH ORDINALITY k(n, o)
-                     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n ORDER BY k.o), ','),
+                     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n ORDER BY k.o), chr(31)),
                    array_to_string(ARRAY(SELECT a.attname FROM unnest(c.confkey) WITH ORDINALITY k(n, o)
-                     JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.n ORDER BY k.o), ','),
-                   c.confdeltype, c.confupdtype
+                     JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.n ORDER BY k.o), chr(31)),
+                   c.confdeltype::text, c.confupdtype::text
               FROM pg_constraint c
               JOIN pg_class t ON t.oid = c.conrelid
               JOIN pg_namespace n ON n.oid = t.relnamespace
@@ -203,9 +276,9 @@ public actor PostgresDriver: DatabaseDriver {
             }
         }
         return result.rows.map { row in
-            TableForeignKey(name: row[0].displayString, columns: row[3].displayString.split(separator: ",").map(String.init),
+            TableForeignKey(name: row[0].displayString, columns: row[3].displayString.split(separator: "\u{1F}").map(String.init),
                             referencedSchema: row[1].displayString, referencedTable: row[2].displayString,
-                            referencedColumns: row[4].displayString.split(separator: ",").map(String.init),
+                            referencedColumns: row[4].displayString.split(separator: "\u{1F}").map(String.init),
                             onDelete: action(row[5].displayString), onUpdate: action(row[6].displayString))
         }
     }
@@ -277,6 +350,10 @@ public actor PostgresDriver: DatabaseDriver {
     }
 
     public func executeStatement(_ sql: String) async throws -> QueryResult {
+        try await executeStatement(sql, maxRows: nil)
+    }
+
+    public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {
         guard let connection else { throw DatabaseError.notConnected }
         do {
             if !Self.isReadOnlyStatement(sql) {
@@ -285,20 +362,26 @@ public actor PostgresDriver: DatabaseDriver {
                 let future: EventLoopFuture<PostgresQueryResult> = connection.query(PostgresQuery(unsafeSQL: sql), logger: logger)
                 let result = try await future.get()
                 let columns = result.rows.first.map { $0.map(\.columnName) } ?? []
-                return QueryResult(
+                return QueryResult.capped(QueryResult(
                     statement: sql,
                     columns: columns,
                     rows: result.rows.map { $0.map(Self.value) },
                     affectedRows: columns.isEmpty ? result.metadata.rows : nil
-                )
+                ), maxRows: maxRows)
             }
             let sequence = try await connection.query(PostgresQuery(unsafeSQL: sql), logger: logger)
             let columns = sequence.columns.map(\.name)
             var rows: [[CellValue]] = []
+            var truncated = false
             for try await row in sequence {
+                // Leaving the loop drops the stream: PostgresNIO discards the remaining rows as they arrive.
+                if let maxRows, rows.count >= max(maxRows, 0) {
+                    truncated = true
+                    break
+                }
                 rows.append(row.map(Self.value))
             }
-            return QueryResult(statement: sql, columns: columns, rows: rows)
+            return QueryResult(statement: sql, columns: columns, rows: rows, isTruncated: truncated)
         } catch {
             throw DatabaseError.queryFailed(Self.message(for: error))
         }

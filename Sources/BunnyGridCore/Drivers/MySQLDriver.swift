@@ -11,6 +11,8 @@ public actor MySQLDriver: DatabaseDriver {
     private var connection: MySQLConnection?
     /// The SSH tunnel (if any) the connection goes through; released on disconnect.
     private var endpoint: ConnectionEndpoint?
+    /// `CONNECTION_ID()` of `connection`, for `KILL QUERY` from a second connection.
+    public private(set) var connectionID: Int?
 
     public init(config: ConnectionConfig, password: String?) {
         self.init(config: config, secrets: ConnectionSecrets(password: password))
@@ -32,6 +34,7 @@ public actor MySQLDriver: DatabaseDriver {
             await endpoint.close()
             throw error
         }
+        await captureConnectionID()
     }
 
     /// A new connection to the server through `endpoint` (direct, socket file or SSH tunnel) with the SSL tab's settings.
@@ -77,6 +80,31 @@ public actor MySQLDriver: DatabaseDriver {
         connection = nil
         await endpoint?.close()
         endpoint = nil
+        connectionID = nil
+    }
+
+    private func captureConnectionID() async {
+        switch try? await executeStatement("SELECT CONNECTION_ID()").rows.first?.first {
+        case .integer(let id)?: connectionID = Int(id)
+        case .text(let id)?: connectionID = Int(id)
+        default: break
+        }
+    }
+
+    /// Opens a short-lived second connection with the same settings and runs `KILL QUERY` on this
+    /// connection's thread; the running statement fails with "Query execution was interrupted".
+    public func cancelCurrentQuery() async throws {
+        guard connection != nil, let connectionID else { return }
+        // Same secrets, so the second connection goes through the same tunnel lease, socket and SSL settings.
+        let canceller = MySQLDriver(config: config, secrets: secrets)
+        try await canceller.connect()
+        do {
+            _ = try await canceller.executeStatement("KILL QUERY \(connectionID)")
+        } catch {
+            await canceller.disconnect()
+            throw error
+        }
+        await canceller.disconnect()
     }
 
     public func serverVersion() async throws -> String {
@@ -231,27 +259,68 @@ public actor MySQLDriver: DatabaseDriver {
     }
 
     public func executeStatement(_ sql: String) async throws -> QueryResult {
+        try await executeStatement(sql, maxRows: nil)
+    }
+
+    /// MySQLNIO has no backpressure: past `maxRows` the remaining rows still arrive, but are dropped as they do.
+    public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {
         guard let connection else { throw DatabaseError.notConnected }
         let box = MetadataBox()
-        let rows: [MySQLRow]
         do {
-            rows = try await connection.query(sql, onMetadata: { box.affected = Int($0.affectedRows) }).get()
+            try await connection.query(sql, onRow: { row in
+                if let maxRows, box.rows.count >= max(maxRows, 0) {
+                    box.truncated = true
+                } else {
+                    box.rows.append(row)
+                }
+            }, onMetadata: { box.affected = Int($0.affectedRows) }).get()
+        } catch MySQLError.server(let packet) where packet.errorCode == .UNSUPPORTED_PS {
+            // Some statements (CREATE TRIGGER/PROCEDURE, LOCK TABLES, USE, …) can't be prepared;
+            // the text protocol runs them, without an affected-row count.
+            do {
+                try await connection.simpleQuery(sql, onRow: { row in
+                    if let maxRows, box.rows.count >= max(maxRows, 0) {
+                        box.truncated = true
+                    } else {
+                        box.rows.append(row)
+                    }
+                }).get()
+            } catch {
+                throw DatabaseError.queryFailed(Self.message(error))
+            }
         } catch {
-            throw DatabaseError.queryFailed(String(describing: error))
+            throw DatabaseError.queryFailed(Self.message(error))
         }
+        let rows = box.rows
         let columns = rows.first?.columnDefinitions.map(\.name) ?? []
         let values = rows.map { row in
             zip(row.columnDefinitions, row.values).map { definition, buffer in
                 Self.value(definition: definition, buffer: buffer, format: row.format)
             }
         }
-        return QueryResult(statement: sql, columns: columns, rows: values, affectedRows: columns.isEmpty ? box.affected : nil)
+        return QueryResult(statement: sql, columns: columns, rows: values, affectedRows: columns.isEmpty ? box.affected : nil, isTruncated: box.truncated)
     }
 
     // MARK: - Decoding
 
+    /// The server's message without MySQLNIO's "MySQL error: Server error:" prefix.
+    static func message(_ error: any Error) -> String {
+        switch error {
+        case MySQLError.server(let packet): packet.errorMessage
+        case MySQLError.duplicateEntry(let message), MySQLError.invalidSyntax(let message): message
+        default: String(describing: error)
+        }
+    }
+
     private static func value(definition: MySQLProtocol.ColumnDefinition41, buffer: ByteBuffer?, format: MySQLData.Format) -> CellValue {
         guard var buffer else { return .null }
+        // Text-protocol temporals are already formatted by the server (and MySQLTime can't parse a bare date or time).
+        if format == .text, [.date, .datetime, .timestamp, .time].contains(definition.columnType) {
+            return .text(buffer.readString(length: buffer.readableBytes) ?? "")
+        }
+        if definition.columnType == .time {
+            return .text(binaryTime(&buffer, decimals: definition.decimals))
+        }
         let data = MySQLData(
             type: definition.columnType,
             format: format,
@@ -265,7 +334,7 @@ public actor MySQLDriver: DatabaseDriver {
         case .float, .double:
             return data.double.map(CellValue.double) ?? .null
         case .date, .datetime, .timestamp, .time:
-            return data.time.map { .text(formatTime($0, type: definition.columnType)) } ?? .null
+            return data.time.map { .text(formatTime($0, type: definition.columnType, decimals: definition.decimals)) } ?? .null
         case .blob, .tinyBlob, .mediumBlob, .longBlob, .string, .varString, .varchar, .geometry, .bit:
             if definition.characterSet == .binary {
                 return .blob(Data(buffer.readBytes(length: buffer.readableBytes) ?? []))
@@ -276,22 +345,50 @@ public actor MySQLDriver: DatabaseDriver {
         }
     }
 
-    private static func formatTime(_ time: MySQLTime, type: MySQLProtocol.DataType) -> String {
+    private static func formatTime(_ time: MySQLTime, type: MySQLProtocol.DataType, decimals: UInt8) -> String {
         func pad(_ v: UInt16?, _ width: Int = 2) -> String {
             let s = String(v ?? 0)
             return String(repeating: "0", count: max(0, width - s.count)) + s
         }
         let date = "\(pad(time.year, 4))-\(pad(time.month))-\(pad(time.day))"
-        let clock = "\(pad(time.hour)):\(pad(time.minute)):\(pad(time.second))"
+        var clock = "\(pad(time.hour)):\(pad(time.minute)):\(pad(time.second))"
+        clock += fraction(time.microsecond ?? 0, decimals: decimals)
         switch type {
         case .date: return date
         case .time: return clock
         default: return "\(date) \(clock)"
         }
     }
+
+    /// Binary TIME: sign, days, hours, minutes, seconds and optional microseconds, so `-838:59:59` and
+    /// durations over a day survive (MySQLNIO's MySQLTime drops the days and the sign).
+    static func binaryTime(_ buffer: inout ByteBuffer, decimals: UInt8 = 0) -> String {
+        guard buffer.readableBytes >= 8,
+              let negative = buffer.readInteger(as: UInt8.self),
+              let days = buffer.readInteger(endianness: .little, as: UInt32.self),
+              let hours = buffer.readInteger(as: UInt8.self),
+              let minutes = buffer.readInteger(as: UInt8.self),
+              let seconds = buffer.readInteger(as: UInt8.self) else { return "00:00:00" }
+        let micro = buffer.readInteger(endianness: .little, as: UInt32.self) ?? 0
+        func two(_ v: UInt8) -> String { v < 10 ? "0\(v)" : "\(v)" }
+        let totalHours = Int(days) * 24 + Int(hours)
+        var text = (negative == 1 ? "-" : "") + (totalHours < 10 ? "0\(totalHours)" : "\(totalHours)") + ":\(two(minutes)):\(two(seconds))"
+        return text + fraction(micro, decimals: decimals)
+    }
+
+    /// ".120" for 120000 µs in a column with 3 fractional digits, as the text protocol prints it;
+    /// empty for columns without fractional seconds.
+    static func fraction(_ micro: UInt32, decimals: UInt8) -> String {
+        let digits = (1...6).contains(decimals) ? Int(decimals) : (micro > 0 ? 6 : 0)
+        guard digits > 0 else { return "" }
+        let six = String(micro)
+        return "." + String((String(repeating: "0", count: max(0, 6 - six.count)) + six).prefix(digits))
+    }
 }
 
-/// Collects the OK-packet metadata reported on the event loop.
+/// Collects the rows and OK-packet metadata reported on the event loop.
 private final class MetadataBox: @unchecked Sendable {
     var affected: Int?
+    var rows: [MySQLRow] = []
+    var truncated = false
 }

@@ -120,16 +120,28 @@ public struct QueryResult: Identifiable, Sendable {
     /// Rows changed by a DML statement, when the driver reports it.
     public var affectedRows: Int?
     public var duration: Duration
+    /// More rows exist than were read (the statement ran with a row cap).
+    public var isTruncated: Bool
 
-    public init(statement: String, columns: [String], rows: [[CellValue]], affectedRows: Int? = nil, duration: Duration = .zero) {
+    public init(statement: String, columns: [String], rows: [[CellValue]], affectedRows: Int? = nil, duration: Duration = .zero, isTruncated: Bool = false) {
         self.statement = statement
         self.columns = columns
         self.rows = rows
         self.affectedRows = affectedRows
         self.duration = duration
+        self.isTruncated = isTruncated
     }
 
     public var isResultSet: Bool { !columns.isEmpty }
+
+    /// `result` with at most `maxRows` rows, marked truncated when rows were dropped.
+    public static func capped(_ result: QueryResult, maxRows: Int?) -> QueryResult {
+        guard let maxRows, result.rows.count > max(maxRows, 0) else { return result }
+        var capped = result
+        capped.rows.removeSubrange(max(maxRows, 0)...)
+        capped.isTruncated = true
+        return capped
+    }
 }
 
 /// A page of rows from a table, as shown in the data grid.

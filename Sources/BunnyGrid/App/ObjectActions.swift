@@ -44,6 +44,8 @@ struct ExportTarget: Identifiable {
     let id = UUID()
     let context: DatabaseContext
     let objects: [DatabaseObject]
+    /// Schema whose tables and views the wizard lists, when opened on a schema or database node.
+    var schema: String? = nil
 }
 
 extension AppModel {
@@ -115,16 +117,13 @@ extension AppModel {
         }
     }
 
-    /// Opens the SQL file in a query tab and runs it against the database.
+    /// Execute SQL File: asks for the file, then runs it statement by statement with progress (ExecuteSQLFileView).
     func executeSQLFile(in context: DatabaseContext) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "sql") ?? .plainText, .plainText]
         panel.allowsOtherFileTypes = true
-        guard panel.runModal() == .OK, let url = panel.url,
-              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-        openQuery(text: text, in: context)
-        selectedQueryTab?.title = url.deletingPathExtension().lastPathComponent
-        selectedQueryTab?.run()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        sqlFileTarget = SQLFileTarget(context: context, url: url)
     }
 }
 

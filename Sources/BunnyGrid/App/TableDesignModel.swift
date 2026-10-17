@@ -41,8 +41,14 @@ final class TableDesignModel: Identifiable {
     var section: Section = .fields
     private(set) var foreignKeys: [TableForeignKey] = []
     /// Foreign keys as edited: originals that weren't removed, plus new ones.
-    var foreignKeyDesigns: [TableForeignKey] = []
-    var foreignKeySelection: TableForeignKey.ID?
+    var foreignKeyDesigns: [ForeignKeyDesign] = []
+    var foreignKeySelection: ForeignKeyDesign.ID?
+    /// Where a foreign key can point: schemas (PostgreSQL) or databases (MySQL), their tables, and those tables' fields.
+    private(set) var referenceSchemas: [String] = []
+    private(set) var referenceTables: [String: [String]] = [:]
+    private(set) var referenceColumns: [String: [String]] = [:]
+    /// SQLite: the stored CREATE TABLE, for the table rebuild.
+    @ObservationIgnored private var originalSQL: String?
     private(set) var triggers: [TableTrigger] = []
     /// Triggers marked for deletion, and new CREATE TRIGGER statements written in the Definition box.
     var droppedTriggers: Set<String> = []
@@ -56,6 +62,8 @@ final class TableDesignModel: Identifiable {
     private(set) var isLoading = false
     private(set) var isSaving = false
     var saveError: String?
+    /// Bumped by every successful save, so the DDL pane reloads.
+    private(set) var revision = 0
 
     init(context: DatabaseContext, schema: String?, table: String?) {
         self.context = context
@@ -90,6 +98,13 @@ final class TableDesignModel: Identifiable {
     }
 
     func load() async {
+        #if DEBUG
+        if let flag = CommandLine.arguments.firstIndex(of: "--design-section"), CommandLine.arguments.indices.contains(flag + 1),
+           let section = Section(rawValue: CommandLine.arguments[flag + 1]) {
+            self.section = section
+        }
+        #endif
+        await loadReferenceCatalog()
         guard let originalName else { return }
         isLoading = true
         defer { isLoading = false }
@@ -98,7 +113,15 @@ final class TableDesignModel: Identifiable {
         columns = originalColumns.map(ColumnDesign.init)
         indexDesigns = indexes.map(IndexDesign.init)
         foreignKeys = (try? await driver.listForeignKeys(table: originalName, schema: driverSchema)) ?? []
-        foreignKeyDesigns = foreignKeys
+        foreignKeyDesigns = foreignKeys.map(ForeignKeyDesign.init)
+        originalSQL = kind == .sqlite ? try? await driver.storedTableSQL(originalName) : nil
+        #if DEBUG
+        // --demo-fk: a pending foreign key change, to see the Foreign Keys tab and SQL Preview with an edit.
+        if CommandLine.arguments.contains("--demo-fk"), !foreignKeyDesigns.isEmpty {
+            foreignKeyDesigns[0].key.onDelete = "CASCADE"
+            foreignKeySelection = foreignKeyDesigns[0].id
+        }
+        #endif
         triggers = (try? await driver.listTriggers(table: originalName, schema: driverSchema)) ?? []
         droppedTriggers = []
         newTriggers = []
@@ -109,21 +132,67 @@ final class TableDesignModel: Identifiable {
         engine = originalEngine
     }
 
-    /// Whether foreign keys can be changed on this engine (SQLite needs the table rebuilt).
-    var canEditForeignKeys: Bool { kind != .sqlite }
+    var foreignKeysChanged: Bool { SQLDialect.foreignKeysChanged(original: foreignKeys, design: foreignKeyDesigns) }
+
+    /// SQLite keys have no name of their own (PRAGMA foreign_key_list doesn't report one).
+    var foreignKeysHaveNames: Bool { kind != .sqlite }
+    /// The schema (PostgreSQL) or database (MySQL) a new key points into by default.
+    var defaultReferenceSchema: String? { driverSchema }
 
     func addForeignKey() {
         let column = selection.flatMap { id in columns.first { $0.id == id }?.name } ?? columns.first?.name ?? ""
-        let key = TableForeignKey(name: "\(tableName.isEmpty ? "table" : tableName)_fk\(foreignKeyDesigns.count + 1)", columns: [column],
-                                  referencedTable: "", referencedColumns: ["id"])
-        foreignKeyDesigns.append(key)
-        foreignKeySelection = key.id
+        let base = "fk_\(tableName.isEmpty ? "table" : tableName)"
+        var name = base
+        var n = 1
+        while foreignKeyDesigns.contains(where: { $0.key.name == name }) { n += 1; name = "\(base)_\(n)" }
+        let key = TableForeignKey(name: foreignKeysHaveNames ? name : "", columns: column.isEmpty ? [] : [column],
+                                  referencedSchema: defaultReferenceSchema, referencedTable: "", referencedColumns: [])
+        let design = ForeignKeyDesign(key: key)
+        foreignKeyDesigns.append(design)
+        foreignKeySelection = design.id
     }
 
     func deleteForeignKey() {
-        guard let id = foreignKeySelection else { return }
-        foreignKeyDesigns.removeAll { $0.id == id }
-        foreignKeySelection = foreignKeyDesigns.last?.id
+        guard let id = foreignKeySelection, let index = foreignKeyDesigns.firstIndex(where: { $0.id == id }) else { return }
+        foreignKeyDesigns.remove(at: index)
+        foreignKeySelection = foreignKeyDesigns.indices.contains(index) ? foreignKeyDesigns[index].id : foreignKeyDesigns.last?.id
+    }
+
+    private func referenceKey(_ schema: String?) -> String { schema ?? "" }
+
+    func tables(in schema: String?) -> [String] { referenceTables[referenceKey(schema)] ?? [] }
+
+    func columns(of table: String, in schema: String?) -> [String] {
+        // The table being designed points at itself with the fields as edited.
+        if table == (originalName ?? tableName), schema == nil || schema == defaultReferenceSchema { return columns.map(\.name) }
+        return referenceColumns[referenceKey(schema) + "\u{1F}" + table] ?? []
+    }
+
+    /// Schemas and the default schema's tables, for the Foreign Keys menus.
+    private func loadReferenceCatalog() async {
+        switch kind {
+        case .postgresql:
+            referenceSchemas = ((try? await driver.listSchemas()) ?? [])
+                .filter { !$0.hasPrefix("pg_") && $0 != "information_schema" }
+        case .mysql, .mariadb:
+            referenceSchemas = ((try? await driver.listDatabases()) ?? [])
+                .filter { !["information_schema", "performance_schema", "mysql", "sys"].contains($0) }
+        case .sqlite:
+            referenceSchemas = []
+        }
+        await loadReferenceTables(schema: defaultReferenceSchema)
+    }
+
+    func loadReferenceTables(schema: String?) async {
+        guard referenceTables[referenceKey(schema)] == nil else { return }
+        let objects = (try? await driver.listObjects(schema: schema)) ?? []
+        referenceTables[referenceKey(schema)] = objects.filter { $0.kind == .table }.map(\.name)
+    }
+
+    func loadReferenceColumns(table: String, schema: String?) async {
+        let key = referenceKey(schema) + "\u{1F}" + table
+        guard !table.isEmpty, referenceColumns[key] == nil else { return }
+        referenceColumns[key] = ((try? await driver.listColumns(table: table, schema: schema)) ?? []).map(\.name)
     }
 
     /// Template for Add Trigger, in the engine's syntax.
@@ -142,28 +211,42 @@ final class TableDesignModel: Identifiable {
     var plan: Result<[String], any Error> {
         Result {
             if isNew {
-                return [try dialect.createTable(name: tableName, schema: driverSchema, columns: columns)]
+                return [try dialect.createTable(name: tableName, schema: driverSchema, columns: columns, foreignKeys: foreignKeyDesigns.map(\.key))]
                     + (try dialect.alterIndexes(table: tableName, schema: driverSchema, original: [], design: indexDesigns))
             }
-            var statements = try dialect.alterTable(name: originalName ?? tableName, schema: driverSchema, original: originalColumns, design: columns)
-            if let originalName, tableName != originalName, !tableName.isEmpty {
-                let renamed = kind == .mysql || kind == .mariadb
+            let currentName = originalName ?? tableName
+            let finalName = tableName.isEmpty ? currentName : tableName
+            let rename: String? = {
+                guard let originalName, tableName != originalName, !tableName.isEmpty else { return nil }
+                return kind == .mysql || kind == .mariadb
                     ? "RENAME TABLE \(dialect.qualifiedName(table: originalName, schema: driverSchema)) TO \(dialect.qualifiedName(table: tableName, schema: driverSchema))"
                     : "ALTER TABLE \(dialect.qualifiedName(table: originalName, schema: driverSchema)) RENAME TO \(dialect.quoteIdentifier(tableName))"
-                statements.append(renamed)
-            }
-            let finalName = tableName.isEmpty ? (originalName ?? tableName) : tableName
-            statements += try dialect.alterIndexes(table: finalName, schema: driverSchema, original: indexes, design: indexDesigns)
-            // Foreign keys: drop removed or changed ones, add new or changed ones.
-            let keptKeys = Set(foreignKeyDesigns.map(\.name))
-            for key in foreignKeys where !keptKeys.contains(key.name) || foreignKeyDesigns.first(where: { $0.name == key.name }) != key {
-                statements.append(try dialect.dropForeignKey(named: key.name, table: finalName, schema: driverSchema))
-            }
-            for key in foreignKeyDesigns where !foreignKeys.contains(key) {
-                statements.append(try dialect.addForeignKey(key, table: finalName, schema: driverSchema))
+            }()
+            var statements: [String]
+            if kind == .sqlite, SQLiteTableRebuild.isNeeded(originalColumns: originalColumns, columns: columns, originalIndexes: indexes,
+                                                             originalForeignKeys: foreignKeys, foreignKeys: foreignKeyDesigns) {
+                // SQLite: rebuild under the current name (indexes, kept triggers and keys included), then rename natively.
+                let rebuild = SQLiteTableRebuild(
+                    table: currentName, originalSQL: originalSQL, originalColumns: originalColumns, columns: columns,
+                    originalIndexes: indexes, indexes: indexDesigns, foreignKeys: foreignKeyDesigns.map(\.key),
+                    triggers: triggers.filter { !droppedTriggers.contains($0.name) }.map(\.definition),
+                    checkForeignKeys: SQLDialect.foreignKeysChanged(original: foreignKeys, design: foreignKeyDesigns))
+                statements = try rebuild.statements()
+                if let rename { statements.append(rename) }
+            } else {
+                // Foreign keys: drop removed or changed ones first (a key can hold a column or index the changes remove),
+                // add new or changed ones last (they can use new fields and indexes).
+                let keys = kind == .sqlite
+                    ? (drops: [String](), adds: [String]())
+                    : try dialect.alterForeignKeys(table: currentName, newTable: finalName, schema: driverSchema, original: foreignKeys, design: foreignKeyDesigns)
+                statements = keys.drops
+                statements += try dialect.alterTable(name: currentName, schema: driverSchema, original: originalColumns, design: columns)
+                if let rename { statements.append(rename) }
+                statements += try dialect.alterIndexes(table: finalName, schema: driverSchema, original: indexes, design: indexDesigns)
+                statements += keys.adds
+                for name in droppedTriggers.sorted() { statements.append(dialect.dropTrigger(named: name, table: finalName, schema: driverSchema)) }
             }
             // Triggers.
-            for name in droppedTriggers.sorted() { statements.append(dialect.dropTrigger(named: name, table: finalName, schema: driverSchema)) }
             statements += newTriggers.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
             // Options.
             if comment != originalComment {
@@ -264,16 +347,13 @@ final class TableDesignModel: Identifiable {
         guard !statements.isEmpty else { return true }
         isSaving = true
         defer { isSaving = false }
-        let transactional = kind != .mysql && kind != .mariadb
         do {
-            if transactional { _ = try await driver.executeTimed(dialect.beginTransaction) }
-            for statement in statements { _ = try await driver.executeTimed(statement) }
-            if transactional { _ = try await driver.executeTimed("COMMIT") }
+            try await driver.applyDesign(statements)
         } catch {
-            if transactional { _ = try? await driver.executeStatement("ROLLBACK") }
             saveError = error.localizedDescription
             return false
         }
+        revision += 1
         originalName = tableName
         await load()
         await context?.loadObjects(schema: schema, force: true)

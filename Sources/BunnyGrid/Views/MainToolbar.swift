@@ -81,8 +81,11 @@ struct MainToolbar: View {
                 ChromeButton(title: "Automation", comingSoon: "Batch jobs that run queries, exports and backups on a schedule.") {} glyph: {
                     AppIcon(name: "automation", size: 32)
                 }
-                ChromeButton(title: "Model", comingSoon: "ER diagrams, reverse engineering and model-to-database sync.") {} glyph: {
-                    AppIcon(name: "model", size: 32)
+                let modelContext = app.currentContext?.isOpen == true ? app.currentContext : nil
+                ChromeButton(title: "Model", isEnabled: modelContext != nil, help: "Reverse the database to an ER model") {
+                    if let modelContext { app.openModel(in: modelContext, schema: app.currentSchema) }
+                } glyph: {
+                    AppIcon(name: "model", size: 32, isEnabled: modelContext != nil)
                 }
                 ChromeButton(title: "BI", comingSoon: "Charts and dashboards built from your queries.") {} glyph: {
                     AppIcon(name: "bi", size: 32)

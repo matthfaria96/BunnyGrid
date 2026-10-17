@@ -165,10 +165,13 @@ public struct TableProfile: Codable, Hashable, Identifiable, Sendable {
     public var sortDescending: Bool
     public var hiddenColumns: [String]
     public var masks: [String: MaskRule]
+    /// Applied when the table is opened. At most one profile per table is the default.
+    public var isDefault: Bool
 
     public init(id: UUID = UUID(), connectionID: UUID, database: String, schema: String?, table: String, name: String,
                 filter: String = "", sortColumn: String? = nil, sortDescending: Bool = false,
-                hiddenColumns: [String] = [], masks: [String: MaskRule] = [:]) {
+                hiddenColumns: [String] = [], masks: [String: MaskRule] = [:], isDefault: Bool = false) {
+        self.isDefault = isDefault
         self.id = id
         self.connectionID = connectionID
         self.database = database
@@ -180,5 +183,59 @@ public struct TableProfile: Codable, Hashable, Identifiable, Sendable {
         self.sortDescending = sortDescending
         self.hiddenColumns = hiddenColumns
         self.masks = masks
+    }
+}
+
+extension TableProfile {
+    private enum CodingKeys: String, CodingKey {
+        case id, connectionID, database, schema, table, name, filter, sortColumn, sortDescending, hiddenColumns, masks, isDefault
+    }
+
+    /// Also reads profiles saved before `isDefault` existed.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(UUID.self, forKey: .id), connectionID: try c.decode(UUID.self, forKey: .connectionID),
+                  database: try c.decode(String.self, forKey: .database), schema: try c.decodeIfPresent(String.self, forKey: .schema),
+                  table: try c.decode(String.self, forKey: .table), name: try c.decode(String.self, forKey: .name),
+                  filter: try c.decodeIfPresent(String.self, forKey: .filter) ?? "",
+                  sortColumn: try c.decodeIfPresent(String.self, forKey: .sortColumn),
+                  sortDescending: try c.decodeIfPresent(Bool.self, forKey: .sortDescending) ?? false,
+                  hiddenColumns: try c.decodeIfPresent([String].self, forKey: .hiddenColumns) ?? [],
+                  masks: try c.decodeIfPresent([String: MaskRule].self, forKey: .masks) ?? [:],
+                  isDefault: try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false)
+    }
+
+    /// Same connection, database, schema and table.
+    public func isSameTable(as other: TableProfile) -> Bool {
+        connectionID == other.connectionID && database == other.database && schema == other.schema && table == other.table
+    }
+}
+
+extension Array where Element == TableProfile {
+    /// Adds or replaces (same table and name) a profile. Replacing keeps the old id and default flag;
+    /// a new default clears the previous default of that table.
+    public func saving(_ profile: TableProfile) -> [TableProfile] {
+        var profile = profile
+        var list = self
+        if let existing = list.first(where: { $0.isSameTable(as: profile) && $0.name == profile.name }) {
+            profile.id = existing.id
+            profile.isDefault = profile.isDefault || existing.isDefault
+        }
+        list.removeAll { $0.isSameTable(as: profile) && $0.name == profile.name }
+        if profile.isDefault {
+            for i in list.indices where list[i].isSameTable(as: profile) { list[i].isDefault = false }
+        }
+        list.append(profile)
+        return list
+    }
+
+    /// Makes `id` the default of its table, or clears the table's default when it already was.
+    public func togglingDefault(_ id: UUID) -> [TableProfile] {
+        guard let target = first(where: { $0.id == id }) else { return self }
+        return map { profile in
+            var profile = profile
+            if profile.isSameTable(as: target) { profile.isDefault = profile.id == id && !target.isDefault }
+            return profile
+        }
     }
 }

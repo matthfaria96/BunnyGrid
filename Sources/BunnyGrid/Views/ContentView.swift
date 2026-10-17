@@ -48,6 +48,9 @@ struct ContentView: View {
         .sheet(item: $app.exportTarget) { target in
             ExportWizardView(target: target)
         }
+        .sheet(item: $app.sqlFileTarget) { target in
+            ExecuteSQLFileView(target: target)
+        }
         .sheet(item: $app.usersSession) { session in
             UsersView(session: session)
         }
@@ -170,6 +173,8 @@ struct StatusBar: View {
             return parts
         case .design(let model):
             return ["Number of Fields: \(model.columns.count)"]
+        case .model(let model):
+            return [model.summary]
         case nil:
             return []
         }
@@ -187,6 +192,7 @@ struct StatusBar: View {
         case .table(let model): model.lastSQL
         case .query(let model): model.lastSQL
         case .design(let model): model.statements.joined(separator: "; ")
+        case .model: ""
         case nil: ""
         }
     }
@@ -196,6 +202,7 @@ struct StatusBar: View {
         case .table(let model): model.transactionError ?? model.error ?? model.saveError ?? model.readOnlyReason
         case .query(let model): model.error
         case .design(let model): model.planError
+        case .model(let model): model.error
         case nil: nil
         }
     }
@@ -205,6 +212,7 @@ struct StatusBar: View {
         case .table(let model): model.recordDescription
         case .query(let model): model.selectedResult.map { "\($0.rows.count.formatted()) records" } ?? ""
         case .design(let model): model.columns.count == 1 ? "1 field" : "\(model.columns.count) fields"
+        case .model(let model): model.summary
         case nil: app.currentContext.map { "\($0.objects(in: app.currentSchema, category: app.objectCategory)?.count ?? 0) \(app.objectCategory.rawValue.lowercased())" } ?? ""
         }
     }

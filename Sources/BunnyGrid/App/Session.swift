@@ -192,10 +192,14 @@ final class Session: Identifiable {
     func context(_ name: String) -> DatabaseContext? { contexts[name] }
 
     /// A new, unconnected driver for `database`, for work that needs its own connection
-    /// (a table tab's manual transaction).
+    /// (a table tab's manual transaction, a query editor). On MySQL it connects with `database` as the
+    /// default database, so unqualified names in the editor resolve there.
     func makeDedicatedDriver(database: String) -> any DatabaseDriver {
         var databaseConfig = config
-        if config.kind == .postgresql { databaseConfig.database = database }
+        switch config.kind {
+        case .postgresql, .mysql, .mariadb: databaseConfig.database = database
+        case .sqlite: break
+        }
         return DriverFactory.make(config: databaseConfig, secrets: secrets)
     }
 
@@ -360,12 +364,14 @@ enum WorkspaceTab: Identifiable {
     case table(TableTabModel)
     case query(QueryTabModel)
     case design(TableDesignModel)
+    case model(ModelTabModel)
 
     var id: UUID {
         switch self {
         case .table(let model): model.id
         case .query(let model): model.id
         case .design(let model): model.id
+        case .model(let model): model.id
         }
     }
 
@@ -375,6 +381,7 @@ enum WorkspaceTab: Identifiable {
         case .table(let model): "\(model.object.name) \(model.location)"
         case .query(let model): "\(model.title) \(model.location)"
         case .design(let model): "\(model.displayName) \(model.location)"
+        case .model(let model): "Model \(model.location)"
         }
     }
 
@@ -384,6 +391,7 @@ enum WorkspaceTab: Identifiable {
         case .table(let model): model.object.kind == .table ? "Table" : "View"
         case .query: "Query"
         case .design: "Table Design"
+        case .model: "Model"
         }
     }
 
@@ -393,6 +401,7 @@ enum WorkspaceTab: Identifiable {
         case .table(let model): model.object.kind.iconName
         case .query: "query"
         case .design: "table"
+        case .model: "model"
         }
     }
 
@@ -401,6 +410,7 @@ enum WorkspaceTab: Identifiable {
         case .table(let model): model.connectionID
         case .query(let model): model.connectionID
         case .design(let model): model.connectionID
+        case .model(let model): model.connectionID
         }
     }
 
@@ -410,6 +420,7 @@ enum WorkspaceTab: Identifiable {
         // A new query counts as unsaved when Options › General asks to save new queries before closing.
         case .query(let model): model.isDirty && (model.savedQueryID != nil || (AppOptions.shared.values.askToSaveNewQueries && !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
         case .design(let model): model.hasChanges
+        case .model: false
         }
     }
 
@@ -419,9 +430,9 @@ enum WorkspaceTab: Identifiable {
 
     @MainActor func cancel() {
         switch self {
-        case .query(let model): model.cancel()
+        case .query(let model): model.close()
         case .table(let model): model.abandonTransaction()
-        case .design: break
+        case .design, .model: break
         }
     }
 }

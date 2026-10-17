@@ -48,22 +48,13 @@ public struct TableTrigger: Hashable, Identifiable, Sendable {
 }
 
 extension SQLDialect {
-    /// ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY; SQLite can't add one to an existing table.
+    /// ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY; SQLite can't add one to an existing table
+    /// (the designer rebuilds the table instead, see `SQLiteTableRebuild`).
     public func addForeignKey(_ key: TableForeignKey, table: String, schema: String?) throws -> String {
         guard kind != .sqlite else {
             throw TableDesignError.invalid("SQLite can't add a foreign key to an existing table; recreate the table with the key in its CREATE TABLE.")
         }
-        guard !key.columns.isEmpty, key.columns.count == key.referencedColumns.count, !key.referencedTable.isEmpty else {
-            throw TableDesignError.invalid("Foreign key “\(key.name)” needs matching fields and referenced fields.")
-        }
-        let name = key.name.trimmingCharacters(in: .whitespaces)
-        let constraint = name.isEmpty ? "" : "CONSTRAINT \(quoteIdentifier(name)) "
-        let columns = key.columns.map(quoteIdentifier).joined(separator: ", ")
-        let references = key.referencedColumns.map(quoteIdentifier).joined(separator: ", ")
-        var sql = "ALTER TABLE \(qualifiedName(table: table, schema: schema)) ADD \(constraint)FOREIGN KEY (\(columns)) REFERENCES \(qualifiedName(table: key.referencedTable, schema: key.referencedSchema ?? schema)) (\(references))"
-        if key.onDelete != "NO ACTION" { sql += " ON DELETE \(key.onDelete)" }
-        if key.onUpdate != "NO ACTION" { sql += " ON UPDATE \(key.onUpdate)" }
-        return sql
+        return "ALTER TABLE \(qualifiedName(table: table, schema: schema)) ADD \(try foreignKeyClause(key, schema: schema))"
     }
 
     public func dropForeignKey(named name: String, table: String, schema: String?) throws -> String {
