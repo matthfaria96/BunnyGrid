@@ -123,6 +123,9 @@ final class AppModel {
         snippets = (try? snippetStore.load()) ?? []
         for group in Set(connections.compactMap(\.group)) { expanded.insert(.group(group)) }
         assistant.app = self
+        #if DEBUG || BUNNYGRID_BENCH
+        Benchmarks.app = self
+        #endif
         openLaunchArguments()
         // Plain launches restore the last session (Options › Tabs / Auto Recovery); launches with files or flags don't.
         if CommandLine.arguments.dropFirst().allSatisfy({ $0.hasPrefix("-NS") || $0.hasPrefix("-Apple") }) {
@@ -534,7 +537,7 @@ final class AppModel {
     var canSaveCurrent: Bool {
         switch selectedTab {
         case .table(let model): model.hasChanges
-        case .query(let model): !model.text.isEmpty
+        case .query(let model): !model.isEmpty
         case .design(let model): model.hasChanges
         case .model: false
         case nil: false
@@ -759,6 +762,9 @@ final class AppModel {
             case "--query" where !arguments.isEmpty: query = arguments.removeFirst()
             // Their file arguments are not databases to open (handled after connecting / by the Import Wizard).
             case "--execute-sql" where !arguments.isEmpty: arguments.removeFirst()
+            // Benchmark options (Benchmarks.swift) take values that may be file paths.
+            case "--bench", "--bench-script", "--bench-table", "--bench-rows":
+                if !arguments.isEmpty { arguments.removeFirst() }
             case "--import-wizard":
                 if let kind = arguments.first, ImportSourceKind(rawValue: kind) != nil {
                     arguments.removeFirst()

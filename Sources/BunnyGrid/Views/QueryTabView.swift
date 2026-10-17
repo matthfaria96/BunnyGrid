@@ -77,7 +77,7 @@ struct QueryTabView: View {
             ToolIconButton(systemImage: "square.and.arrow.down", help: "Save (⌘S)") { app.saveQuery(model) }
             Divider().frame(height: 16).padding(.horizontal, 6)
             ToolIconButton(systemImage: "text.alignleft", help: "Beautify SQL (⌘⇧B)") { model.beautify() }
-                .disabled(model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(model.isBlank)
             ToolIconButton(systemImage: "curlybraces", help: "Code Snippet") {
                 app.showAssistant = true
                 app.rightPane = .snippets
@@ -138,7 +138,7 @@ struct QueryTabView: View {
             ToolIconButton(systemImage: "stop.fill", help: "Stop (⌘.): cancels the statement on the server", tint: .red) { model.cancel() }
                 .disabled(!model.isRunning)
             ToolIconButton(systemImage: "list.bullet.indent", help: "Explain: the plan of the selected statement, or of the one under the cursor") { model.explain() }
-                .disabled(model.isRunning || model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(model.isRunning || model.isBlank)
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 6)

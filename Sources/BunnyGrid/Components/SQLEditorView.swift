@@ -55,9 +55,14 @@ struct SQLEditorView: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 4, height: 6)
         textView.drawsBackground = true
         textView.backgroundColor = .textBackgroundColor
+        // Lay out only what is shown: large scripts would otherwise be laid out in full on every change.
+        textView.layoutManager?.allowsNonContiguousLayout = true
+        textView.highlighter = context.coordinator.highlighter
+        textView.textStorage?.delegate = context.coordinator
         textView.string = text
+        context.coordinator.lastText = text
         textView.menuItems = menuItems
-        SQLHighlighter.highlight(textView)
+        PerfTrace.measure("editor.fullHighlight") { SQLHighlighter.highlight(textView) }
 
         scrollView.documentView = textView
         context.coordinator.observeOptions(scrollView: scrollView, textView: textView)
@@ -70,14 +75,22 @@ struct SQLEditorView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
         (scrollView.documentView as? SQLTextView)?.menuItems = menuItems
-        guard let textView = scrollView.documentView as? NSTextView, textView.string != text else { return }
+        // The text this editor last pushed comes back unchanged on every SwiftUI update: comparing it with
+        // the same string is O(1) (shared storage), unlike comparing against the text view's string.
+        guard text != context.coordinator.lastText, let textView = scrollView.documentView as? NSTextView else { return }
+        context.coordinator.lastText = text
+        guard textView.string != text else { return }
         textView.string = text
         SQLHighlighter.highlight(textView)
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTextViewDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
         var parent: SQLEditorView
+        /// Line table and lexer states, so each edit re-colours only the lines it touched.
+        let highlighter = SQLIncrementalHighlighter()
+        /// The text last sent to (or received from) the binding.
+        var lastText = ""
 
         private var optionsObserver: NSObjectProtocol?
 
@@ -98,14 +111,28 @@ struct SQLEditorView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
-            SQLHighlighter.highlight(textView)
+            let text = textView.string
+            lastText = text
+            parent.text = text
+        }
+
+        /// Colours the edited lines (and any after them whose state changed) as part of the same edit.
+        nonisolated func textStorage(_ textStorage: NSTextStorage, willProcessEditing editedMask: NSTextStorageEditActions,
+                                     range editedRange: NSRange, changeInLength delta: Int) {
+            guard editedMask.contains(.editedCharacters) else { return }
+            // The text view's storage: only ever edited on the main thread.
+            nonisolated(unsafe) let storage = textStorage
+            MainActor.assumeIsolated {
+                let dirty = highlighter.edit(storage.string as NSString, editedRange: editedRange, changeInLength: delta)
+                SQLHighlighter.colour(storage, range: dirty, highlighter: highlighter, options: AppOptions.shared.values)
+            }
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             let range = textView.selectedRange()
-            parent.selectedText = range.length > 0 ? (textView.string as NSString).substring(with: range) : ""
+            let selected = range.length > 0 ? (textView.string as NSString).substring(with: range) : ""
+            if selected != parent.selectedText { parent.selectedText = selected }
             if AppOptions.shared.values.useBraceHighlighting { BraceHighlighter.update(textView) }
             parent.onCursorChange?(textView)
         }
@@ -133,6 +160,8 @@ struct SQLEditorView: NSViewRepresentable {
 /// Text view that completes identifiers (including `alias.column`) instead of dictionary words.
 final class SQLTextView: NSTextView {
     var menuItems: [SQLEditorView.MenuItem] = []
+    /// The editor's line table (kept current by the coordinator); also answers line numbers.
+    var highlighter: SQLIncrementalHighlighter?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
@@ -226,21 +255,12 @@ enum SQLHighlighter {
 
     static var font: NSFont { AppOptions.shared.values.editorFont?.nsFont ?? defaultFont }
 
-    private static let keywordRule = regex("\\b(" + SQLKeywords.all.joined(separator: "|") + ")\\b", options: .caseInsensitive)
-    private static let numberRule = regex("\\b\\d+(\\.\\d+)?\\b")
-    private static let stringRule = regex("'(?:[^']|'')*'?")
-    private static let commentRule = regex("--[^\\n]*|/\\*[\\s\\S]*?(\\*/|$)")
-
-    private static func regex(_ pattern: String, options: NSRegularExpression.Options = []) -> NSRegularExpression {
-        // Patterns are compile-time constants; a failure here is a programming error.
-        try! NSRegularExpression(pattern: pattern, options: options)
-    }
-
     static func highlight(_ textView: NSTextView) {
         highlight(textView, options: AppOptions.shared.values)
     }
 
-    /// Colors from Options › Editor (system colors where none was chosen); off above the size limit.
+    /// Colours from Options › Editor (system colors where none was chosen); off above the size limit.
+    /// Rebuilds the line table of an `SQLTextView` and colours the whole text.
     static func highlight(_ textView: NSTextView, options: OptionsValues) {
         guard let storage = textView.textStorage else { return }
         let colors = options.syntaxColors
@@ -248,26 +268,34 @@ enum SQLHighlighter {
         let common = NSColor(hex: colors.common) ?? .labelColor
         textView.backgroundColor = NSColor(hex: colors.background) ?? .textBackgroundColor
         textView.insertionPointColor = common
+        let highlighter = (textView as? SQLTextView)?.highlighter ?? SQLIncrementalHighlighter()
+        highlighter.reset(storage.string as NSString)
         let full = NSRange(location: 0, length: storage.length)
         storage.beginEditing()
-        storage.setAttributes([.font: font, .foregroundColor: common], range: full)
-        let limit = max(options.disableHighlightAboveMB, 1) * 1_000_000
-        if options.useSyntaxHighlighting, storage.length * 2 <= limit {
-            let rules: [(NSRegularExpression, NSColor)] = [
-                (keywordRule, NSColor(hex: colors.keyword) ?? .systemPink),
-                (numberRule, NSColor(hex: colors.number) ?? .systemBlue),
-                (stringRule, NSColor(hex: colors.string) ?? .systemRed),
-                (commentRule, NSColor(hex: colors.comment) ?? .secondaryLabelColor),
-            ]
-            // Later rules win, so strings and comments override keywords inside them.
-            for (regex, color) in rules {
-                regex.enumerateMatches(in: storage.string, range: full) { match, _, _ in
-                    if let range = match?.range { storage.addAttribute(.foregroundColor, value: color, range: range) }
-                }
-            }
-        }
+        storage.addAttribute(.font, value: font, range: full)
+        colour(storage, range: full, highlighter: highlighter, options: options)
         storage.endEditing()
-        textView.typingAttributes = [.font: font, .foregroundColor: common]
+        textView.typingAttributes[.font] = font
+        textView.typingAttributes[.foregroundColor] = common
+    }
+
+    /// Re-colours the whole lines in `range` from the highlighter's tokens.
+    static func colour(_ storage: NSTextStorage, range: NSRange, highlighter: SQLIncrementalHighlighter, options: OptionsValues) {
+        let range = NSIntersectionRange(range, NSRange(location: 0, length: storage.length))
+        let colors = options.syntaxColors
+        let common = NSColor(hex: colors.common) ?? .labelColor
+        storage.addAttribute(.foregroundColor, value: common, range: range)
+        let limit = max(options.disableHighlightAboveMB, 1) * 1_000_000
+        guard options.useSyntaxHighlighting, storage.length * 2 <= limit, range.length > 0 else { return }
+        let palette: [SQLTokenKind: NSColor] = [
+            .keyword: NSColor(hex: colors.keyword) ?? .systemPink,
+            .number: NSColor(hex: colors.number) ?? .systemBlue,
+            .string: NSColor(hex: colors.string) ?? .systemRed,
+            .comment: NSColor(hex: colors.comment) ?? .secondaryLabelColor,
+        ]
+        for token in highlighter.tokens(in: range, of: storage.string as NSString) {
+            storage.addAttribute(.foregroundColor, value: palette[token.kind]!, range: token.range)
+        }
     }
 }
 
@@ -342,7 +370,11 @@ final class LineNumberRuler: NSRulerView {
         let characterRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
         // Line number of the first visible character.
         var line = 1
-        string.enumerateSubstrings(in: NSRange(location: 0, length: characterRange.location), options: [.byLines, .substringNotRequired]) { _, _, _, _ in line += 1 }
+        if let highlighter = (textView as? SQLTextView)?.highlighter, highlighter.length == string.length {
+            line = highlighter.line(containing: characterRange.location) + 1
+        } else {
+            string.enumerateSubstrings(in: NSRange(location: 0, length: characterRange.location), options: [.byLines, .substringNotRequired]) { _, _, _, _ in line += 1 }
+        }
         let inset = textView.textContainerInset.height
         let offset = convert(NSPoint.zero, from: textView).y
         var index = characterRange.location
@@ -378,10 +410,15 @@ enum BraceHighlighter {
         0x28: (0x29, true), 0x29: (0x28, false), 0x5B: (0x5D, true), 0x5D: (0x5B, false), 0x7B: (0x7D, true), 0x7D: (0x7B, false),
     ]
 
+    /// The two brackets marked last, so moving the cursor clears just those (not the whole text).
+    private static var marked: [ObjectIdentifier: [NSRange]] = [:]
+
     static func update(_ textView: NSTextView) {
         guard let layoutManager = textView.layoutManager else { return }
         let string = textView.string as NSString
-        layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: NSRange(location: 0, length: string.length))
+        for range in marked.removeValue(forKey: ObjectIdentifier(textView)) ?? [] where NSMaxRange(range) <= string.length {
+            layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
+        }
         let cursor = textView.selectedRange()
         guard cursor.length == 0 else { return }
         for position in [cursor.location - 1, cursor.location] where position >= 0 && position < string.length {
@@ -390,6 +427,7 @@ enum BraceHighlighter {
             let color = NSColor.systemYellow.withAlphaComponent(0.35)
             layoutManager.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: NSRange(location: position, length: 1))
             layoutManager.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: NSRange(location: match, length: 1))
+            marked[ObjectIdentifier(textView)] = [NSRange(location: position, length: 1), NSRange(location: match, length: 1)]
             return
         }
     }

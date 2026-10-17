@@ -143,6 +143,7 @@ final class TableTabModel: Identifiable {
     }
 
     @ObservationIgnored private var loadTask: Task<Void, Never>?
+    @ObservationIgnored private var countTask: Task<Void, Never>?
 
     /// Reload that the footer's stop button can interrupt.
     func requestReload() {
@@ -209,26 +210,41 @@ final class TableTabModel: Identifiable {
             table: object.name, schema: object.schema, offset: offset, limit: pageSize,
             orderBy: orderBy.map { [$0] } ?? [], filter: filter
         )
+        countTask?.cancel()
         do {
-            async let pageResult = driver.fetchPage(
+            // The page first: a COUNT(*) over a large table can take seconds and would hold the
+            // driver (an actor) before the rows. The total arrives later, in the background.
+            let started = PerfTrace.now()
+            let loaded = try await driver.fetchPage(
                 table: object.name, schema: object.schema, offset: offset, limit: pageSize,
                 orderBy: orderBy.map { [$0] } ?? [], filter: filter
             )
-            async let count = driver.countRows(table: object.name, schema: object.schema, filter: filter)
-            let loaded = try await pageResult
-            let total = try? await count
+            PerfTrace.record("table.fetchPage", milliseconds: PerfTrace.milliseconds(since: started), detail: "\(loaded.rows.count) rows")
             guard !Task.isCancelled else { return }
+            if columns.isEmpty {
+                // Before the page, so the grid builds its typed headers once.
+                columns = (try? await driver.listColumns(table: object.name, schema: object.schema)) ?? []
+            }
             page = loaded
-            totalRows = total
             lastRefresh = Date()
             record(lastSQL)
+            // A short page is the whole result: no need to count.
+            if offset == 0 && !loaded.hasMore {
+                totalRows = loaded.rows.count
+            } else {
+                let driver = driver, object = object
+                countTask = Task { [weak self] in
+                    let total = try? await driver.countRows(table: object.name, schema: object.schema, filter: filter)
+                    guard !Task.isCancelled else { return }
+                    self?.totalRows = total
+                }
+            }
         } catch {
             self.error = error.localizedDescription
             record(lastSQL, error: error.localizedDescription)
         }
         clearPendingChanges()
-        if columns.isEmpty {
-            columns = (try? await driver.listColumns(table: object.name, schema: object.schema)) ?? []
+        if indexes.isEmpty {
             indexes = (try? await driver.listIndexes(table: object.name, schema: object.schema)) ?? []
         }
     }

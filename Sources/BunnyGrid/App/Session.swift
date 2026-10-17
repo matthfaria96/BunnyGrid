@@ -142,6 +142,8 @@ final class Session: Identifiable {
     }
 
     func connect() async {
+        let started = PerfTrace.now()
+        defer { PerfTrace.record("session.connect", milliseconds: PerfTrace.milliseconds(since: started), detail: config.kind.rawValue) }
         state = .connecting
         if !config.kind.isFileBased {
             // Keychain reads can block on an access prompt; keep them off the main thread.
@@ -263,6 +265,8 @@ final class DatabaseContext: Identifiable {
     var defaultSchema: String? { usesSchemas ? "public" : nil }
 
     func open() async {
+        let started = PerfTrace.now()
+        defer { PerfTrace.record("context.open", milliseconds: PerfTrace.milliseconds(since: started), detail: "\(objectsBySchema.values.reduce(0) { $0 + $1.count }) objects") }
         state = .opening
         do {
             if ownsDriver {
@@ -418,7 +422,7 @@ enum WorkspaceTab: Identifiable {
         switch self {
         case .table(let model): model.hasChanges || model.isInTransaction
         // A new query counts as unsaved when Options › General asks to save new queries before closing.
-        case .query(let model): model.isDirty && (model.savedQueryID != nil || (AppOptions.shared.values.askToSaveNewQueries && !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+        case .query(let model): model.isDirty && (model.savedQueryID != nil || (AppOptions.shared.values.askToSaveNewQueries && !model.isBlank))
         case .design(let model): model.hasChanges
         case .model: false
         }

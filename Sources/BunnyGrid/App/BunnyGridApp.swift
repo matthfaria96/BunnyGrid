@@ -156,6 +156,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Needed when launched as a bare SwiftPM executable (`swift run`) rather than a bundled .app.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        #if DEBUG || BUNNYGRID_BENCH
+        Benchmarks.start()
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

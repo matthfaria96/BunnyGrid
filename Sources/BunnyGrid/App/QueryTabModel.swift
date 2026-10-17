@@ -74,8 +74,21 @@ final class QueryTabModel: Identifiable {
     let id = UUID()
     var title: String
     var text: String {
-        didSet { scheduleColumnPrefetch() }
+        didSet {
+            // Views read these flags instead of the text, so they don't re-render (and re-scan a long
+            // script) on every keystroke. Each is only written when it actually changes.
+            let blank = !text.contains { !$0.isWhitespace }
+            if blank != isBlank { isBlank = blank }
+            if text.isEmpty != isEmpty { isEmpty = text.isEmpty }
+            if !isEdited { isEdited = true }
+            scheduleColumnPrefetch()
+        }
     }
+    /// The editor holds only whitespace (or nothing).
+    private(set) var isBlank = true
+    private(set) var isEmpty = true
+    /// Edited since it was opened or last saved.
+    private var isEdited = false
     var selectedText = ""
     private(set) var results: [QueryResult] = []
     var selectedResultID: UUID?
@@ -124,13 +137,14 @@ final class QueryTabModel: Identifiable {
     private(set) var databaseName: String
     /// Set once the query is saved to the navigator's Queries folder.
     private(set) var savedQueryID: UUID?
-    private var savedText: String?
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var prefetchTask: Task<Void, Never>?
 
     init(title: String, text: String, context: DatabaseContext) {
         self.title = title
         self.text = text
+        self.isBlank = !text.contains { !$0.isWhitespace }
+        self.isEmpty = text.isEmpty
         self.context = context
         self.contextDriver = context.driver
         self.location = context.location(schema: context.defaultSchema)
@@ -144,13 +158,14 @@ final class QueryTabModel: Identifiable {
         markSaved(id: saved.id, name: saved.name)
     }
 
+    /// Unsaved: a new query with text, or a saved one edited since (an edit that is undone still counts).
     var isDirty: Bool {
-        savedQueryID == nil ? !text.isEmpty : text != savedText
+        savedQueryID == nil ? !isEmpty : isEdited
     }
 
     func markSaved(id: UUID, name: String) {
         savedQueryID = id
-        savedText = text
+        isEdited = false
         title = name
     }
 
@@ -399,10 +414,21 @@ final class QueryTabModel: Identifiable {
         let string = textView.string as NSString
         let location = min(textView.selectedRange().location, string.length)
         cursorOffset = location
-        let before = string.substring(to: location)
-        let lines = before.components(separatedBy: "\n")
-        cursorLine = lines.count
-        cursorColumn = (lines.last?.count ?? 0) + 1
+        let line: Int, lineStart: Int
+        if let highlighter = (textView as? SQLTextView)?.highlighter, highlighter.length == string.length {
+            // The editor's line table: a binary search instead of splitting everything before the cursor.
+            let index = highlighter.line(containing: location)
+            line = index + 1
+            lineStart = highlighter.lineStarts[index]
+        } else {
+            lineStart = string.lineRange(for: NSRange(location: location, length: 0)).location
+            var count = 1
+            string.enumerateSubstrings(in: NSRange(location: 0, length: lineStart), options: [.byLines, .substringNotRequired]) { _, _, _, _ in count += 1 }
+            line = count
+        }
+        let column = string.substring(with: NSRange(location: lineStart, length: location - lineStart)).count + 1
+        if line != cursorLine { cursorLine = line }
+        if column != cursorColumn { cursorColumn = column }
     }
 
     // MARK: - Editing from the AI

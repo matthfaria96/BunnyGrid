@@ -182,7 +182,7 @@ struct AskAIButton: View {
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .fixedSize()
-        .disabled(query.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .disabled(query.isBlank)
         .help("Ask AI")
         .sheet(isPresented: $showingConvert) {
             ConvertSQLSheet(query: query)
