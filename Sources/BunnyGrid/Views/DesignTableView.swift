@@ -439,7 +439,7 @@ struct DesignTableView: View {
                 GridRow {
                     Text("Auto Increment:")
                     HStack {
-                        Toggle("AUTOINCREMENT", isOn: $model.sqliteOptions.autoincrement)
+                        Toggle("AUTOINCREMENT", isOn: $model.sqliteOptions.autoincrement).fixedSize()
                             .toggleStyle(.checkbox)
                             .disabled(model.sqliteOptions.withoutRowID)
                             .help("Only applies to a single INTEGER primary key of a rowid table")

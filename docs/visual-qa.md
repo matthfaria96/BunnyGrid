@@ -60,8 +60,23 @@ Status: **ok** (sem regressão), **fixed** (corrigido nesta rodada), **pending**
 | MongoDB grid / tree / shell | — | mongo-grid-*, mongo-tree-*, mongo-shell-* | fixed | "Documents 1–50 of 50" quebrava em duas linhas no rodapé da coleção. |
 | Redis chave / console / server monitor | — | redis-key-*, redis-console-*, redis-server-* | pending | O resumo da chave aparece duas vezes (rodapé da aba e status bar). Placeholder do filtro SCAN cortado. |
 
-## Pendências estruturais (outros agentes)
+## Rodada 2 (pendências resolvidas; base dev/parallel 1a3e169)
 
-- **Split view**: `MainSplitView` usa `sizingOptions = []`, então o conteúdo SwiftUI com largura mínima maior que o painel transborda centralizado (cortado dos dois lados) em vez de empurrar o painel direito. Reduzi os minWidth que causavam isso, mas o ideal é o split respeitar o mínimo do conteúdo.
-- Grade: a fonte das células parece ~1 pt maior que a do Navicat (13 vs 12).
-- Contagens com separador de milhar do locale ("1.000 records", "Rows 1.200") e sem ele ("Record 1 of 1000") lado a lado.
+Capturas `r2-*`, `r3-*`, `r4-*`, `r5-*` (claro e escuro).
+
+| Item | Captura | Status | Notas |
+|---|---|---|---|
+| Split view / BI | r2-bi-*, r3-bi-* | fixed | O host do workspace passa a usar `sizingOptions = [.minSize]`: um tab que precisa de mais largura estreita os painéis laterais (até o mínimo deles) em vez de transbordar. Padrões 240 / flexível / 300 e a animação nativa de recolher mantidos. O dashboard do BI, abaixo do mínimo de 480 pt da grade, rola na horizontal em vez de cortar o cartão KPI. |
+| Query Builder — WHERE | r2-qb-* | fixed | Cada condição (campo, operador, valores, botões) usa o mesmo layout de fluxo das fichas e quebra linha em painéis estreitos. |
+| Design Table — painel direito | r2-design-*, r5-design-options-* | fixed | O painel Info mostra o cartão da tabela em edição (Root Page, Has Indexes…), como no Navicat, qualquer que seja a seleção do navegador. Options: "AUTOINCREMENT" não quebra mais em duas linhas. |
+| Data Generation | r2-generate-* | fixed | Cada linha sorteia uma pessoa: First Name, Last Name, Full Name e Email da mesma linha batem (ex.: "Samuel Almeida" / samuel.almeida1@…). Teste novo em `GeneratorIndexTests`. |
+| Fonte da grade | r2-table-*, r2-pg-table-* | fixed | 12 pt (era 13), altura da linha mantida em 22 pt como na referência. |
+| Formato de números | r2-table-*, r4-result-edits-* | fixed | Um só formatador (`countText`, `Components/CountText.swift`): inteiro sem separador, como o Navicat ("Record 1 of 1000", "1000 records", "Rows 1200", "First 1000 rows"). Datas, durações e porcentagens continuam no formato do locale. |
+| Aba AI do painel direito | r2-aipane-* | fixed | Marca "AI" monocromática como as outras abas, azul quando selecionada (o logo colorido do provedor não mudava de cor). |
+| Cabeçalhos das folhas | r2-backup-*, r2-export-*, r2-import-*, r2-generate-*, r2-datatransfer-*, r2-structuresync-* | fixed | `SheetHeader` compartilhado: símbolo teal, título em headline, linha de local em caption e divisor logo abaixo. |
+| Plurais "(s)" | — | fixed | Logs do Sync/Data Transfer, diálogos de exclusão (Redis, MongoDB), BI ("1 group"), Structure Sync, chave estrangeira e mensagens do console Redis. Helper `countLabel`. |
+| Redis | r2-redis-key-* | fixed | O resumo da chave fica só na status bar; o rodapé da aba aparece apenas com erro ou Load More. Placeholder "Key pattern" (o exemplo foi para o tooltip). |
+| New Connection | r2-newconn-*, r4-newconn-* | fixed | Linhas dos filtros com 22 pt, como no Navicat. |
+| Amostras de cor no menu da conexão | — | pending | O tamanho da célula vem do estilo `.palette` do menu do sistema; o SwiftUI não deixa reduzir. Exigiria um menu AppKit próprio. |
+| Novas telas (1a3e169) | r4-result-edits-*, r4-result-form-*, r4-result-profiling-*, r4-design-uniques-*, r4-editconn-db-* | ok / pending | Edição no resultado, Form View, Data Profiling e Uniques ok. Edit Connection: o conteúdo da folha fica ~10 pt mais largo que os 900 pt e "Connection Profiles" encosta na borda esquerda (pendente). |
+| Settings › Environment | — | — | Fica de fora (não se aplica ao BunnyGrid). |

@@ -19,7 +19,7 @@ struct DataProfilingView: View {
                 VStack(alignment: .leading) {
                     Text("Data Profiling").font(.headline)
                     Text(model.isQueryResult
-                         ? "\(model.page?.rows.count.formatted() ?? "0") rows of the query result \(model.location)"
+                         ? "\(model.page?.rows.count.countText ?? "0") rows of the query result \(model.location)"
                          : "\(model.object.qualifiedName) \(model.location)")
                         .font(.caption).foregroundStyle(.secondary)
                 }

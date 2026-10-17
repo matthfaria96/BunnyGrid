@@ -118,9 +118,9 @@ struct ConnectionEditorView: View {
                     .foregroundStyle(.tertiary)
                     .help("More connection profiles aren't supported yet")
             }
-            .padding(.trailing, 12)
-                .padding(.top, 44)
-                .padding(.horizontal, 16)
+            .lineLimit(1)
+            .padding(.top, 44)
+            .padding(.horizontal, 14)
             HStack(spacing: 6) {
                 Text("Main Profile").font(.system(size: 13))
                 Text("(Active)").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -132,6 +132,9 @@ struct ConnectionEditorView: View {
             .padding(.horizontal, 10)
             Spacer()
         }
+        // Never wider than the sidebar (it was overflowing and clipping "Connection Profiles" on the left).
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
         .background(VisualEffectBackground(material: .sidebar, blending: .behindWindow))
     }
 
