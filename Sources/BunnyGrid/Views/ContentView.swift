@@ -10,11 +10,15 @@ struct ContentView: View {
     var body: some View {
         @Bindable var app = app
         VStack(spacing: 0) {
-            MainToolbar()
+            // The chrome and the status bar change on every tab switch; in their own hosts that no longer
+            // re-lays out the window's root host (and with it the split view).
+            IsolatedHost { MainToolbar() }
             Divider()
             MainSplitView()
             Divider()
-            StatusBar()
+            // Its own NSHostingView at a fixed height: a tab switch changes its text, and inside the
+            // window's root host that re-laid out the whole window.
+            IsolatedHost(height: 24) { StatusBar() }
         }
         // The chrome draws its own title row beside the traffic lights.
         .ignoresSafeArea(.container, edges: .top)
@@ -237,16 +241,81 @@ struct StatusBar: View {
     }
 }
 
+/// Hosts `content` in a separate NSHostingView of a fixed height, so its updates re-lay out only that host
+/// instead of the enclosing SwiftUI hierarchy (the window root).
+struct IsolatedHost<Content: View>: NSViewRepresentable {
+    @Environment(AppModel.self) private var app
+    /// nil: the content's own height, measured once (the toolbar's height doesn't change).
+    var height: CGFloat?
+    @ViewBuilder let content: () -> Content
+
+    final class Coordinator { var measured: CGFloat? }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSHostingView<AnyView> {
+        let host = NSHostingView(rootView: AnyView(content().environment(app)))
+        if height == nil {
+            // Measure once with intrinsic sizing on, then let the representable own the size.
+            host.sizingOptions = [.intrinsicContentSize]
+            context.coordinator.measured = host.fittingSize.height
+        }
+        host.sizingOptions = []
+        host.safeAreaRegions = []
+        return host
+    }
+
+    // The content reads the model itself; nothing to push from here.
+    func updateNSView(_ host: NSHostingView<AnyView>, context: Context) {}
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSHostingView<AnyView>, context: Context) -> CGSize? {
+        if let height { return CGSize(width: proposal.width ?? 0, height: height) }
+        return CGSize(width: proposal.width ?? 0, height: context.coordinator.measured ?? 0)
+    }
+}
+
 /// Keeps the NSWindow's title at `AppModel.windowTitle`; only this view depends on it.
 private struct WindowTitleSetter: NSViewRepresentable {
     @Environment(AppModel.self) private var app
 
-    func makeNSView(context: Context) -> NSView { NSView() }
+    func makeNSView(context: Context) -> TitleView { TitleView() }
 
-    func updateNSView(_ view: NSView, context: Context) {
-        let title = app.windowTitle
-        DispatchQueue.main.async {
-            if let window = view.window, window.title != title { window.title = title }
+    func updateNSView(_ view: TitleView, context: Context) {
+        view.schedule(app.windowTitle)
+    }
+
+    /// The title bar is hidden (the chrome draws the title), so the NSWindow title only feeds the Window menu,
+    /// Mission Control and accessibility. Setting it re-tiles the title bar and walks the whole view tree
+    /// (~2 ms), so it is applied once tab switching pauses, never inside the switch's frame.
+    final class TitleView: NSView {
+        private var pending: String?
+        private var timer: Timer?
+
+        func schedule(_ title: String) {
+            pending = title
+            // The first title (window just opened or restored) goes in right away.
+            if didSetOnce { restartTimer() } else { apply() }
+        }
+
+        private var didSetOnce = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if pending != nil, !didSetOnce { apply() }
+        }
+
+        private func restartTimer() {
+            timer?.invalidate()
+            timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.apply() }
+            }
+        }
+
+        private func apply() {
+            timer?.invalidate()
+            timer = nil
+            guard let window, let pending else { return }
+            didSetOnce = true
+            if window.title != pending { window.title = pending }
         }
     }
 }

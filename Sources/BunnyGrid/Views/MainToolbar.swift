@@ -6,11 +6,11 @@ import SwiftUI
 /// a title row beside the traffic lights, then the icon toolbar with View and the account on the right.
 struct MainToolbar: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
-            WindowTitleRow()
+            // In its own host: the title changes on every tab switch.
+            IsolatedHost(height: 28) { WindowTitleRow() }
 
             HStack(alignment: .top, spacing: 1) {
                 Menu {

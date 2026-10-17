@@ -308,9 +308,17 @@ struct ResultGridView: NSViewRepresentable {
             return IndexSet(integersIn: max(first - 1, 0)...min(last + 1, tableView.numberOfColumns - 1))
         }
 
+        /// Same answer as `columnsToLoad(tableView).contains(position)`, asked once per cell: three column
+        /// rects instead of `columnIndexes(in:)`, which walks every column (and checks RTL) on each call.
         func makesCell(_ tableView: NSTableView, position: Int) -> Bool {
-            guard let wanted = columnsToLoad(tableView) else { return true }
-            return wanted.contains(position) || backfillColumns.contains(position)
+            let visible = tableView.visibleRect
+            let count = tableView.numberOfColumns
+            guard !visible.isEmpty, count > 0 else { return true }
+            if backfillColumns.contains(position) { return true }
+            for neighbor in position - 1...position + 1 where neighbor >= 0 && neighbor < count {
+                if tableView.rect(ofColumn: neighbor).intersects(visible) { return true }
+            }
+            return false
         }
 
         private func reloadCells(_ tableView: NSTableView, columns: IndexSet) {
