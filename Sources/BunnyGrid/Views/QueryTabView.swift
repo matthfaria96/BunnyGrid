@@ -261,7 +261,7 @@ private struct QueryResultPanel: View {
                     tab("Message", .message)
                     tab("Summary", .summary)
                     ForEach(Array(model.resultSets.enumerated()), id: \.element.id) { index, result in
-                        tab(model.plan(for: result) != nil ? "Explain" : "Result \(index + 1)", .result(result.id))
+                        tab((model.pinnedResultIDs.contains(result.id) ? "📌 " : "") + (model.plan(for: result) != nil ? "Explain" : "Result \(index + 1)"), .result(result.id))
                             .help(result.statement)
                     }
                 }

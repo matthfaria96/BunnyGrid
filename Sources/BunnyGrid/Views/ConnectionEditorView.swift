@@ -101,9 +101,16 @@ struct ConnectionEditorView: View {
 
     private var profiles: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Connection Profiles")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HStack {
+                Text("Connection Profiles")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Image(systemName: "plus.circle")
+                    .foregroundStyle(.tertiary)
+                    .help("More connection profiles aren't supported yet")
+            }
+            .padding(.trailing, 12)
                 .padding(.top, 44)
                 .padding(.horizontal, 16)
             HStack(spacing: 6) {

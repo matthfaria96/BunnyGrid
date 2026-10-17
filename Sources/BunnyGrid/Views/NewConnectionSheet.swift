@@ -326,7 +326,7 @@ struct NewConnectionSheet: View {
     @State private var search = ""
     @State private var familyFilter: Set<ConnectionFamily> = []
     @State private var vendorFilter: Set<ConnectionVendor> = []
-    @AppStorage("newConnectionListMode") private var listMode = false
+    @AppStorage("newConnectionListMode") private var listMode = true
     @State private var selection: ConnectionType?
     @State private var expandedGroups: Set<String> = []
     @State private var details: (draft: ConnectionDraft, type: ConnectionType?)?
