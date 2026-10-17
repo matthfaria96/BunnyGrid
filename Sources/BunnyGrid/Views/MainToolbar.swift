@@ -142,6 +142,7 @@ struct MainToolbar: View {
         case .table(let model): model.object.kind == .view ? .views : .tables
         case .design: .tables
         case .query: .queries
+        case .document(let tab) where tab is CollectionTabModel: .tables
         default: nil
         }
     }

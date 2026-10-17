@@ -32,9 +32,10 @@ final class RedisTabModel: Identifiable {
 
     var title: String {
         switch content {
-        case .key(let model): "\(model.key) @\(connectionName).db\(model.database) (Redis)"
-        case .console(let model): "Console @\(connectionName).db\(model.database) (Redis)"
-        case .server: "Server Monitor @\(connectionName) (Redis)"
+        // "user:1@db0 (My Redis)", like every other tab.
+        case .key(let model): "\(model.key)@db\(model.database) (\(connectionName))"
+        case .console(let model): "Console@db\(model.database) (\(connectionName))"
+        case .server: "Server Monitor (\(connectionName))"
         }
     }
 

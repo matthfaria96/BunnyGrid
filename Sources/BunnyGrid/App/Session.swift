@@ -39,7 +39,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
         case .backups: "Backup"
         case .indexes: "Index"
         case .triggers: "Trigger"
-        case .gridFS: "Bucket"
+        case .gridFS: "GridFS"
         }
     }
 

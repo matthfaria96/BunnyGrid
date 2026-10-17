@@ -30,9 +30,13 @@ struct ObjectsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-            Divider()
+            // Redis has no object toolbar: its tools (Key, Console, Server Monitor) are in the main toolbar.
+            if app.currentSession?.config.kind != .redis {
+                toolbar
+                Divider()
+            }
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

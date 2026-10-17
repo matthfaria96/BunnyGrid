@@ -351,7 +351,8 @@ public actor MongoDriver: DocumentDatabaseDriver {
     /// Collections and views, GridFS buckets (`DocumentCatalog.gridFSSchema`) and indexes (`DocumentCatalog.indexSchemaPrefix`).
     public func listObjects(schema: String?) async throws -> [DatabaseObject] {
         let database = schema ?? defaultDatabase
-        let collections = try await listCollections(database: database)
+        // system.views, system.profile…: hidden, as Navicat does unless "Show system items" is on.
+        let collections = try await listCollections(database: database).filter { !$0.name.hasPrefix("system.") }
         var objects = collections.map { DatabaseObject(schema: nil, name: $0.name, kind: $0.kind == .view ? .view : .table) }
         let plain = collections.filter { $0.kind != .view }.map(\.name)
         objects += DocumentCatalog.gridFSBuckets(in: plain).map { DatabaseObject(schema: DocumentCatalog.gridFSSchema, name: $0, kind: .table) }

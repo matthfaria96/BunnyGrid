@@ -266,7 +266,11 @@ private struct DatabaseInfo: View {
             if let context, context.usesSchemas {
                 InfoField(label: "Schemas", value: String(context.schemas.count))
             }
-            if let objects = context?.objects(in: context?.defaultSchema) {
+            if let context, context.kind.isDocumentStore, let objects = context.objects(in: context.defaultSchema) {
+                // MongoDB: collections and views, not the GridFS / index entries the navigator also lists.
+                InfoField(label: "Collections", value: String(context.documentObjects(objects, category: .tables)?.count ?? 0))
+                InfoField(label: "Views", value: String(context.documentObjects(objects, category: .views)?.count ?? 0))
+            } else if let objects = context?.objects(in: context?.defaultSchema) {
                 InfoField(label: "Tables", value: String(objects.filter { $0.kind == .table }.count))
                 InfoField(label: "Views", value: String(objects.filter { $0.kind == .view || $0.kind == .materializedView }.count))
             }

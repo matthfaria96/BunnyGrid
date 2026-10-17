@@ -12,19 +12,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             MainToolbar()
             Divider()
-            HSplitView {
-                if app.showNavigator {
-                    NavigatorView()
-                        .frame(minWidth: 200, idealWidth: 240, maxWidth: 480)
-                }
-                WorkspaceView()
-                    .frame(minWidth: 360, idealWidth: 2000, maxWidth: .infinity)
-                    .layoutPriority(1)
-                if app.showAssistant {
-                    RightPane()
-                        .frame(minWidth: app.assistant.isExpanded ? 560 : 345, idealWidth: app.assistant.isExpanded ? 560 : 345, maxWidth: app.assistant.isExpanded ? 900 : 600)
-                }
-            }
+            MainSplitView()
             Divider()
             StatusBar()
         }
@@ -142,7 +130,8 @@ struct StatusBar: View {
                 ? app.listedItemCount
                 : context.objects(in: schema, category: app.objectCategory)?.count ?? 0
             // Navicat: "2 tables".
-            return place.isEmpty ? "" : plural(count, app.objectCategory.noun).lowercased()
+            let noun = context.kind.isDocumentStore && app.objectCategory == .tables ? "Collection" : app.objectCategory.noun
+            return place.isEmpty ? "" : plural(count, noun).lowercased()
         default:
             return app.connections.isEmpty ? "" : "\(plural(app.connections.count, "Connection")) in My Connections"
         }

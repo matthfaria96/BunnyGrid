@@ -37,7 +37,7 @@ final class MongoShellTabModel: DocumentTab {
         connectionID = context.session?.id
     }
 
-    var title: String { "\(name) @\(database) (MongoDB)" }
+    var title: String { "\(name)@\(database) (\(context?.session?.config.displayName ?? "MongoDB"))" }
     var kindName: String { "Query" }
     nonisolated var systemImage: String { "query" }
     var hasUnsavedChanges: Bool { false }
