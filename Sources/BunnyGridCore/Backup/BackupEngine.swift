@@ -61,7 +61,7 @@ public enum BackupEngine {
                               progress: @Sendable (String) async -> Void = { _ in }) async throws -> BackupEntry {
         let listSchema: String? = switch connection.kind {
         case .postgresql: schema ?? "public"
-        case .mysql, .mariadb: schema ?? database
+        case .mysql, .mariadb, .mongodb: schema ?? database
         case .sqlite: nil
         }
         let manifestSchema = connection.kind == .postgresql ? listSchema : nil

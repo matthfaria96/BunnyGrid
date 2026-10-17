@@ -29,7 +29,7 @@ import Testing
     }
 
     @Test func rejectsUnknownAndMalformed() {
-        #expect(throws: ConnectionURI.ParseError.unsupportedScheme("mongodb")) { try ConnectionURI.parse("mongodb://h/db") }
+        #expect(throws: ConnectionURI.ParseError.unsupportedScheme("oracle")) { try ConnectionURI.parse("oracle://h/db") }
         #expect(throws: ConnectionURI.ParseError.invalid) { try ConnectionURI.parse("not a uri") }
         #expect(throws: ConnectionURI.ParseError.invalid) { try ConnectionURI.parse("postgresql://") }
     }

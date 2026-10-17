@@ -169,6 +169,7 @@ enum ConnectionCatalog {
         case .postgresql: .postgresql
         case .mariadb: .mariadb
         case .sqlite: .sqlite
+        case .mongodb: .mongodb
         default: nil
         }
         return ConnectionType(id: id, name: name, family: family, vendor: vendor, driver: driver ?? defaultDriver,
@@ -177,7 +178,7 @@ enum ConnectionCatalog {
 
     static let engines: [ConnectionType] = [
         engine(.mysql, .mysql), engine(.postgresql, .postgresql), engine(.sqlserver, nil), engine(.oracle, nil),
-        engine(.sqlite, .sqlite), engine(.mariadb, .mariadb), engine(.mongodb, nil), engine(.redis, nil), engine(.snowflake, nil),
+        engine(.sqlite, .sqlite), engine(.mariadb, .mariadb), engine(.mongodb, .mongodb), engine(.redis, nil), engine(.snowflake, nil),
     ]
 
     /// Same order as Navicat's grid.
@@ -652,6 +653,7 @@ struct NewConnectionSheet: View {
         var config = ConnectionConfig(kind: driver, port: type.port ?? driver.defaultPort, tls: type.isEngine ? .prefer : type.tls)
         // Hosted services never live on localhost; leave the host for the user's endpoint.
         if type.vendor != nil || type.listGroup != nil { config.host = "" }
+        if type.id == "mongodb-atlas" { config.mongo = MongoOptions(srv: true); config.tls = .verifyFull }
         if case .group(let group) = app.navSelection { config.group = group }
         withAnimation(.easeInOut(duration: 0.2)) {
             details = (ConnectionDraft(config: config, password: "", isNew: true), type)

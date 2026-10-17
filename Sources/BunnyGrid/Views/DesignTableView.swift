@@ -433,6 +433,8 @@ struct DesignTableView: View {
                     Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
                     Toggle("WITHOUT ROWID", isOn: $model.sqliteOptions.withoutRowID).toggleStyle(.checkbox)
                 }
+            case .mongodb:
+                EmptyView()
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -631,7 +633,7 @@ private struct FieldProperties: View {
         switch model.kind {
         case .sqlite: ["Collate", "Not Null ON CONFLICT", "Generated Type", "Generated Value"]
         case .postgresql: ["Comment", "Collation"]
-        case .mysql, .mariadb: ["Comment", "Character Set", "Collation"]
+        case .mysql, .mariadb, .mongodb: ["Comment", "Character Set", "Collation"]
         }
     }
 

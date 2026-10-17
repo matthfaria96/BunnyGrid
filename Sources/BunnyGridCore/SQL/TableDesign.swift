@@ -75,7 +75,7 @@ extension SQLDialect {
         case .postgresql:
             ["int4", "int8", "int2", "serial", "bigserial", "numeric(10,2)", "float8", "bool", "varchar(255)", "text",
              "date", "timestamp(6)", "timestamptz(6)", "uuid", "jsonb", "bytea"]
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             ["int", "bigint", "smallint", "tinyint(1)", "decimal(10,2)", "double", "varchar(255)", "text", "longtext",
              "date", "datetime", "timestamp", "json", "blob"]
         case .sqlite:
@@ -139,7 +139,7 @@ extension SQLDialect {
 
     public func dropIndex(named name: String, table: String, schema: String?) -> String {
         switch kind {
-        case .mysql, .mariadb: "DROP INDEX \(quoteIdentifier(name)) ON \(qualifiedName(table: table, schema: schema))"
+        case .mysql, .mariadb, .mongodb: "DROP INDEX \(quoteIdentifier(name)) ON \(qualifiedName(table: table, schema: schema))"
         case .postgresql: "DROP INDEX \(qualifiedName(table: name, schema: schema))"
         case .sqlite: "DROP INDEX \(quoteIdentifier(name))"
         }
@@ -205,7 +205,7 @@ extension SQLDialect {
                         ? "ALTER TABLE \(table) ALTER COLUMN \(target) DROP DEFAULT"
                         : "ALTER TABLE \(table) ALTER COLUMN \(target) SET DEFAULT \(newDefault)")
                 }
-            case .mysql, .mariadb:
+            case .mysql, .mariadb, .mongodb:
                 statements.append("ALTER TABLE \(table) MODIFY COLUMN \(columnDefinition(column))")
             case .sqlite:
                 throw TableDesignError.unsupported("SQLite can't change the type, NOT NULL or default of “\(column.name)”. Recreate the table to change it.")

@@ -205,7 +205,7 @@ public struct StructureComparison: Sendable {
             for index in diff.indexesToCreate { alters.append(try d.createIndex(index, table: name, schema: schema)) }
             for key in diff.keysToAdd { keys.append(try d.addForeignKey(key, table: name, schema: schema)) }
 
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             for key in diff.keysToDrop where !key.name.isEmpty { keyDrops.append(try d.dropForeignKey(named: key.name, table: name, schema: schema)) }
             for index in diff.indexesToDrop { alters.append(d.dropIndex(named: index.name, table: name, schema: schema)) }
             func definition(_ column: ColumnDesign) -> String {

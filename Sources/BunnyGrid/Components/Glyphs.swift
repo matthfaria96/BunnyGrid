@@ -116,6 +116,7 @@ extension DatabaseKind {
         case .mysql: "engine-mysql"
         case .mariadb: "engine-mariadb"
         case .sqlite: "engine-sqlite"
+        case .mongodb: "engine-mongodb"
         }
     }
 }
