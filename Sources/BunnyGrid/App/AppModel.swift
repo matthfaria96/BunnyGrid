@@ -78,9 +78,21 @@ final class AppModel {
     var navigatorFilter = ""
 
     // Workspace
-    private(set) var tabs: [WorkspaceTab] = []
+    private(set) var tabs: [WorkspaceTab] = [] {
+        didSet { updateSelectedTabKind() }
+    }
     /// nil selects the fixed "Objects" tab.
-    var selectedTabID: UUID?
+    var selectedTabID: UUID? {
+        didSet { updateSelectedTabKind() }
+    }
+    /// The kind of the selected tab, stored and only written when it changes: views that only care which kind of
+    /// tab is open (the right pane's tabs, the status bar's layout) read this and skip switches between tabs of one kind.
+    private(set) var selectedTabKind: WorkspaceTab.Kind?
+
+    private func updateSelectedTabKind() {
+        let kind = selectedTab?.kind
+        if kind != selectedTabKind { selectedTabKind = kind }
+    }
     /// Tab waiting for "discard unsaved changes?" confirmation.
     var tabPendingClose: WorkspaceTab?
     var objectCategory: ObjectCategory = .tables

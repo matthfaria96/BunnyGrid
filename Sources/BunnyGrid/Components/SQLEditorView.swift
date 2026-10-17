@@ -51,6 +51,9 @@ struct SQLEditorView: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.isContinuousSpellCheckingEnabled = false
+        // No Writing Tools in a code editor: with a long script selected (Beautify and its undo end with the whole
+        // text selected) its affordance counted the selected lines on the main thread, ~70 ms.
+        if #available(macOS 15.0, *) { textView.writingToolsBehavior = .none }
         textView.font = SQLHighlighter.font
         textView.textContainerInset = NSSize(width: 4, height: 6)
         textView.drawsBackground = true
@@ -184,7 +187,7 @@ struct SQLEditorView: NSViewRepresentable {
                     now = highlighter.lineRange(for: NSRange(location: dirty.location, length: SQLHighlighter.colourChunk))
                     SQLHighlighter.colourLater(textView, from: NSMaxRange(now), options: options)
                 }
-                SQLHighlighter.colour(storage, range: now, highlighter: highlighter, options: options)
+                SQLHighlighter.colour(storage, range: now, highlighter: highlighter, options: options, appearance: textView.effectiveAppearance)
             }
         }
 
@@ -251,6 +254,24 @@ final class SQLTextView: NSTextView {
         didChangeText()
         setSelectedRange(NSRange(location: 0, length: storage.length))
         scrollRangeToVisible(NSRange(location: 0, length: 0))
+    }
+
+    /// The colours are resolved for one appearance (`SQLHighlighter.resolved`): re-colour on a light/dark switch.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        guard window != nil, let name = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]),
+              name != colouredAppearance else { return }
+        colouredAppearance = name
+        SQLHighlighter.highlight(self)
+    }
+
+    private var colouredAppearance: NSAppearance.Name?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if colouredAppearance == nil {
+            colouredAppearance = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
+        }
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -402,9 +423,15 @@ enum SQLHighlighter {
         guard let storage = textView.textStorage else { return }
         let colors = options.syntaxColors
         let font = options.editorFont?.nsFont ?? defaultFont
-        let common = NSColor(hex: colors.common) ?? .labelColor
+        let appearance = textView.effectiveAppearance
+        let common = resolved(NSColor(hex: colors.common) ?? .labelColor, for: appearance)
         textView.backgroundColor = NSColor(hex: colors.background) ?? .textBackgroundColor
         textView.insertionPointColor = common
+        // Selected text is drawn in the selection's text colour: a fixed one too (a whole selected script drew a
+        // dynamic colour per coloured run).
+        var selected = textView.selectedTextAttributes
+        selected[.foregroundColor] = resolved(.selectedTextColor, for: appearance)
+        textView.selectedTextAttributes = selected
         let highlighter = (textView as? SQLTextView)?.highlighter ?? SQLIncrementalHighlighter()
         highlighter.reset(storage.string as NSString)
         let full = NSRange(location: 0, length: storage.length)
@@ -415,7 +442,7 @@ enum SQLHighlighter {
         // Font and colours go on chunk by chunk (`colour` resets each range first): one attribute over a whole
         // text that already has thousands of colour runs costs seconds.
         storage.beginEditing()
-        colour(storage, range: NSRange(location: 0, length: first), highlighter: highlighter, options: options)
+        colour(storage, range: NSRange(location: 0, length: first), highlighter: highlighter, options: options, appearance: appearance)
         storage.endEditing()
         textView.typingAttributes[.font] = font
         textView.typingAttributes[.foregroundColor] = common
@@ -447,28 +474,41 @@ enum SQLHighlighter {
             }
             let range = highlighter.lineRange(for: NSRange(location: start, length: min(colourChunk, storage.length - start)))
             storage.beginEditing()
-            colour(storage, range: range, highlighter: highlighter, options: options)
+            colour(storage, range: range, highlighter: highlighter, options: options, appearance: textView.effectiveAppearance)
             storage.endEditing()
             textView.colouredUpTo = NSMaxRange(range)
             continueColouring(textView, generation: generation, options: options)
         }
     }
 
+    /// `color` as a fixed colour in `appearance`. The text carries resolved colours, not dynamic system ones:
+    /// drawing resolved a dynamic colour (with its contrast and alpha modifiers) for every coloured run on every
+    /// draw, two thirds of the editor's drawing time. `SQLTextView` re-colours when its appearance changes.
+    static func resolved(_ color: NSColor, for appearance: NSAppearance) -> NSColor {
+        var result = color
+        appearance.performAsCurrentDrawingAppearance {
+            // `cgColor` resolves the dynamic colour (and its modifiers) for the current drawing appearance.
+            result = NSColor(cgColor: color.cgColor) ?? color
+        }
+        return result
+    }
+
     /// Re-colours the whole lines in `range` from the highlighter's tokens.
-    static func colour(_ storage: NSTextStorage, range: NSRange, highlighter: SQLIncrementalHighlighter, options: OptionsValues) {
+    static func colour(_ storage: NSTextStorage, range: NSRange, highlighter: SQLIncrementalHighlighter, options: OptionsValues,
+                       appearance: NSAppearance = NSApp.effectiveAppearance) {
         let range = NSIntersectionRange(range, NSRange(location: 0, length: storage.length))
         let colors = options.syntaxColors
-        let common = NSColor(hex: colors.common) ?? .labelColor
+        let common = resolved(NSColor(hex: colors.common) ?? .labelColor, for: appearance)
         let font = options.editorFont?.nsFont ?? defaultFont
         storage.addAttribute(.font, value: font, range: range)
         storage.addAttribute(.foregroundColor, value: common, range: range)
         let limit = max(options.disableHighlightAboveMB, 1) * 1_000_000
         guard options.useSyntaxHighlighting, storage.length * 2 <= limit, range.length > 0 else { return }
         let palette: [SQLTokenKind: NSColor] = [
-            .keyword: NSColor(hex: colors.keyword) ?? .navicatKeyword,
-            .number: NSColor(hex: colors.number) ?? .systemBlue,
-            .string: NSColor(hex: colors.string) ?? .navicatString,
-            .comment: NSColor(hex: colors.comment) ?? .secondaryLabelColor,
+            .keyword: resolved(NSColor(hex: colors.keyword) ?? .navicatKeyword, for: appearance),
+            .number: resolved(NSColor(hex: colors.number) ?? .systemBlue, for: appearance),
+            .string: resolved(NSColor(hex: colors.string) ?? .navicatString, for: appearance),
+            .comment: resolved(NSColor(hex: colors.comment) ?? .secondaryLabelColor, for: appearance),
         ]
         // Keywords are bold, as in Navicat; everything else uses the plain editor font.
         let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)

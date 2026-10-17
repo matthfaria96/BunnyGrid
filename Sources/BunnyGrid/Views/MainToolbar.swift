@@ -134,6 +134,27 @@ struct MainToolbar: View {
         }
     }
 
+    private func objectButton(_ category: ObjectCategory, _ title: String, _ icon: String) -> some View {
+        ObjectCategoryButton(category: category, title: title, icon: icon)
+    }
+}
+
+/// A toolbar object button. It reads the selected tab itself, so a tab switch updates these few buttons
+/// instead of re-evaluating the whole toolbar.
+private struct ObjectCategoryButton: View {
+    @Environment(AppModel.self) private var app
+    let category: ObjectCategory
+    let title: String
+    let icon: String
+
+    var body: some View {
+        ChromeButton(title: title, isSelected: highlightedCategory == category, help: "Show \(category.rawValue)") {
+            app.showCategory(category)
+        } glyph: {
+            AppIcon(name: icon, size: 32)
+        }
+    }
+
     /// The object type the toolbar highlights: the Objects tab's category, or the kind of the open tab
     /// (a table or design → Table, a view → View, a query → Query); none for other tabs (BI, Automation, …).
     private var highlightedCategory: ObjectCategory? {
@@ -144,14 +165,6 @@ struct MainToolbar: View {
         case .query: .queries
         case .document(let tab) where tab is CollectionTabModel: .tables
         default: nil
-        }
-    }
-
-    private func objectButton(_ category: ObjectCategory, _ title: String, _ icon: String) -> some View {
-        ChromeButton(title: title, isSelected: highlightedCategory == category, help: "Show \(category.rawValue)") {
-            app.showCategory(category)
-        } glyph: {
-            AppIcon(name: icon, size: 32)
         }
     }
 }

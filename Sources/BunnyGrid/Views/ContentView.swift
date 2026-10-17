@@ -82,7 +82,7 @@ struct StatusBar: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        if app.selectedTab == nil {
+        if app.selectedTabKind == nil {
             // Objects tab: a single centered summary, as Navicat shows it.
             Text(summary)
                 .font(.system(size: 12))

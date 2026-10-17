@@ -1,50 +1,108 @@
 import BunnyGridCore
 import SwiftUI
 
-/// The center pane: the tab bar (fixed "Objects" tab first) and the selected tab's content.
-struct WorkspaceView: View {
-    @Environment(AppModel.self) private var app
+/// The center pane: the tab bar (fixed "Objects" tab first) and the selected tab's content. An AppKit container, not
+/// a SwiftUI tree: the tab bar is a small hosting view on top and the tabs' hosting views sit in a `TabDeckView`
+/// below it. Nested in one SwiftUI host, every layout pass inside a tab (each frame of a column resize or a scroll)
+/// re-laid out the whole pane in SwiftUI.
+@MainActor
+final class WorkspaceViewController: NSViewController {
+    private let app: AppModel
+    private let deck = TabDeckView()
+    private var tabBar: NSHostingView<AnyView>?
+    private var tabBarHeight: CGFloat = 0
 
-    var body: some View {
-        VStack(spacing: 0) {
-            // Options › Tabs › "Always show the tab bar": otherwise it appears once a tab is open.
-            if AppOptions.shared.values.alwaysShowTabBar || !app.tabs.isEmpty {
-                TabBar()
-                Divider()
-            }
-            // Every tab stays alive so switching back keeps its scroll position, selection and editor state, each in
-            // its own hosting view; only the selected one is shown (see `TabDeck`).
-            TabDeck(app: app, tabs: app.tabs, selectedID: app.selectedTabID)
-                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    init(app: AppModel) {
+        self.app = app
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func loadView() {
+        let container = WorkspaceContainerView()
+        container.layoutHandler = { [weak self] in self?.layoutPanes() }
+        deck.clipsToBounds = true
+        container.addSubview(deck)
+        let bar = NSHostingView(rootView: AnyView(WorkspaceTabBar(controller: self).environment(app)))
+        // The container owns the sizes.
+        bar.sizingOptions = []
+        container.addSubview(bar)
+        tabBar = bar
+        view = container
+    }
+
+    /// Called by the tab bar's SwiftUI view whenever the tabs, the selection or the tab bar's visibility change.
+    fileprivate func update(tabs: [WorkspaceTab], selectedID: UUID?, showsTabBar: Bool) {
+        let height: CGFloat = showsTabBar ? 30 : 0
+        if height != tabBarHeight {
+            tabBarHeight = height
+            layoutPanes()
         }
-    }
-}
-
-/// The tabs' contents, one `NSHostingView` per tab. Hidden tabs stay alive (state, scroll positions, undo) but
-/// are hidden AppKit views: switching tabs shows one view and hides another instead of changing opacity, hit
-/// testing and the enabled state of every tab in one SwiftUI tree (which re-evaluated both tabs' bodies and
-/// their AppKit views on each switch). A hidden view gets no key equivalents, so a hidden tab's shortcuts don't fire.
-/// A tab's view is made the first time it is shown.
-private struct TabDeck: NSViewRepresentable {
-    let app: AppModel
-    let tabs: [WorkspaceTab]
-    let selectedID: UUID?
-
-    func makeNSView(context: Context) -> TabDeckView {
-        let view = TabDeckView()
-        view.clipsToBounds = true
-        return view
-    }
-
-    func updateNSView(_ view: TabDeckView, context: Context) {
         let app = app
-        view.show(selectedID, keeping: Set(tabs.map(\.id))) { id in
+        deck.show(selectedID, keeping: Set(tabs.map(\.id))) { id in
             if let id {
                 guard let tab = tabs.first(where: { $0.id == id }) else { return nil }
                 return AnyView(TabContent(tab: tab).environment(app))
             }
             return AnyView(ObjectsView().environment(app))
         }
+    }
+
+    private func layoutPanes() {
+        let bounds = view.bounds
+        tabBar?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: tabBarHeight)
+        tabBar?.isHidden = tabBarHeight == 0
+        let deckFrame = NSRect(x: 0, y: tabBarHeight, width: bounds.width, height: max(bounds.height - tabBarHeight, 0))
+        if deck.frame != deckFrame { deck.frame = deckFrame }
+    }
+}
+
+private final class WorkspaceContainerView: NSView {
+    var layoutHandler: (() -> Void)?
+    override var isFlipped: Bool { true }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        layoutHandler?()
+    }
+
+    override func layout() {
+        super.layout()
+        layoutHandler?()
+    }
+}
+
+/// The tab bar and its divider; it also hands the tab list and selection to the deck (`updateNSView` runs in the
+/// same update as the tab bar, so a switch shows the new tab without waiting for another pass).
+private struct WorkspaceTabBar: View {
+    @Environment(AppModel.self) private var app
+    let controller: WorkspaceViewController
+
+    var body: some View {
+        // Options › Tabs › "Always show the tab bar": otherwise it appears once a tab is open.
+        let shows = AppOptions.shared.values.alwaysShowTabBar || !app.tabs.isEmpty
+        VStack(spacing: 0) {
+            if shows {
+                TabBar()
+                Divider()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background { DeckDriver(controller: controller, tabs: app.tabs, selectedID: app.selectedTabID, showsTabBar: shows) }
+    }
+}
+
+private struct DeckDriver: NSViewRepresentable {
+    let controller: WorkspaceViewController
+    let tabs: [WorkspaceTab]
+    let selectedID: UUID?
+    let showsTabBar: Bool
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        controller.update(tabs: tabs, selectedID: selectedID, showsTabBar: showsTabBar)
     }
 }
 
