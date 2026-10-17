@@ -9,6 +9,9 @@ struct ConnectionEditorView: View {
     @State private var password: String
     @State private var testState: TestState = .idle
     private let isNew: Bool
+    /// Set when coming from the New Connection picker: the chosen type, and how to go back to it.
+    private let type: ConnectionType?
+    private let onBack: (() -> Void)?
 
     enum TestState: Equatable {
         case idle
@@ -17,22 +20,47 @@ struct ConnectionEditorView: View {
         case failure(String)
     }
 
-    init(draft: ConnectionDraft) {
+    init(draft: ConnectionDraft, type: ConnectionType? = nil, onBack: (() -> Void)? = nil) {
         _config = State(initialValue: draft.config)
         _password = State(initialValue: draft.password)
         isNew = draft.isNew
+        self.type = type
+        self.onBack = onBack
+    }
+
+    private var title: String {
+        if let type { return "New Connection — \(type.name)" }
+        return isNew ? "New Connection" : "Edit Connection"
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                if let type {
+                    ConnectionTypeIcon(type: type, size: 34)
+                } else {
+                    DatabaseBadge(kind: config.kind, size: 34)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                    Text(config.kind.displayName + (type.map { $0.isEngine ? "" : " protocol" } ?? ""))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 6)
             Form {
                 Section {
-                    TextField("Name", text: $config.name, prompt: Text(config.displayName.isEmpty ? "Optional" : config.displayName))
-                    Picker("Type", selection: $config.kind) {
-                        ForEach(DatabaseKind.allCases) { Text($0.displayName).tag($0) }
-                    }
-                    .onChange(of: config.kind) { old, new in
-                        if config.port == old.defaultPort ?? 0 { config.port = new.defaultPort ?? 0 }
+                    TextField("Connection Name", text: $config.name, prompt: Text(type?.name ?? (config.displayName.isEmpty ? "Optional" : config.displayName)))
+                    if type == nil {
+                        Picker("Type", selection: $config.kind) {
+                            ForEach(DatabaseKind.allCases) { Text($0.displayName).tag($0) }
+                        }
+                        .onChange(of: config.kind) { old, new in
+                            if config.port == old.defaultPort ?? 0 { config.port = new.defaultPort ?? 0 }
+                        }
                     }
                     TextField("Group", text: Binding(
                         get: { config.group ?? "" },
@@ -55,7 +83,7 @@ struct ConnectionEditorView: View {
                     }
                 } else {
                     Section("Server") {
-                        TextField("Host", text: $config.host)
+                        TextField("Host", text: $config.host, prompt: Text(type?.vendor?.hostHint ?? "localhost"))
                         TextField("Port", value: $config.port, format: .number.grouping(.never))
                         TextField("User", text: $config.username)
                         SecureField("Password", text: $password)
@@ -74,6 +102,9 @@ struct ConnectionEditorView: View {
 
             Divider()
             HStack {
+                if let onBack {
+                    Button("Back", action: onBack)
+                }
                 Button("Test Connection", action: test)
                     .disabled(testState == .testing)
                 testStatus
@@ -81,6 +112,7 @@ struct ConnectionEditorView: View {
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(isNew ? "Save & Connect" : "Save") {
+                    if config.name.isEmpty, let type, !type.isEngine { config.name = type.name }
                     model.save(config, password: password)
                     if isNew { model.connect(config.id) }
                     dismiss()
@@ -90,7 +122,7 @@ struct ConnectionEditorView: View {
             }
             .padding()
         }
-        .frame(width: 520, height: 520)
+        .frame(width: onBack == nil ? 520 : 900, height: onBack == nil ? 560 : 700)
     }
 
     @ViewBuilder

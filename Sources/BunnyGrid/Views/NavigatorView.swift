@@ -291,7 +291,7 @@ private struct NavContextMenu: View {
             }
             Divider()
             Button("Edit Connection…") { app.edit(id) }
-            Button("New Connection") { app.newConnection(kind: app.connection(id: id)?.kind ?? .postgresql) }
+            Button("New Connection…") { app.newConnection() }
             Button("Delete Connection", role: .destructive) { app.delete(id) }
             Button("Duplicate Connection") { app.duplicate(id) }
             Divider()

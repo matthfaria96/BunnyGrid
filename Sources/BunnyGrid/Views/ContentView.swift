@@ -32,6 +32,9 @@ struct ContentView: View {
         .sheet(item: $app.draft) { draft in
             ConnectionEditorView(draft: draft)
         }
+        .sheet(isPresented: $app.showingConnectionPicker) {
+            NewConnectionSheet()
+        }
         .sheet(item: $app.namingQuery) { tab in
             SaveQuerySheet(tab: tab)
         }

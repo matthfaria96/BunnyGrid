@@ -19,6 +19,7 @@ final class AppModel {
     private(set) var connections: [ConnectionConfig] = []
     private(set) var sessions: [UUID: Session] = [:]
     var draft: ConnectionDraft?
+    var showingConnectionPicker = false
     var alertMessage: String?
     private(set) var history: [QueryHistoryEntry] = []
     private(set) var savedQueries: [SavedQuery] = []
@@ -148,7 +149,12 @@ final class AppModel {
 
     // MARK: - Editing connections
 
-    func newConnection(kind: DatabaseKind = .postgresql) {
+    /// Shows the New Connection picker; with a kind, goes straight to that kind's form.
+    func newConnection(kind: DatabaseKind? = nil) {
+        guard let kind else {
+            showingConnectionPicker = true
+            return
+        }
         var config = ConnectionConfig(kind: kind)
         if case .group(let group) = navSelection { config.group = group }
         draft = ConnectionDraft(config: config, password: "", isNew: true)
@@ -642,6 +648,9 @@ final class AppModel {
                 }
             }
         }
+        #if DEBUG
+        if CommandLine.arguments.contains("--new-connection") { showingConnectionPicker = true }
+        #endif
         if CommandLine.arguments.contains("--show-objects"), let id = opened {
             Task {
                 while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
