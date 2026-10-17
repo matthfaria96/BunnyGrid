@@ -98,6 +98,58 @@ public actor MySQLDriver: DatabaseDriver {
         }
     }
 
+    /// MySQL prints the exact DDL with SHOW CREATE TABLE / VIEW / FUNCTION.
+    public func objectDDL(name: String, kind: DatabaseObjectKind, schema: String?) async throws -> String {
+        let qualified = dialect.qualifiedName(table: name, schema: schema)
+        let sql: String = switch kind {
+        case .table: "SHOW CREATE TABLE \(qualified)"
+        case .view, .materializedView: "SHOW CREATE VIEW \(qualified)"
+        case .routine: "SHOW CREATE FUNCTION \(qualified)"
+        }
+        let result = try await executeStatement(sql)
+        let column = kind == .routine ? 2 : 1
+        guard let row = result.rows.first, row.count > column else { return "" }
+        return row[column].displayString + ";"
+    }
+
+    public func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey] {
+        let database = dialect.quoteLiteral(schema ?? config.database)
+        let result = try await executeStatement("""
+            SELECT k.CONSTRAINT_NAME, k.COLUMN_NAME, k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME,
+                   r.DELETE_RULE, r.UPDATE_RULE
+              FROM information_schema.KEY_COLUMN_USAGE k
+              JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+                ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+             WHERE k.TABLE_SCHEMA = \(database) AND k.TABLE_NAME = \(dialect.quoteLiteral(table)) AND k.REFERENCED_TABLE_NAME IS NOT NULL
+             ORDER BY k.CONSTRAINT_NAME, k.ORDINAL_POSITION
+            """)
+        var keys: [String: TableForeignKey] = [:]
+        var order: [String] = []
+        for row in result.rows where row.count >= 7 {
+            let name = row[0].displayString
+            if keys[name] == nil {
+                order.append(name)
+                keys[name] = TableForeignKey(name: name, columns: [], referencedSchema: row[2].displayString, referencedTable: row[3].displayString,
+                                             referencedColumns: [], onDelete: row[5].displayString, onUpdate: row[6].displayString)
+            }
+            keys[name]?.columns.append(row[1].displayString)
+            keys[name]?.referencedColumns.append(row[4].displayString)
+        }
+        return order.compactMap { keys[$0] }
+    }
+
+    public func listTriggers(table: String, schema: String?) async throws -> [TableTrigger] {
+        let result = try await executeStatement("""
+            SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, ACTION_STATEMENT
+              FROM information_schema.TRIGGERS
+             WHERE EVENT_OBJECT_SCHEMA = \(dialect.quoteLiteral(schema ?? config.database)) AND EVENT_OBJECT_TABLE = \(dialect.quoteLiteral(table))
+             ORDER BY TRIGGER_NAME
+            """)
+        return result.rows.map { row in
+            TableTrigger(name: row[0].displayString, timing: row[1].displayString, events: [row[2].displayString], definition: row[3].displayString)
+        }
+    }
+
     public func listIndexes(table: String, schema: String?) async throws -> [TableIndex] {
         let result = try await executeStatement("""
             SELECT INDEX_NAME, NOT NON_UNIQUE, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX)

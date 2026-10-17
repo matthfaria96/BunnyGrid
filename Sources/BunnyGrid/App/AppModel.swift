@@ -34,7 +34,11 @@ final class AppModel {
     /// Which tab the right pane shows.
     var rightPane: RightPane = .info
 
-    enum RightPane: String { case info, ai }
+    /// The right pane's tabs; which ones show depends on the open tab, as in Navicat.
+    enum RightPane: String { case info, ddl, field, snippets, identifiers, ai }
+    /// Navicat's Enter Focus Mode: navigator and right pane hidden until it is toggled off.
+    private(set) var isFocusMode = false
+    @ObservationIgnored private var panesBeforeFocus: (navigator: Bool, assistant: Bool)?
     var favoritesOnly = false
     /// Query tab waiting for a name in the Save Query sheet.
     var namingQuery: QueryTabModel?
@@ -74,6 +78,9 @@ final class AppModel {
     @ObservationIgnored private let savedQueryStore = JSONListStore<SavedQuery>(fileURL: AppModel.dataDirectory.appending(path: "queries.json"))
     @ObservationIgnored private let favoriteStore = JSONListStore<FavoriteObject>(fileURL: AppModel.dataDirectory.appending(path: "favorites.json"))
     @ObservationIgnored private let profileStore = JSONListStore<TableProfile>(fileURL: AppModel.dataDirectory.appending(path: "table-profiles.json"))
+    @ObservationIgnored private let snippetStore = JSONListStore<CodeSnippet>(fileURL: AppModel.dataDirectory.appending(path: "snippets.json"))
+    /// The user's own code snippets (built-ins live in CodeSnippet.builtIns).
+    private(set) var snippets: [CodeSnippet] = []
 
     init(
         store: ConnectionStore = ConnectionStore(fileURL: AppModel.dataDirectory.appending(path: "connections.json")),
@@ -93,6 +100,7 @@ final class AppModel {
         savedQueries = (try? savedQueryStore.load()) ?? []
         favorites = (try? favoriteStore.load()) ?? []
         tableProfiles = (try? profileStore.load()) ?? []
+        snippets = (try? snippetStore.load()) ?? []
         for group in Set(connections.compactMap(\.group)) { expanded.insert(.group(group)) }
         assistant.app = self
         openLaunchArguments()
@@ -139,6 +147,29 @@ final class AppModel {
 
     var selectedQueryTab: QueryTabModel? {
         if case .query(let model) = selectedTab { model } else { nil }
+    }
+
+    func saveSnippet(_ snippet: CodeSnippet) {
+        if let index = snippets.firstIndex(where: { $0.id == snippet.id }) { snippets[index] = snippet } else { snippets.append(snippet) }
+        try? snippetStore.save(snippets)
+    }
+
+    func deleteSnippet(_ id: UUID) {
+        snippets.removeAll { $0.id == id }
+        try? snippetStore.save(snippets)
+    }
+
+    func toggleFocusMode() {
+        if isFocusMode, let saved = panesBeforeFocus {
+            showNavigator = saved.navigator
+            showAssistant = saved.assistant
+            panesBeforeFocus = nil
+        } else {
+            panesBeforeFocus = (showNavigator, showAssistant)
+            showNavigator = false
+            showAssistant = false
+        }
+        isFocusMode.toggle()
     }
 
     func select(_ query: QueryTabModel) {
@@ -682,6 +713,11 @@ final class AppModel {
         if CommandLine.arguments.contains("--account-menu") { showingAccountMenu = true }
         if CommandLine.arguments.contains("--ai-pane") { showAssistant = true; rightPane = .ai }
         if CommandLine.arguments.contains("--ai-wide") { assistant.isExpanded = true }
+        if let index = CommandLine.arguments.firstIndex(of: "--right-pane"), CommandLine.arguments.indices.contains(index + 1),
+           let pane = RightPane(rawValue: CommandLine.arguments[index + 1]) {
+            showAssistant = true
+            rightPane = pane
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--ai-ask"), CommandLine.arguments.indices.contains(index + 1) {
             let prompt = CommandLine.arguments[index + 1]
             Task {

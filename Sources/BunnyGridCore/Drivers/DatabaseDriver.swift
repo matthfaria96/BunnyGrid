@@ -39,12 +39,34 @@ public protocol DatabaseDriver: AnyObject, Sendable {
 
     /// Row estimates, sizes and comments for the Objects tab, keyed by table name.
     func tableStatistics(schema: String?) async throws -> [String: TableStatistics]
+    func objectDDL(name: String, kind: DatabaseObjectKind, schema: String?) async throws -> String
+    func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey]
+    func listTriggers(table: String, schema: String?) async throws -> [TableTrigger]
 }
 
 extension DatabaseDriver {
     public var dialect: SQLDialect { SQLDialect(kind: config.kind) }
 
     public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] { [:] }
+    public func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey] { [] }
+    public func listTriggers(table: String, schema: String?) async throws -> [TableTrigger] { [] }
+
+    /// The object's CREATE statement for the DDL pane. The default rebuilds a table from its columns and indexes;
+    /// engines that store or print the original DDL override it.
+    public func objectDDL(name: String, kind: DatabaseObjectKind, schema: String?) async throws -> String {
+        guard kind == .table else { return "-- DDL is not available for this object." }
+        return try await generatedTableDDL(name: name, schema: schema)
+    }
+
+    /// CREATE TABLE (and CREATE INDEX) rebuilt from the catalog.
+    public func generatedTableDDL(name: String, schema: String?) async throws -> String {
+        let columns = try await listColumns(table: name, schema: schema).map(ColumnDesign.init)
+        var statements = [try dialect.createTable(name: name, schema: schema, columns: columns) + ";"]
+        for index in try await listIndexes(table: name, schema: schema) where !index.primary {
+            statements.append(try dialect.createIndex(IndexDesign(index), table: name, schema: schema) + ";")
+        }
+        return statements.joined(separator: "\n\n")
+    }
 
     /// Runs a script statement by statement and returns one result per statement.
     public func execute(_ script: String) async throws -> [QueryResult] {

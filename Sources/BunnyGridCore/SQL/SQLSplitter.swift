@@ -1,23 +1,50 @@
 import Foundation
 
 /// Splits a script into individual statements on `;`, ignoring semicolons inside
-/// string literals, quoted identifiers, comments and PostgreSQL dollar-quoted bodies.
+/// string literals, quoted identifiers, comments, PostgreSQL dollar-quoted bodies and the
+/// BEGIN … END body of a CREATE TRIGGER (SQLite, MySQL).
 public enum SQLSplitter {
     public static func split(_ script: String) -> [String] {
         let chars = Array(script)
         var statements: [String] = []
         var current = ""
         var i = 0
+        // Words of the current statement, to recognize CREATE … TRIGGER and its BEGIN/CASE … END nesting.
+        var word = ""
+        var isTrigger = false
+        var sawCreate = false
+        var blockDepth = 0
+
+        func endWord() {
+            guard !word.isEmpty else { return }
+            let upper = word.uppercased()
+            if upper == "CREATE", current.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().hasPrefix("CREATE") { sawCreate = true }
+            if sawCreate, upper == "TRIGGER" { isTrigger = true }
+            if isTrigger {
+                if upper == "BEGIN" || upper == "CASE" { blockDepth += 1 }
+                if upper == "END", blockDepth > 0 { blockDepth -= 1 }
+            }
+            word = ""
+        }
 
         func flush() {
             let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty && !isOnlyComments(trimmed) { statements.append(trimmed) }
             current = ""
+            isTrigger = false
+            sawCreate = false
+            blockDepth = 0
         }
 
         while i < chars.count {
             let c = chars[i]
             let next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
+
+            if c.isLetter || c == "_" {
+                word.append(c)
+            } else {
+                endWord()
+            }
 
             switch c {
             case "'", "\"", "`":
@@ -41,6 +68,9 @@ public enum SQLSplitter {
                     current.append(c)
                     i += 1
                 }
+            case ";" where blockDepth > 0:
+                current.append(c)
+                i += 1
             case ";":
                 flush()
                 i += 1

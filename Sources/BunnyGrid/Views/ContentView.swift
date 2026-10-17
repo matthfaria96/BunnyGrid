@@ -121,34 +121,46 @@ struct StatusBar: View {
         }
     }
 
+    /// Centered "a | b | c" like Navicat's status bar, with a warning icon when something failed.
     private var segments: some View {
-        HStack(spacing: 0) {
-            Text(sql)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .textSelection(.enabled)
-            section {
+        ZStack {
+            HStack(spacing: 10) {
+                ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+                    if index > 0 { Text("|").foregroundStyle(.tertiary) }
+                    Text(part).lineLimit(1)
+                }
                 if let warning {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow).help(warning)
-                } else {
-                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.quaternary)
                 }
             }
-            section { Text(record).frame(minWidth: 170) }
-            section {
-                TimelineView(.periodic(from: .now, by: 30)) { _ in
-                    Text(lastRefresh)
-                }
-                .frame(minWidth: 110)
+            HStack {
+                Spacer()
+                paneToggles
             }
-            paneToggles
         }
         .font(.system(size: 11.5))
         .foregroundStyle(.secondary)
         .frame(height: 24)
         .background(.bar)
+    }
+
+    private var parts: [String] {
+        switch app.selectedTab {
+        case .table(let model):
+            return [model.recordDescription, lastRefresh].filter { !$0.isEmpty }
+        case .query(let model):
+            var parts: [String] = []
+            if let elapsed = model.elapsed { parts.append(String(format: "Elapsed Time: %.3fs", elapsed.milliseconds / 1_000)) }
+            if case .result(let id) = model.resultPane, let result = model.resultSets.first(where: { $0.id == id }) {
+                parts.append("\(result.rows.count.formatted()) records")
+            }
+            parts.append("Line: \(model.cursorLine)  Col: \(model.cursorColumn)")
+            return parts
+        case .design(let model):
+            return ["Number of Fields: \(model.columns.count)"]
+        case nil:
+            return []
+        }
     }
 
     private func section<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {

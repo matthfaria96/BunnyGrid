@@ -6,9 +6,14 @@ import Observation
 @MainActor
 @Observable
 final class TableDesignModel: Identifiable {
+    /// Navicat's Table Design tabs.
     enum Section: String, CaseIterable {
         case fields = "Fields"
         case indexes = "Indexes"
+        case foreignKeys = "Foreign Keys"
+        case uniques = "Uniques"
+        case triggers = "Triggers"
+        case options = "Options"
         case sqlPreview = "SQL Preview"
     }
 
@@ -21,6 +26,10 @@ final class TableDesignModel: Identifiable {
     private let driver: any DatabaseDriver
 
     var tableName: String
+    /// The saved table being designed (nil for a new table), for the DDL pane.
+    var tableObject: DatabaseObject? {
+        originalName.map { DatabaseObject(schema: schema, name: $0, kind: .table) }
+    }
     /// nil until the table exists in the database.
     private(set) var originalName: String?
     var columns: [ColumnDesign] = []
@@ -30,6 +39,20 @@ final class TableDesignModel: Identifiable {
     var indexSelection: IndexDesign.ID?
     var selection: ColumnDesign.ID?
     var section: Section = .fields
+    private(set) var foreignKeys: [TableForeignKey] = []
+    /// Foreign keys as edited: originals that weren't removed, plus new ones.
+    var foreignKeyDesigns: [TableForeignKey] = []
+    var foreignKeySelection: TableForeignKey.ID?
+    private(set) var triggers: [TableTrigger] = []
+    /// Triggers marked for deletion, and new CREATE TRIGGER statements written in the Definition box.
+    var droppedTriggers: Set<String> = []
+    var newTriggers: [String] = []
+    var triggerSelection: TableTrigger.ID?
+    /// Options tab: table comment (PostgreSQL, MySQL) and storage engine (MySQL).
+    private(set) var originalComment = ""
+    var comment = ""
+    private(set) var originalEngine = ""
+    var engine = ""
     private(set) var isLoading = false
     private(set) var isSaving = false
     var saveError: String?
@@ -74,6 +97,45 @@ final class TableDesignModel: Identifiable {
         indexes = (try? await driver.listIndexes(table: originalName, schema: driverSchema)) ?? []
         columns = originalColumns.map(ColumnDesign.init)
         indexDesigns = indexes.map(IndexDesign.init)
+        foreignKeys = (try? await driver.listForeignKeys(table: originalName, schema: driverSchema)) ?? []
+        foreignKeyDesigns = foreignKeys
+        triggers = (try? await driver.listTriggers(table: originalName, schema: driverSchema)) ?? []
+        droppedTriggers = []
+        newTriggers = []
+        let stats = (try? await driver.tableStatistics(schema: driverSchema))?[originalName]
+        originalComment = stats?.comment ?? ""
+        comment = originalComment
+        originalEngine = stats?.engine ?? ""
+        engine = originalEngine
+    }
+
+    /// Whether foreign keys can be changed on this engine (SQLite needs the table rebuilt).
+    var canEditForeignKeys: Bool { kind != .sqlite }
+
+    func addForeignKey() {
+        let column = selection.flatMap { id in columns.first { $0.id == id }?.name } ?? columns.first?.name ?? ""
+        let key = TableForeignKey(name: "\(tableName.isEmpty ? "table" : tableName)_fk\(foreignKeyDesigns.count + 1)", columns: [column],
+                                  referencedTable: "", referencedColumns: ["id"])
+        foreignKeyDesigns.append(key)
+        foreignKeySelection = key.id
+    }
+
+    func deleteForeignKey() {
+        guard let id = foreignKeySelection else { return }
+        foreignKeyDesigns.removeAll { $0.id == id }
+        foreignKeySelection = foreignKeyDesigns.last?.id
+    }
+
+    /// Template for Add Trigger, in the engine's syntax.
+    func addTrigger() {
+        let table = dialect.qualifiedName(table: tableName.isEmpty ? (originalName ?? "table_name") : tableName, schema: driverSchema)
+        let name = "\(tableName.isEmpty ? "table" : tableName)_trigger\(triggers.count + newTriggers.count + 1)"
+        let template: String = switch kind {
+        case .sqlite: "CREATE TRIGGER \(name) AFTER UPDATE ON \(table)\nBEGIN\n  -- statements\n  SELECT 1;\nEND"
+        case .mysql, .mariadb: "CREATE TRIGGER \(name) BEFORE INSERT ON \(table)\nFOR EACH ROW\nSET NEW.created_at = NOW()"
+        case .postgresql: "CREATE TRIGGER \(name) BEFORE UPDATE ON \(table)\nFOR EACH ROW EXECUTE FUNCTION function_name()"
+        }
+        newTriggers.append(template)
     }
 
     /// The statements Save would run, or why the design can't be saved.
@@ -92,6 +154,28 @@ final class TableDesignModel: Identifiable {
             }
             let finalName = tableName.isEmpty ? (originalName ?? tableName) : tableName
             statements += try dialect.alterIndexes(table: finalName, schema: driverSchema, original: indexes, design: indexDesigns)
+            // Foreign keys: drop removed or changed ones, add new or changed ones.
+            let keptKeys = Set(foreignKeyDesigns.map(\.name))
+            for key in foreignKeys where !keptKeys.contains(key.name) || foreignKeyDesigns.first(where: { $0.name == key.name }) != key {
+                statements.append(try dialect.dropForeignKey(named: key.name, table: finalName, schema: driverSchema))
+            }
+            for key in foreignKeyDesigns where !foreignKeys.contains(key) {
+                statements.append(try dialect.addForeignKey(key, table: finalName, schema: driverSchema))
+            }
+            // Triggers.
+            for name in droppedTriggers.sorted() { statements.append(dialect.dropTrigger(named: name, table: finalName, schema: driverSchema)) }
+            statements += newTriggers.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            // Options.
+            if comment != originalComment {
+                switch kind {
+                case .postgresql: statements.append("COMMENT ON TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) IS \(dialect.quoteLiteral(comment))")
+                case .mysql, .mariadb: statements.append("ALTER TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) COMMENT = \(dialect.quoteLiteral(comment))")
+                case .sqlite: break
+                }
+            }
+            if (kind == .mysql || kind == .mariadb), !engine.isEmpty, engine != originalEngine {
+                statements.append("ALTER TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) ENGINE = \(engine)")
+            }
             return statements
         }
     }

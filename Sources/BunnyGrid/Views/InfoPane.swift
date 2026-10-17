@@ -2,22 +2,32 @@ import AppKit
 import BunnyGridCore
 import SwiftUI
 
-/// The right pane, as in Navicat for macOS: an ⓘ Info tab describing the selection, and the AI tab.
+/// The right pane, as in Navicat for macOS: General (ⓘ), then DDL / Field for a table, Code Snippet / Identifiers
+/// for a query, DDL for a design, and the AI Assistant tab.
 struct RightPane: View {
     @Environment(AppModel.self) private var app
     @AppStorage("showAIFeatures") private var showAIFeatures = true
 
+    private var available: [AppModel.RightPane] {
+        var panes: [AppModel.RightPane] = [.info]
+        switch app.selectedTab {
+        case .table: panes += [.ddl, .field]
+        case .query: panes += [.snippets, .identifiers]
+        case .design: panes += [.ddl]
+        case nil: break
+        }
+        if showAIFeatures { panes.append(.ai) }
+        return panes
+    }
+
+    private var current: AppModel.RightPane { available.contains(app.rightPane) ? app.rightPane : .info }
+
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                HStack(spacing: 6) {
-                    tab(.info) {
-                        Image(systemName: "info.circle").font(.system(size: 14, weight: .medium))
-                    }
-                    if showAIFeatures {
-                        tab(.ai) {
-                            AppIcon(name: app.assistant.provider.iconName, size: 15)
-                        }
+                HStack(spacing: 4) {
+                    ForEach(available, id: \.self) { pane in
+                        tab(pane)
                     }
                 }
                 .padding(.horizontal, 6)
@@ -26,7 +36,7 @@ struct RightPane: View {
                 HStack {
                     Spacer()
                     IconButton(systemImage: app.assistant.isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-                               help: app.assistant.isExpanded ? "Narrow" : "Widen", tint: .accentColor) {
+                               help: app.assistant.isExpanded ? "Narrow" : "Expand", tint: .accentColor) {
                         app.assistant.isExpanded.toggle()
                     }
                     .padding(.trailing, 8)
@@ -34,25 +44,66 @@ struct RightPane: View {
             }
             .frame(height: 38)
             Divider()
-            switch showAIFeatures ? app.rightPane : .info {
-            case .info: InfoContent()
-            case .ai: AssistantPanel()
-            }
+            content
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private func tab<Label: View>(_ pane: AppModel.RightPane, @ViewBuilder label: () -> Label) -> some View {
+    @ViewBuilder
+    private var content: some View {
+        switch current {
+        case .info: InfoContent()
+        case .ai: AssistantPanel()
+        case .ddl:
+            switch app.selectedTab {
+            case .table(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.object)
+            case .design(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.tableObject)
+            default: InfoContent()
+            }
+        case .field:
+            if case .table(let model) = app.selectedTab { FieldPane(table: model) } else { InfoContent() }
+        case .snippets: SnippetsPane(query: app.selectedQueryTab)
+        case .identifiers: IdentifiersPane(query: app.selectedQueryTab)
+        }
+    }
+
+    private func tab(_ pane: AppModel.RightPane) -> some View {
         Button {
             app.rightPane = pane
         } label: {
-            label()
-                .foregroundStyle(app.rightPane == pane ? Color.accentColor : Color.secondary)
-                .frame(width: 28, height: 22)
+            label(for: pane)
+                .foregroundStyle(current == pane ? Color.accentColor : Color.secondary)
+                .frame(width: 26, height: 22)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(pane == .info ? "Information" : "AI Assistant")
+        .help(title(for: pane))
+    }
+
+    @ViewBuilder
+    private func label(for pane: AppModel.RightPane) -> some View {
+        switch pane {
+        case .info: Image(systemName: "info.circle").font(.system(size: 14, weight: .medium))
+        case .ddl:
+            Text("DDL").font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                .padding(.horizontal, 2).padding(.vertical, 2)
+                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(lineWidth: 1.2))
+        case .field: Image(systemName: "rectangle.split.3x1").font(.system(size: 13, weight: .medium))
+        case .snippets: Image(systemName: "curlybraces").font(.system(size: 13, weight: .medium))
+        case .identifiers: Image(systemName: "list.bullet.rectangle").font(.system(size: 13, weight: .medium))
+        case .ai: AppIcon(name: app.assistant.provider.iconName, size: 15)
+        }
+    }
+
+    private func title(for pane: AppModel.RightPane) -> String {
+        switch pane {
+        case .info: "General"
+        case .ddl: "DDL"
+        case .field: "Field"
+        case .snippets: "Code Snippet"
+        case .identifiers: "Identifiers"
+        case .ai: "AI Assistant"
+        }
     }
 }
 

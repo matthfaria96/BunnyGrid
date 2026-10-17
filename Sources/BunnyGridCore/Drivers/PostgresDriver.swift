@@ -136,6 +136,76 @@ public actor PostgresDriver: DatabaseDriver {
         }
     }
 
+    /// Views and functions come from pg_get_viewdef / pg_get_functiondef; tables are rebuilt from the catalog.
+    public func objectDDL(name: String, kind: DatabaseObjectKind, schema: String?) async throws -> String {
+        let qualified = dialect.qualifiedName(table: name, schema: schema)
+        switch kind {
+        case .table:
+            return try await generatedTableDDL(name: name, schema: schema)
+        case .view, .materializedView:
+            let result = try await executeStatement("SELECT pg_get_viewdef(\(dialect.quoteLiteral(qualified))::regclass, true)")
+            let body = result.rows.first?.first?.displayString ?? ""
+            return "CREATE \(kind == .materializedView ? "MATERIALIZED " : "")VIEW \(qualified) AS\n\(body)"
+        case .routine:
+            let result = try await executeStatement("""
+                SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                 WHERE p.proname = \(dialect.quoteLiteral(name)) AND n.nspname = \(dialect.quoteLiteral(schema ?? "public")) LIMIT 1
+                """)
+            return result.rows.first?.first?.displayString ?? ""
+        }
+    }
+
+    public func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey] {
+        let result = try await executeStatement("""
+            SELECT c.conname, rn.nspname, r.relname,
+                   array_to_string(ARRAY(SELECT a.attname FROM unnest(c.conkey) WITH ORDINALITY k(n, o)
+                     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n ORDER BY k.o), ','),
+                   array_to_string(ARRAY(SELECT a.attname FROM unnest(c.confkey) WITH ORDINALITY k(n, o)
+                     JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.n ORDER BY k.o), ','),
+                   c.confdeltype, c.confupdtype
+              FROM pg_constraint c
+              JOIN pg_class t ON t.oid = c.conrelid
+              JOIN pg_namespace n ON n.oid = t.relnamespace
+              JOIN pg_class r ON r.oid = c.confrelid
+              JOIN pg_namespace rn ON rn.oid = r.relnamespace
+             WHERE c.contype = 'f' AND t.relname = \(dialect.quoteLiteral(table)) AND n.nspname = \(dialect.quoteLiteral(schema ?? "public"))
+             ORDER BY c.conname
+            """)
+        func action(_ code: String) -> String {
+            switch code {
+            case "c": "CASCADE"
+            case "n": "SET NULL"
+            case "d": "SET DEFAULT"
+            case "r": "RESTRICT"
+            default: "NO ACTION"
+            }
+        }
+        return result.rows.map { row in
+            TableForeignKey(name: row[0].displayString, columns: row[3].displayString.split(separator: ",").map(String.init),
+                            referencedSchema: row[1].displayString, referencedTable: row[2].displayString,
+                            referencedColumns: row[4].displayString.split(separator: ",").map(String.init),
+                            onDelete: action(row[5].displayString), onUpdate: action(row[6].displayString))
+        }
+    }
+
+    public func listTriggers(table: String, schema: String?) async throws -> [TableTrigger] {
+        let result = try await executeStatement("""
+            SELECT tg.tgname, pg_get_triggerdef(tg.oid, true), tg.tgtype
+              FROM pg_trigger tg
+              JOIN pg_class t ON t.oid = tg.tgrelid
+              JOIN pg_namespace n ON n.oid = t.relnamespace
+             WHERE NOT tg.tgisinternal AND t.relname = \(dialect.quoteLiteral(table)) AND n.nspname = \(dialect.quoteLiteral(schema ?? "public"))
+             ORDER BY tg.tgname
+            """)
+        return result.rows.map { row in
+            let definition = row[1].displayString
+            let upper = definition.uppercased()
+            let timing = upper.contains(" INSTEAD OF ") ? "INSTEAD OF" : (upper.contains(" BEFORE ") ? "BEFORE" : "AFTER")
+            let events = ["INSERT", "UPDATE", "DELETE", "TRUNCATE"].filter { upper.contains(" \($0)") }
+            return TableTrigger(name: row[0].displayString, timing: timing, events: events, definition: definition)
+        }
+    }
+
     public func listIndexes(table: String, schema: String?) async throws -> [TableIndex] {
         let result = try await executeStatement("""
             SELECT i.relname, ix.indisunique, ix.indisprimary,

@@ -26,6 +26,19 @@ import Testing
         #expect(objects.map(\.kind) == [.table, .view])
     }
 
+    @Test func printsStoredDDL() async throws {
+        let driver = try await makeDriver()
+        try await seed(driver)
+        let table = try await driver.objectDDL(name: "users", kind: .table, schema: nil)
+        #expect(table == "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score REAL, avatar BLOB);\n\nCREATE INDEX users_name ON users(name);")
+        let view = try await driver.objectDDL(name: "top_users", kind: .view, schema: nil)
+        #expect(view.hasPrefix("CREATE VIEW top_users AS SELECT"))
+        // The generic rebuild used by engines without stored DDL.
+        let rebuilt = try await driver.generatedTableDDL(name: "users", schema: nil)
+        #expect(rebuilt.contains("CREATE TABLE \"users\""))
+        #expect(rebuilt.contains("CREATE INDEX \"users_name\""))
+    }
+
     @Test func describesColumnsAndIndexes() async throws {
         let driver = try await makeDriver()
         try await seed(driver)
@@ -80,5 +93,33 @@ import Testing
         }
         let results = try await driver.execute("SELECT 1 + 1")
         #expect(results[0].rows == [[.integer(2)]])
+    }
+}
+
+@Suite struct ConstraintTests {
+    @Test func sqliteListsForeignKeysAndTriggers() async throws {
+        let driver = SQLiteDriver(config: ConnectionConfig(kind: .sqlite, filePath: ""))
+        try await driver.connect()
+        _ = try await driver.execute("""
+            CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE books (id INTEGER PRIMARY KEY, author_id INTEGER REFERENCES authors(id) ON DELETE CASCADE, title TEXT);
+            CREATE TRIGGER books_touch AFTER UPDATE ON books BEGIN SELECT 1; END;
+            """)
+        let keys = try await driver.listForeignKeys(table: "books", schema: nil)
+        #expect(keys == [TableForeignKey(name: "", columns: ["author_id"], referencedTable: "authors", referencedColumns: ["id"], onDelete: "CASCADE", onUpdate: "NO ACTION")])
+        let triggers = try await driver.listTriggers(table: "books", schema: nil)
+        #expect(triggers.map(\.name) == ["books_touch"])
+        #expect(triggers.first?.timing == "AFTER")
+        #expect(triggers.first?.events == ["UPDATE"])
+    }
+
+    @Test func foreignKeySQL() throws {
+        let key = TableForeignKey(name: "books_author", columns: ["author_id"], referencedTable: "authors", referencedColumns: ["id"], onDelete: "CASCADE")
+        #expect(try SQLDialect(kind: .postgresql).addForeignKey(key, table: "books", schema: "public")
+                == #"ALTER TABLE "public"."books" ADD CONSTRAINT "books_author" FOREIGN KEY ("author_id") REFERENCES "public"."authors" ("id") ON DELETE CASCADE"#)
+        #expect(try SQLDialect(kind: .mysql).dropForeignKey(named: "books_author", table: "books", schema: "shop")
+                == "ALTER TABLE `shop`.`books` DROP FOREIGN KEY `books_author`")
+        #expect(throws: TableDesignError.self) { try SQLDialect(kind: .sqlite).addForeignKey(key, table: "books", schema: nil) }
+        #expect(SQLDialect(kind: .postgresql).dropTrigger(named: "t1", table: "books", schema: "public") == #"DROP TRIGGER "t1" ON "public"."books""#)
     }
 }

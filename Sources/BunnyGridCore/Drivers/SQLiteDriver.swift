@@ -72,6 +72,51 @@ public actor SQLiteDriver: DatabaseDriver {
         }
     }
 
+    /// SQLite keeps each object's original CREATE statement in sqlite_master.
+    public func objectDDL(name: String, kind: DatabaseObjectKind, schema: String?) async throws -> String {
+        let result = try await executeStatement("""
+            SELECT sql FROM sqlite_master WHERE tbl_name = \(dialect.quoteLiteral(name)) AND sql IS NOT NULL
+            ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'view' THEN 0 ELSE 1 END, name
+            """)
+        let statements = result.rows.compactMap { row -> String? in
+            guard let value = row.first, !value.isNull else { return nil }
+            return value.displayString.hasSuffix(";") ? value.displayString : value.displayString + ";"
+        }
+        return statements.joined(separator: "\n\n")
+    }
+
+    public func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey] {
+        // id, seq, table, from, to, on_update, on_delete, match
+        let result = try await executeStatement("PRAGMA foreign_key_list(\(dialect.quoteIdentifier(table)))")
+        var keys: [Int: TableForeignKey] = [:]
+        var order: [Int] = []
+        for row in result.rows where row.count >= 7 {
+            guard case .integer(let raw) = row[0] else { continue }
+            let id = Int(raw)
+            if keys[id] == nil {
+                order.append(id)
+                keys[id] = TableForeignKey(name: "", columns: [], referencedTable: row[2].displayString, referencedColumns: [],
+                                           onDelete: row[6].displayString, onUpdate: row[5].displayString)
+            }
+            keys[id]?.columns.append(row[3].displayString)
+            keys[id]?.referencedColumns.append(row[4].isNull ? "" : row[4].displayString)
+        }
+        return order.compactMap { keys[$0] }
+    }
+
+    public func listTriggers(table: String, schema: String?) async throws -> [TableTrigger] {
+        let result = try await executeStatement("""
+            SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = \(dialect.quoteLiteral(table)) ORDER BY name
+            """)
+        return result.rows.map { row in
+            let sql = row[1].displayString
+            let upper = sql.uppercased()
+            let timing = upper.contains(" INSTEAD OF ") ? "INSTEAD OF" : (upper.contains(" BEFORE ") ? "BEFORE" : "AFTER")
+            let events = ["INSERT", "UPDATE", "DELETE"].filter { upper.contains(" \($0)") }
+            return TableTrigger(name: row[0].displayString, timing: timing, events: events, definition: sql)
+        }
+    }
+
     public func listIndexes(table: String, schema: String?) async throws -> [TableIndex] {
         let list = try await executeStatement("PRAGMA index_list(\(dialect.quoteIdentifier(table)))")
         // seq, name, unique, origin, partial

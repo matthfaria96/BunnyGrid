@@ -37,6 +37,26 @@ enum EditorInsertMode: CaseIterable, Identifiable {
     }
 }
 
+/// One statement run from the editor: what Navicat lists in Message and Summary.
+struct StatementExecution: Identifiable {
+    let id = UUID()
+    let statement: String
+    let start: Date
+    let duration: Duration
+    /// The result for statements that succeeded.
+    let result: QueryResult?
+    let error: String?
+
+    var succeeded: Bool { error == nil }
+}
+
+/// Which part of the result panel is showing.
+enum QueryResultPane: Hashable {
+    case message
+    case summary
+    case result(UUID)
+}
+
 /// A SQL editor tab with its results.
 @MainActor
 @Observable
@@ -54,6 +74,19 @@ final class QueryTabModel: Identifiable {
     /// The statement that failed and the engine's message, for Fix with AI / Explain Error.
     private(set) var failedStatement: String?
     private(set) var failureMessage: String?
+    /// Every statement of the last run, in order.
+    private(set) var executions: [StatementExecution] = []
+    private(set) var runStarted: Date?
+    private(set) var runEnded: Date?
+    var resultPane: QueryResultPane = .message
+    var showResultPanel = false
+    /// Navicat's "Show Result Below Editor" / "Show Result Next to Editor".
+    var resultsBesideEditor = UserDefaults.standard.bool(forKey: "queryResultsBeside") {
+        didSet { UserDefaults.standard.set(resultsBesideEditor, forKey: "queryResultsBeside") }
+    }
+    /// Cursor position for the status bar ("Line: 1 Col: 1").
+    var cursorLine = 1
+    var cursorColumn = 1
     @ObservationIgnored private(set) weak var context: DatabaseContext?
     /// The editor's text view, registered by `SQLEditorView`, so AI code can be inserted with undo.
     @ObservationIgnored weak var textView: NSTextView?
@@ -61,10 +94,10 @@ final class QueryTabModel: Identifiable {
     var aiRun: AskAIRun?
     /// The Ask AI custom actions sheet.
     var showingAskAICustom = false
-    @ObservationIgnored private let driver: any DatabaseDriver
-    let location: String
-    let connectionID: UUID?
-    let databaseName: String
+    @ObservationIgnored private var driver: any DatabaseDriver
+    private(set) var location: String
+    private(set) var connectionID: UUID?
+    private(set) var databaseName: String
     /// Set once the query is saved to the navigator's Queries folder.
     private(set) var savedQueryID: UUID?
     private var savedText: String?
@@ -116,6 +149,10 @@ final class QueryTabModel: Identifiable {
         error = nil
         failedStatement = nil
         failureMessage = nil
+        executions = []
+        runStarted = Date()
+        runEnded = nil
+        showResultPanel = true
         task = Task {
             defer { isRunning = false }
             let clock = ContinuousClock()
@@ -124,9 +161,13 @@ final class QueryTabModel: Identifiable {
             let statements = SQLSplitter.split(script)
             results = []
             for (index, statement) in statements.enumerated() {
+                let began = Date()
+                let statementStart = clock.now
                 do {
                     try Task.checkCancellation()
-                    results.append(try await driver.executeTimed(statement))
+                    let result = try await driver.executeTimed(statement)
+                    results.append(result)
+                    executions.append(StatementExecution(statement: statement, start: began, duration: result.duration, result: result, error: nil))
                 } catch is CancellationError {
                     error = "Cancelled."
                     break
@@ -135,10 +176,20 @@ final class QueryTabModel: Identifiable {
                     self.error = prefix + error.localizedDescription
                     failedStatement = statement
                     failureMessage = error.localizedDescription
+                    executions.append(StatementExecution(statement: statement, start: began, duration: clock.now - statementStart, result: nil, error: error.localizedDescription))
                     break
                 }
             }
+            runEnded = Date()
             selectedResultID = results.last(where: \.isResultSet)?.id ?? results.last?.id
+            // Like Navicat: a result set opens its Result tab, an error opens Summary, anything else Message.
+            if self.error != nil {
+                resultPane = .summary
+            } else if let shown = results.last(where: \.isResultSet) {
+                resultPane = .result(shown.id)
+            } else {
+                resultPane = .message
+            }
             record(script, duration: clock.now - start, rowCount: results.last(where: \.isResultSet)?.rows.count, error: error)
         }
     }
@@ -146,6 +197,52 @@ final class QueryTabModel: Identifiable {
     func cancel() {
         task?.cancel()
         task = nil
+    }
+
+    /// Points the editor at another connection or database (the toolbar's pickers).
+    func use(_ newContext: DatabaseContext) {
+        guard !isRunning else { return }
+        context = newContext
+        driver = newContext.driver
+        location = newContext.location(schema: newContext.defaultSchema)
+        connectionID = newContext.session?.id
+        databaseName = newContext.name
+        scheduleColumnPrefetch()
+    }
+
+    /// Result sets of the last run, numbered "Result 1", "Result 2"… in the result panel.
+    var resultSets: [QueryResult] { results.filter(\.isResultSet) }
+
+    var elapsed: Duration? {
+        guard let runStarted, let runEnded else { return nil }
+        return .milliseconds(runEnded.timeIntervalSince(runStarted) * 1_000)
+    }
+
+    /// Runs EXPLAIN (EXPLAIN QUERY PLAN on SQLite) for the selection or the whole editor.
+    func explain() {
+        let script = (hasSelection ? selectedText : text).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = SQLSplitter.split(script).first else { return }
+        let prefix = context?.kind == .sqlite ? "EXPLAIN QUERY PLAN " : "EXPLAIN "
+        let previousSelection = selectedText
+        selectedText = prefix + first
+        run()
+        selectedText = previousSelection
+    }
+
+    /// Navicat's Beautify SQL: keywords uppercased and one clause per line (done locally, no AI).
+    func beautify() {
+        let source = hasSelection ? selectedText : text
+        let formatted = SQLBeautifier.format(source)
+        insert(formatted, mode: hasSelection ? .replaceSelection : .replaceAll)
+    }
+
+    func updateCursor(in textView: NSTextView) {
+        let string = textView.string as NSString
+        let location = min(textView.selectedRange().location, string.length)
+        let before = string.substring(to: location)
+        let lines = before.components(separatedBy: "\n")
+        cursorLine = lines.count
+        cursorColumn = (lines.last?.count ?? 0) + 1
     }
 
     // MARK: - Editing from the AI

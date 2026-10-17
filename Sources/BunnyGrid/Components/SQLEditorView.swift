@@ -11,6 +11,8 @@ struct SQLEditorView: NSViewRepresentable {
     var completions: ((_ prefix: String, _ qualifier: String?) -> [String])?
     /// Hands the text view to the owner (for AI inserts with undo).
     var onTextView: ((NSTextView) -> Void)?
+    /// Called when the selection or cursor moves (status bar Line / Col).
+    var onCursorChange: ((NSTextView) -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -92,6 +94,7 @@ struct SQLEditorView: NSViewRepresentable {
             let range = textView.selectedRange()
             parent.selectedText = range.length > 0 ? (textView.string as NSString).substring(with: range) : ""
             if AppOptions.shared.values.useBraceHighlighting { BraceHighlighter.update(textView) }
+            parent.onCursorChange?(textView)
         }
 
         func textView(

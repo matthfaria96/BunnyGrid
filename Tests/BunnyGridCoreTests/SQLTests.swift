@@ -60,3 +60,20 @@ import Testing
         #expect(sql == #"SELECT * FROM "public"."users" WHERE age > 18 ORDER BY "id" DESC LIMIT 50 OFFSET 100"#)
     }
 }
+
+@Suite struct TriggerSplitTests {
+    @Test func keepsTriggerBodiesTogether() {
+        let script = """
+            CREATE TRIGGER t AFTER UPDATE ON books BEGIN UPDATE books SET n = CASE WHEN n > 1 THEN 0 ELSE n END; SELECT 1; END;
+            SELECT 2;
+            """
+        let parts = SQLSplitter.split(script)
+        #expect(parts.count == 2)
+        #expect(parts[0].hasSuffix("END"))
+        #expect(parts[1] == "SELECT 2")
+    }
+
+    @Test func plainStatementsStillSplit() {
+        #expect(SQLSplitter.split("select 'begin;'; select 2; -- end;\nselect 3") == ["select 'begin;'", "select 2", "-- end;\nselect 3"])
+    }
+}
