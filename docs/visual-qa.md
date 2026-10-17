@@ -81,3 +81,16 @@ Capturas `r2-*`, `r3-*`, `r4-*`, `r5-*` (claro e escuro).
 | Edit Connection (todas as abas) | r6-ec-sqlite-*, r6-ec-pg-*, r6-ec-mongo-*, r6-ec-redis-* | fixed (rodada 3) | A área principal tem largura fixa (900 − barra de perfis) e recorta o que passar: nenhuma aba empurra mais a folha para a esquerda. "Connection Profiles" e "Main Profile" voltaram ao recuo certo. Conferido em General/Advanced/Databases/Remarks (SQLite), General/Advanced/Databases/SSL/SSH/Remarks (PostgreSQL), MongoDB e Redis. |
 | Novas telas (1a3e169) | r4-result-edits-*, r4-result-form-*, r4-result-profiling-*, r4-design-uniques-*, r4-editconn-db-* | ok | Edição no resultado, Form View, Data Profiling e Uniques ok (Edit Connection: ver abaixo). |
 | Settings › Environment | — | — | Fica de fora (não se aplica ao BunnyGrid). |
+
+## Modos Simple / Advanced (2026-10-17)
+
+Capturas fora do git, em `<scratchpad>/modes/cap/zz-cap-*/shots/` (claro e escuro, pela cópia do harness com bundle id próprio, sem tocar nas preferências do app de verdade). A tela estava bloqueada: o harness agora trata as janelas visíveis como não ocultas (`virtualizeOcclusion`), senão o SwiftUI não expõe a árvore de acessibilidade.
+
+| Tela | Captura | Status | Notas |
+|---|---|---|---|
+| Boas-vindas (primeira execução) | zz-cap-onb-*-onboarding-sheet, -onboarding-simple-sheet | fixed | Ícone, dois cartões com prévia da janela (ícones da própria toolbar, não captura), Advanced marcado e "Default", aparência em segmentos aplicada na hora, Continue com Return. As frases dos cartões eram cortadas ("sync…"): agora até duas linhas, cartões da mesma altura. |
+| Janela principal Simple / Advanced | zz-cap-main-*-simple-table, -advanced-table | ok | Simple: Connection, New Query, Table, View, Query, View, avatar, mesmo espaçamento; barra da tabela sem Table Profile, Begin Transaction, Data Profiling, Data Generation, Data Masking e BI. |
+| Avatar → Theme | zz-cap-main-*-account-popover, -theme-menu-menu | ok | Linha "Theme" com o valor atual ("Dark · Simple"); menu com seções Appearance e Interface e marcas nativas. |
+| Settings › General (Simple) | zz-cap-main-*-settings-general | ok | Só General, Editor, Records e AI; linha Interface em segmentos com explicação. |
+| New Connection (Simple) | zz-cap-main-*-newconn-sheet | ok | Só os sete motores suportados; sem Vendor Filter nem serviços de nuvem. |
+| Aba do Advanced no Simple | interface-mode-shortcuts-advanced-tab-in-simple | ok | Selo "Advanced" discreto ao lado do título. |
