@@ -334,7 +334,7 @@ enum Benchmarks {
             let openStart = PerfTrace.now()
             _ = await timeToIdle("editor.open", detail: "\(lines) lines") { app.openQuery(text: script, in: context) }
             if let editor = views(SQLTextView.self).last {
-                await waitFor { editor.colouredUpTo >= (editor.string as NSString).length || editor.colouredUpTo == 0 }
+                await waitFor { editor.colouredUpTo == .max }
                 report("editor.colouredAll", PerfTrace.milliseconds(since: openStart), "chunked colouring finished")
             }
             try? await Task.sleep(for: .milliseconds(500))
@@ -356,7 +356,7 @@ enum Benchmarks {
             }
             if scenario == "typing" {
                 var samples: [Double] = []
-                for character in "select name, email from events where id = 42 and status = 'paid';\n" {
+                for character in "select name, email from events where id = 42 and status = 'paid';\nselect 1;\nx\n" {
                     samples.append(await timeToIdle("editor.keystroke") { type(String(character), in: window) })
                 }
                 reportStretches("editor.typing", samples)

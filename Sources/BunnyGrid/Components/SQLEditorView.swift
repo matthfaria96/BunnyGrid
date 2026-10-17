@@ -166,11 +166,24 @@ struct SQLEditorView: NSViewRepresentable {
             nonisolated(unsafe) let storage = textStorage
             MainActor.assumeIsolated {
                 let dirty = highlighter.edit(storage.string as NSString, editedRange: editedRange, changeInLength: delta)
-                // Keep the chunked colouring of a just-loaded text in step with the edit.
-                if let textView = storage.layoutManagers.first?.firstTextView as? SQLTextView, editedRange.location < textView.colouredUpTo {
+                let options = AppOptions.shared.values
+                guard let textView = storage.layoutManagers.first?.firstTextView as? SQLTextView else {
+                    SQLHighlighter.colour(storage, range: dirty, highlighter: highlighter, options: options)
+                    return
+                }
+                // Keep pending chunked colouring in step with the edit.
+                if textView.colouredUpTo != .max, editedRange.location < textView.colouredUpTo {
                     textView.colouredUpTo = max(textView.colouredUpTo + delta, editedRange.location)
                 }
-                SQLHighlighter.colour(storage, range: dirty, highlighter: highlighter, options: AppOptions.shared.values)
+                // A stray quote or `/*` can change the colours of everything after it: colour the part at the
+                // edit now and the rest a chunk per run-loop turn, instead of hundreds of thousands of characters
+                // inside the keystroke.
+                var now = dirty
+                if dirty.length > SQLHighlighter.colourChunk {
+                    now = highlighter.lineRange(for: NSRange(location: dirty.location, length: SQLHighlighter.colourChunk))
+                    SQLHighlighter.colourLater(textView, from: NSMaxRange(now), options: options)
+                }
+                SQLHighlighter.colour(storage, range: now, highlighter: highlighter, options: options)
             }
         }
 
@@ -211,7 +224,8 @@ final class SQLTextView: NSTextView {
     /// Sends typed text that is still pending to the binding (see `Coordinator.textDidChange`).
     var flushText: (() -> Void)?
     /// Progress of the chunked colouring of a newly loaded text (`SQLHighlighter.highlight`).
-    var colouredUpTo = 0
+    /// `.max` when nothing is pending.
+    var colouredUpTo = Int.max
     var colourGeneration = 0
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -334,14 +348,21 @@ enum SQLHighlighter {
         storage.endEditing()
         textView.typingAttributes[.font] = font
         textView.typingAttributes[.foregroundColor] = common
-        if let sqlTextView, first < full.length {
-            sqlTextView.colouredUpTo = first
-            continueColouring(sqlTextView, generation: sqlTextView.colourGeneration, options: options)
-        }
+        sqlTextView?.colouredUpTo = .max
+        if let sqlTextView, first < full.length { colourLater(sqlTextView, from: first, options: options) }
+    }
+
+    /// Colours `textView` from `offset` to the end in chunks, joining a pass already under way.
+    static func colourLater(_ textView: SQLTextView, from offset: Int, options: OptionsValues) {
+        let running = textView.colouredUpTo != .max
+        textView.colouredUpTo = min(textView.colouredUpTo, offset)
+        guard !running else { return }
+        textView.colourGeneration += 1
+        continueColouring(textView, generation: textView.colourGeneration, options: options)
     }
 
     /// Characters coloured per run-loop turn when a large text is loaded.
-    static let colourChunk = 24_000
+    static let colourChunk = 8_000
 
     private static func continueColouring(_ textView: SQLTextView, generation: Int, options: OptionsValues) {
         // After a delay, not `async`: the run loop must sleep in between so each frame is committed.
@@ -349,7 +370,10 @@ enum SQLHighlighter {
             guard let textView, textView.colourGeneration == generation, let storage = textView.textStorage,
                   let highlighter = textView.highlighter else { return }
             let start = min(textView.colouredUpTo, storage.length)
-            guard start < storage.length else { return }
+            guard start < storage.length else {
+                textView.colouredUpTo = .max
+                return
+            }
             let range = highlighter.lineRange(for: NSRange(location: start, length: min(colourChunk, storage.length - start)))
             storage.beginEditing()
             colour(storage, range: range, highlighter: highlighter, options: options)

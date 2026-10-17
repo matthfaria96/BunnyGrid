@@ -495,7 +495,20 @@ final class QueryTabModel: Identifiable {
 
     func completions(prefix: String, qualifier: String?) -> [String] {
         guard let context else { return [] }
-        return SQLCompletion.suggestions(prefix: prefix, qualifier: qualifier, sql: text, catalog: context.completionCatalog)
+        return PerfTrace.measure("editor.completions") {
+            SQLCompletion.suggestions(prefix: prefix, qualifier: qualifier, sql: completionWindow, catalog: context.completionCatalog)
+        }
+    }
+
+    /// The text around the cursor that aliases are looked up in: the statement being typed is in there,
+    /// and a long script isn't re-parsed (nor copied out of the editor) for every popup.
+    private var completionWindow: String {
+        guard let textView else { return text }
+        let string = textView.string as NSString
+        let cursor = min(textView.selectedRange().location, string.length)
+        let start = max(cursor - 8_000, 0), end = min(cursor + 8_000, string.length)
+        let range = string.rangeOfComposedCharacterSequences(for: NSRange(location: start, length: end - start))
+        return string.substring(with: range)
     }
 
     /// Debounced so typing doesn't fire a catalog query per keystroke.
