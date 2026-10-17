@@ -107,9 +107,10 @@ final class Session: Identifiable {
 
     let config: ConnectionConfig
     /// Server-level driver: lists databases, and serves every database on MySQL/SQLite.
-    /// Rebuilt in `connect()` once the password has been read from the Keychain.
+    /// Rebuilt in `connect()` once the secrets have been read from the Keychain.
     private(set) var driver: any DatabaseDriver
-    @ObservationIgnored private var password: String?
+    /// Database password, SSH password or key passphrase, SSL key passphrase.
+    @ObservationIgnored private var secrets = ConnectionSecrets()
     @ObservationIgnored private let keychain: KeychainStore
     private(set) var state: State = .connecting
     private(set) var serverVersion = ""
@@ -145,8 +146,8 @@ final class Session: Identifiable {
         if !config.kind.isFileBased {
             // Keychain reads can block on an access prompt; keep them off the main thread.
             let keychain = keychain, id = config.id
-            password = await Task.detached { keychain.password(for: id) }.value
-            driver = DriverFactory.make(config: Self.serverConfig(config), password: password)
+            secrets = await Task.detached { keychain.secrets(for: id) }.value
+            driver = DriverFactory.make(config: Self.serverConfig(config), secrets: secrets)
         }
         do {
             try await driver.connect()
@@ -195,7 +196,7 @@ final class Session: Identifiable {
     func makeDedicatedDriver(database: String) -> any DatabaseDriver {
         var databaseConfig = config
         if config.kind == .postgresql { databaseConfig.database = database }
-        return DriverFactory.make(config: databaseConfig, password: password)
+        return DriverFactory.make(config: databaseConfig, secrets: secrets)
     }
 
     /// Opens a database (idempotent). PostgreSQL needs a connection per database;
@@ -207,7 +208,7 @@ final class Session: Identifiable {
         if config.kind == .postgresql && name != serverDatabase {
             var databaseConfig = config
             databaseConfig.database = name
-            context = DatabaseContext(name: name, session: self, driver: DriverFactory.make(config: databaseConfig, password: password), ownsDriver: true)
+            context = DatabaseContext(name: name, session: self, driver: DriverFactory.make(config: databaseConfig, secrets: secrets), ownsDriver: true)
         } else {
             context = DatabaseContext(name: name, session: self, driver: driver, ownsDriver: false)
         }

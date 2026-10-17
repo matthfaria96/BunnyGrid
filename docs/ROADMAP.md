@@ -14,10 +14,10 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 | ✅ 0.5 | Dados e estrutura | Begin Transaction (conexão própria por aba), Data Generation, índices no designer, testes de integração com PostgreSQL | Navicat |
 | ✅ 0.6 | Design e experiência | Tema claro, grid e navegação no visual do Navicat, Table Profile, Data Profiling, Data Masking, estatísticas na aba Objects, abas persistentes, teclado no grid e na árvore | Navicat |
 | ✅ 0.7 | Visual macOS | Layout do Navicat para macOS: chrome unificado, ícones ilustrados, sidebar translúcida, painel Info/AI, aba Objects com ícones e modo grade, menu de contexto da conexão | Navicat macOS |
-| 0.8 | Próximos | Chaves estrangeiras no designer, Table Profile (filtros salvos), Export Wizard (vários objetos), túnel SSH, testes de integração com MySQL | Navicat |
+| 0.8 | Próximos | Chaves estrangeiras no designer, Table Profile (filtros salvos), Export Wizard (vários objetos), testes de integração com MySQL | Navicat |
 | 0.3 | Editor SQL | Consultas salvas, formatação, executar o comando sob o cursor, EXPLAIN | Navicat "Query Editor" |
 | 0.3 | Edição | Editor de valor para textos longos, JSON e blobs (inline só aceita uma linha), duplicar linha | Navicat "Cell Editors" |
-| 0.3 | Conectividade | Túnel SSH (Citadel, puro Swift), SSL com verificação e certificados de cliente, socket Unix | `tunnel.ts` |
+| ✅ 0.8 | Conectividade | Abas SSL e SSH do Navicat: túnel SSH (Citadel, puro Swift) com senha ou chave (ed25519, ECDSA; RSA só onde o servidor aceita `ssh-rsa`), host key por confiança no primeiro uso (`ssh-known-hosts.json`) e túnel compartilhado pelas conexões da sessão; SSL Prefer / Require / Verify CA / Verify Full com CA e certificado de cliente (PostgreSQL e MySQL); socket Unix (aba Advanced); Test Connection pelo mesmo caminho; senha SSH, passphrase da chave e do certificado só no Keychain | `tunnel.ts` |
 | 0.3 | Estrutura | Designer de tabela (ALTER), índices, chaves estrangeiras, DDL (`getTableCreateScript`) | `alterTableSql` |
 | 0.4 | Import/Export | CSV, JSON, SQL dump, Excel (libxlsxwriter, BSD) | Navicat Import/Export Wizard |
 | 0.5 | Mais bancos | SQL Server (FreeTDS), Redis (RediStack), MongoDB (MongoKitten) | Navicat §2 |
@@ -36,5 +36,8 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 - Cancelar uma consulta só cancela a tarefa local; falta enviar o cancelamento ao servidor (`pg_cancel_backend` / `KILL QUERY`).
 - O realce de sintaxe refaz o documento inteiro a cada tecla; trocar por tree-sitter (CodeEditSourceEditor) quando os scripts ficarem grandes.
 - Resultados são carregados inteiros na memória; falta paginação ou streaming no editor SQL.
-- O driver MySQL/MariaDB ainda não tem testes de integração (o PostgreSQL tem: `BUNNYGRID_PG_PORT`).
+- O driver MySQL/MariaDB ainda não tem testes de integração (o PostgreSQL tem: `BUNNYGRID_PG_PORT`). SSL, certificado de cliente e socket do MySQL foram escritos como no PostgreSQL, mas só o PostgreSQL foi testado contra um servidor real.
+- Túnel SSH: o Citadel assina chaves RSA com SHA-1 (`ssh-rsa`), que o OpenSSH 8.8+ recusa por padrão; o app mostra o motivo e sugere ed25519/ECDSA. Chaves ECDSA em formato OpenSSH só sem passphrase; chaves PEM criptografadas não são lidas. Login por senha não foi testado contra um servidor real (o sshd de teste roda sem root, só com chave). Sem keyboard-interactive, jump host nem agente SSH.
+- A host key desconhecida é aceita e gravada sem perguntar (TOFU); o fingerprint aparece na aba SSH e no Test Connection, e uma chave diferente bloqueia a conexão até "Forget Host Key". Falta um diálogo de confirmação na primeira conexão.
+- Quando a sessão SSH cai, as conexões abertas por ela falham; o próximo connect abre outro túnel, mas não há reconexão automática.
 - Builds de desenvolvimento são assinados ad hoc: a cada rebuild o macOS pode pedir de novo acesso às senhas no Keychain. Com assinatura Developer ID isso não acontece.

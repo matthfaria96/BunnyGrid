@@ -3,12 +3,17 @@ import BunnyGridCore
 import SwiftUI
 
 /// The connection form, laid out like Navicat's: Connection Profiles on the left, the type in the title,
-/// General / Advanced / SSL / Remarks tabs, the app → database diagram, and URI · Test · Cancel · Back · OK.
+/// General / Advanced / SSL / SSH / Remarks tabs, the app → database diagram, and URI · Test · Cancel · Back · OK.
 struct ConnectionEditorView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var config: ConnectionConfig
     @State private var password: String
+    /// SSH password or key passphrase, and SSL client key passphrase (Keychain only).
+    @State private var sshSecret: String
+    @State private var sslKeyPassphrase: String
+    /// Bumped to re-read the remembered SSH host key after a test or Forget Host Key.
+    @State private var hostKeyRevision = 0
     @State private var testState: TestState = .idle
     @State private var tab: Tab = .general
     @State private var showProfiles = true
@@ -27,13 +32,15 @@ struct ConnectionEditorView: View {
     }
 
     enum Tab: String, CaseIterable, Identifiable {
-        case general = "General", advanced = "Advanced", ssl = "SSL", remarks = "Remarks"
+        case general = "General", advanced = "Advanced", ssl = "SSL", ssh = "SSH", remarks = "Remarks"
         var id: Self { self }
     }
 
     init(draft: ConnectionDraft, type: ConnectionType? = nil, onBack: (() -> Void)? = nil) {
         _config = State(initialValue: draft.config)
         _password = State(initialValue: draft.password)
+        _sshSecret = State(initialValue: draft.sshSecret)
+        _sslKeyPassphrase = State(initialValue: draft.sslKeyPassphrase)
         isNew = draft.isNew
         self.type = type
         self.onBack = onBack
@@ -60,6 +67,7 @@ struct ConnectionEditorView: View {
                         case .general: general
                         case .advanced: advanced
                         case .ssl: ssl
+                        case .ssh: ssh
                         case .remarks: remarks
                         }
                     }
@@ -73,6 +81,15 @@ struct ConnectionEditorView: View {
         }
         .frame(width: 900, height: 700)
         .animation(.easeInOut(duration: 0.2), value: showProfiles)
+        #if DEBUG
+        .onAppear {
+            if let name = UserDefaults.standard.string(forKey: "connectionTab"),
+               let match = Tab.allCases.first(where: { $0.rawValue.lowercased() == name.lowercased() }) {
+                tab = match
+            }
+            if CommandLine.arguments.contains("--test-connection") { test() }
+        }
+        #endif
     }
 
     // MARK: Sidebar
@@ -171,9 +188,12 @@ struct ConnectionEditorView: View {
     private var serverRows: some View {
         row("Host") {
             TextField("", text: $config.host, prompt: Text(type?.vendor?.hostHint ?? "localhost"))
+                .disabled(usesSocket)
+                .help(usesSocket ? "Ignored: the connection uses the socket file set in the Advanced tab." : "")
         }
         row("Port") {
             TextField("", value: $config.port, format: .number.grouping(.never)).frame(width: 90)
+                .disabled(usesSocket && config.kind != .postgresql)
         }
         row("User Name") { TextField("", text: $config.username) }
         row("Password") { SecureField("", text: $password) }
@@ -200,6 +220,26 @@ struct ConnectionEditorView: View {
                         .help("Blocks INSERT, UPDATE, DELETE and DDL from BunnyGrid.")
                 }
             }
+            if !config.kind.isFileBased {
+                row("") {
+                    Toggle("Use socket file", isOn: Binding(
+                        get: { config.socketPath != nil },
+                        set: { config.socketPath = $0 ? (config.socketPath ?? defaultSocketPath) : nil }
+                    ))
+                }
+                if config.socketPath != nil {
+                    row("Socket File") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            fileField(Binding(get: { config.socketPath ?? "" }, set: { config.socketPath = $0 }), prompt: defaultSocketPath, directories: config.kind == .postgresql)
+                            Text(config.kind == .postgresql
+                                 ? "The socket's directory (e.g. /tmp) or the .s.PGSQL file. Host is ignored; Port picks the file. SSL doesn't apply."
+                                 : "The server's socket file (e.g. /tmp/mysql.sock). Host and Port are ignored; SSL doesn't apply.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
             row("Initial Queries") {
                 VStack(alignment: .leading, spacing: 4) {
                     TextEditor(text: Binding(get: { config.initialQueries ?? "" }, set: { config.initialQueries = $0.isEmpty ? nil : $0 }))
@@ -220,24 +260,154 @@ struct ConnectionEditorView: View {
     // MARK: SSL
 
     private var ssl: some View {
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 12) {
+        let files = Binding(get: { config.ssl ?? SSLFiles() }, set: { config.ssl = $0.isEmpty ? nil : $0 })
+        return Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 12) {
             row("") {
                 Toggle("Use SSL", isOn: Binding(get: { config.tls != .disable }, set: { config.tls = $0 ? .require : .disable }))
             }
             row("SSL Mode") {
                 Picker("", selection: $config.tls) {
                     Text("Prefer (try SSL, fall back to plain)").tag(TLSMode.prefer)
-                    Text("Require").tag(TLSMode.require)
+                    Text("Require (encrypt, don't check the certificate)").tag(TLSMode.require)
+                    Text("Verify CA (check the certificate chain)").tag(TLSMode.verifyCA)
+                    Text("Verify Full (chain and host name)").tag(TLSMode.verifyFull)
                     Text("Disabled").tag(TLSMode.disable)
                 }
                 .labelsHidden()
-                .frame(width: 280)
+                .frame(width: 330)
             }
+            Group {
+                row("Client Key") { fileField(files.clientKeyPath, prompt: "client-key.pem") }
+                row("Client Key Passphrase") {
+                    SecureField("", text: $sslKeyPassphrase, prompt: Text("Only for an encrypted key"))
+                }
+                row("Client Certificate") { fileField(files.clientCertificatePath, prompt: "client-cert.pem") }
+                row(config.kind == .postgresql ? "Root Certificate" : "CA Certificate") {
+                    fileField(files.caCertificatePath, prompt: "System trusted certificates")
+                }
+            }
+            .disabled(config.tls == .disable)
             row("") {
-                Text("Cloud services usually require SSL. The server certificate is checked against the system's trusted certificates.")
+                Text(sslHint)
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: 360, alignment: .leading)
+                    .frame(width: 400, alignment: .leading)
+            }
+        }
+        .frame(width: 560)
+    }
+
+    private var sslHint: String {
+        var lines = ["Cloud services usually require SSL. Verify CA and Verify Full check the server certificate against the CA certificate above, or against the system's trusted certificates when it is empty. Through an SSH tunnel the host name checked is still the Host in General."]
+        lines.append("Client certificate and key (PEM) are for servers that log users in by certificate. The key's passphrase is kept in the Keychain.")
+        if usesSocket { lines.append("This connection uses a socket file (Advanced tab), so SSL is not used.") }
+        return lines.joined(separator: "\n\n")
+    }
+
+    // MARK: SSH
+
+    private var sshBinding: Binding<SSHTunnelConfig> {
+        Binding(get: { config.ssh ?? SSHTunnelConfig() }, set: { config.ssh = $0 })
+    }
+
+    private var ssh: some View {
+        let tunnel = sshBinding
+        return Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 12) {
+            row("") {
+                Toggle("Use SSH tunnel", isOn: tunnel.enabled)
+            }
+            Group {
+                row("Host") { TextField("", text: tunnel.host, prompt: Text("bastion.example.com")) }
+                row("Port") {
+                    TextField("", value: tunnel.port, format: .number.grouping(.never)).frame(width: 90)
+                }
+                row("User Name") { TextField("", text: tunnel.username) }
+                row("Authentication Method") {
+                    Picker("", selection: tunnel.authMethod) {
+                        ForEach(SSHAuthMethod.allCases) { Text($0.displayName).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 180)
+                }
+                if tunnel.wrappedValue.authMethod == .password {
+                    row("Password") { SecureField("", text: $sshSecret) }
+                } else {
+                    row("Private Key") { fileField(tunnel.privateKeyPath, prompt: "~/.ssh/id_ed25519", startIn: "~/.ssh") }
+                    row("Passphrase") { SecureField("", text: $sshSecret, prompt: Text("Only for an encrypted key")) }
+                }
+                row("Host Key") { hostKeyRow(tunnel.wrappedValue) }
+            }
+            .disabled(!tunnel.wrappedValue.enabled)
+            row("") {
+                Text(sshHint)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 400, alignment: .leading)
+            }
+        }
+        .frame(width: 560)
+    }
+
+    private var sshHint: String {
+        var text = "BunnyGrid forwards a local port through the SSH server to Host and Port in General, as the SSH server sees them (often localhost). Keys: ed25519 or ECDSA (OpenSSH or PEM); RSA keys only work where the server still accepts ssh-rsa signatures. Passwords and passphrases are kept in the Keychain."
+        if usesSocket { text += "\n\nA socket file (Advanced tab) can't be used through the tunnel." }
+        return text
+    }
+
+    @ViewBuilder
+    private func hostKeyRow(_ tunnel: SSHTunnelConfig) -> some View {
+        let _ = hostKeyRevision
+        if let key = KnownHostsStore().key(forHost: tunnel.host.trimmingCharacters(in: .whitespaces), port: tunnel.port), !tunnel.host.isEmpty {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(key.typeName) \(key.fingerprint)")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text("Trusted since \(key.firstSeen.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Button("Forget Host Key") {
+                    KnownHostsStore().forget(host: tunnel.host.trimmingCharacters(in: .whitespaces), port: tunnel.port)
+                    hostKeyRevision += 1
+                }
+                .help("Trust whatever key the server presents next time, e.g. after it was reinstalled.")
+            }
+            .frame(width: 400, alignment: .leading)
+        } else {
+            Text("Not seen yet. The key the server presents on the first connection is remembered; a different key later blocks the connection.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 400, alignment: .leading)
+        }
+    }
+
+    // MARK: Files
+
+    private var usesSocket: Bool { config.activeSocketPath != nil }
+
+    private var defaultSocketPath: String {
+        config.kind == .postgresql ? "/tmp" : "/tmp/mysql.sock"
+    }
+
+    /// A path field with a "…" button that opens a file panel.
+    private func fileField(_ path: Binding<String>, prompt: String, directories: Bool = false, startIn: String? = nil) -> some View {
+        HStack(spacing: 4) {
+            TextField("", text: path, prompt: Text(prompt))
+            Button("…") {
+                let panel = NSOpenPanel()
+                panel.canChooseFiles = true
+                panel.canChooseDirectories = directories
+                panel.showsHiddenFiles = true
+                let current = (path.wrappedValue as NSString).expandingTildeInPath
+                if !current.isEmpty {
+                    panel.directoryURL = URL(fileURLWithPath: current).deletingLastPathComponent()
+                } else if let startIn {
+                    panel.directoryURL = URL(fileURLWithPath: (startIn as NSString).expandingTildeInPath)
+                }
+                if panel.runModal() == .OK, let url = panel.url { path.wrappedValue = url.path }
             }
         }
     }
@@ -283,7 +453,7 @@ struct ConnectionEditorView: View {
             }
             Button("OK") {
                 if config.name.isEmpty { config.name = type.map { $0.isEngine ? config.displayName : $0.name } ?? config.displayName }
-                model.save(config, password: password)
+                model.save(config, secrets: secrets)
                 if isNew { model.connect(config.id) }
                 dismiss()
             }
@@ -317,22 +487,37 @@ struct ConnectionEditorView: View {
     }
 
     private var isValid: Bool {
-        config.kind.isFileBased ? !config.filePath.isEmpty : !config.host.isEmpty && config.port > 0
+        if config.kind.isFileBased { return !config.filePath.isEmpty }
+        if let ssh = config.activeSSH, ssh.host.trimmingCharacters(in: .whitespaces).isEmpty || ssh.username.isEmpty || ssh.port <= 0 {
+            return false
+        }
+        return usesSocket || (!config.host.isEmpty && config.port > 0)
     }
 
+    private var secrets: ConnectionSecrets {
+        ConnectionSecrets(password: password, sshSecret: sshSecret, sslKeyPassphrase: sslKeyPassphrase)
+    }
+
+    /// Connects like a real session would: through the SSH tunnel and with the SSL tab's settings.
     private func test() {
         testState = .testing
-        let driver = model.makeDriver(for: config, password: password)
+        let driver = model.makeDriver(for: config, secrets: secrets)
         let config = config
         Task {
             do {
                 try await driver.connect()
                 try await Session.runInitialQueries(config, on: driver)
-                let version = try await driver.serverVersion()
+                var detail = try await driver.serverVersion()
                 await driver.disconnect()
-                testState = .success(version)
+                if let ssh = config.activeSSH,
+                   let key = KnownHostsStore().key(forHost: ssh.host.trimmingCharacters(in: .whitespaces), port: ssh.port) {
+                    detail += "\nSSH host key: \(key.typeName) \(key.fingerprint)"
+                }
+                hostKeyRevision += 1
+                testState = .success(detail)
             } catch {
                 await driver.disconnect()
+                hostKeyRevision += 1
                 testState = .failure(error.localizedDescription)
             }
         }

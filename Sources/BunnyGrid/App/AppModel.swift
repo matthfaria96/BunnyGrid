@@ -8,8 +8,16 @@ struct ConnectionDraft: Identifiable {
     var config: ConnectionConfig
     var password: String
     var isNew: Bool
+    /// SSH password or private key passphrase (SSH tab), and the SSL client key passphrase. Keychain only.
+    var sshSecret = ""
+    var sslKeyPassphrase = ""
 
     var id: UUID { config.id }
+
+    /// Everything the form holds that goes to the Keychain.
+    var secrets: ConnectionSecrets {
+        ConnectionSecrets(password: password, sshSecret: sshSecret, sslKeyPassphrase: sslKeyPassphrase)
+    }
 }
 
 /// Top-level app state: saved connections, open sessions, the navigator selection and the tabs.
@@ -251,24 +259,35 @@ final class AppModel {
 
     func edit(_ id: UUID) {
         guard let config = connection(id: id) else { return }
-        draft = ConnectionDraft(config: config, password: keychain.password(for: id) ?? "", isNew: false)
+        let secrets = keychain.secrets(for: id)
+        var draft = ConnectionDraft(config: config, password: secrets.password ?? "", isNew: false)
+        draft.sshSecret = secrets.sshSecret ?? ""
+        draft.sslKeyPassphrase = secrets.sslKeyPassphrase ?? ""
+        self.draft = draft
     }
 
     func duplicate(_ id: UUID) {
         guard var copy = connection(id: id) else { return }
-        let password = keychain.password(for: id)
+        let secrets = keychain.secrets(for: id)
         copy.id = UUID()
         copy.name = copy.displayName + " copy"
-        save(copy, password: password)
+        save(copy, secrets: secrets)
     }
 
+    /// Saves with a new database password, keeping the SSH and SSL secrets already in the Keychain.
     func save(_ config: ConnectionConfig, password: String?) {
+        var secrets = keychain.secrets(for: config.id)
+        secrets.password = password
+        save(config, secrets: secrets)
+    }
+
+    func save(_ config: ConnectionConfig, secrets: ConnectionSecrets) {
         if let index = connections.firstIndex(where: { $0.id == config.id }) {
             connections[index] = config
         } else {
             connections.append(config)
         }
-        keychain.setPassword(config.kind.isFileBased ? nil : password, for: config.id)
+        keychain.setSecrets(config.kind.isFileBased ? ConnectionSecrets() : secrets, for: config.id)
         persist()
         if sessions[config.id] != nil { disconnect(config.id) }
         if let group = config.group { expanded.insert(.group(group)) }
@@ -278,7 +297,7 @@ final class AppModel {
     func delete(_ id: UUID) {
         disconnect(id)
         connections.removeAll { $0.id == id }
-        keychain.setPassword(nil, for: id)
+        keychain.setSecrets(ConnectionSecrets(), for: id)
         if navSelection?.connectionID == id { navSelection = nil }
         persist()
         clearHistory(for: id)
@@ -296,12 +315,19 @@ final class AppModel {
         DriverFactory.make(config: config, password: password)
     }
 
+    /// A driver for Test Connection: goes through the form's SSH tunnel and SSL settings like a real session.
+    func makeDriver(for config: ConnectionConfig, secrets: ConnectionSecrets) -> any DatabaseDriver {
+        DriverFactory.make(config: config, secrets: secrets)
+    }
+
     // MARK: - Sessions
 
     @discardableResult
     func connect(_ id: UUID) -> Session? {
         guard let config = connection(id: id) else { return nil }
         if let existing = sessions[id], !existing.isFailed { return existing }
+        // A failed session may still hold a connection or an SSH tunnel lease (e.g. Initial Queries failed).
+        sessions[id]?.close()
         let session = Session(config: config, keychain: keychain)
         session.onQueryExecuted = { [weak self] entry in self?.record(entry) }
         sessions[id] = session
@@ -740,6 +766,8 @@ final class AppModel {
             }
         }
         #if DEBUG
+        // Opens the first saved connection's editor; `-connectionTab ssl|ssh|advanced` picks the tab.
+        if CommandLine.arguments.contains("--edit-connection"), let first = connections.first { edit(first.id) }
         if CommandLine.arguments.contains("--new-connection") { showingConnectionPicker = true }
         if CommandLine.arguments.contains("--account-menu") { showingAccountMenu = true }
         if CommandLine.arguments.contains("--ai-pane") { showAssistant = true; rightPane = .ai }

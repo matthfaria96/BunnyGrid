@@ -139,10 +139,15 @@ extension DatabaseDriver {
 
 public enum DriverFactory {
     public static func make(config: ConnectionConfig, password: String?) -> any DatabaseDriver {
+        make(config: config, secrets: ConnectionSecrets(password: password))
+    }
+
+    /// A driver with every secret it may need: the password, the SSH password or key passphrase, the SSL key passphrase.
+    public static func make(config: ConnectionConfig, secrets: ConnectionSecrets) -> any DatabaseDriver {
         switch config.kind {
         case .sqlite: SQLiteDriver(config: config)
-        case .postgresql: PostgresDriver(config: config, password: password)
-        case .mysql, .mariadb: MySQLDriver(config: config, password: password)
+        case .postgresql: PostgresDriver(config: config, secrets: secrets)
+        case .mysql, .mariadb: MySQLDriver(config: config, secrets: secrets)
         }
     }
 }

@@ -219,9 +219,19 @@ private struct ConnectionInfo: View {
             if config.kind.isFileBased {
                 InfoField(label: "Database File", value: config.filePath)
             } else {
-                InfoField(label: "Host", value: config.host)
-                InfoField(label: "Port", value: String(config.port))
+                if let socket = config.activeSocketPath {
+                    InfoField(label: "Socket File", value: socket)
+                } else {
+                    InfoField(label: "Host", value: config.host)
+                    InfoField(label: "Port", value: String(config.port))
+                }
                 InfoField(label: "User Name", value: config.username)
+                if let ssh = config.activeSSH {
+                    InfoField(label: "SSH Host", value: "\(ssh.username)@\(ssh.host):\(ssh.port)")
+                }
+                if config.tls != .disable && config.activeSocketPath == nil {
+                    InfoField(label: "SSL", value: config.tls.displayName)
+                }
             }
             InfoField(label: "Settings Location", value: AppModel.dataDirectory.appending(path: "connections.json").path)
             InfoField(label: "Remarks", value: config.remarks ?? "")

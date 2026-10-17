@@ -49,6 +49,10 @@ BUNNYGRID_PG_PORT=5432 BUNNYGRID_PG_USER=$USER BUNNYGRID_PG_PASSWORD= BUNNYGRID_
 
 Sem `BUNNYGRID_PG_PORT` esses testes são pulados. Cada teste cria e apaga um schema próprio.
 
+Os testes de SSL, socket e túnel SSH (`ConnectivityIntegrationTests.swift`) usam outras variáveis: `BUNNYGRID_TLS_PG_PORT`, `BUNNYGRID_TLS_PG_USER` e `BUNNYGRID_TLS_PG_CERTS` (PostgreSQL com `ssl = on` e uma CA própria), `BUNNYGRID_PG_SOCKET_DIR`, e `BUNNYGRID_SSH_PORT`, `BUNNYGRID_SSH_USER` e `BUNNYGRID_SSH_KEYS` (um `sshd` com chaves de teste). O comentário no topo do arquivo descreve os arquivos esperados. Com o Remote Login desligado, um `sshd -D -f <config>` do próprio usuário numa porta alta serve.
+
+No build de debug, `--edit-connection` abre o editor da primeira conexão salva (`-connectionTab ssl|ssh|advanced` escolhe a aba) e `--test-connection` roda o Test Connection ao abrir.
+
 ## Estrutura
 
 ```
@@ -57,6 +61,7 @@ Sources/
     Models/               ConnectionConfig, objetos, colunas, CellValue, QueryResult
     Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO)
     SQL/                  SQLDialect (aspas, SELECT paginado) e SQLSplitter (divide scripts em comandos)
+    Network/              túnel SSH (Citadel), host keys, configuração SSL e endpoint (TCP, socket ou túnel) usado pelos drivers
     Storage/              ConnectionStore (JSON em Application Support) e KeychainStore (senhas)
   BunnyGrid/              app SwiftUI
     App/                  BunnyGridApp, AppModel (conexões e sessões), Session (árvore e abas)
@@ -75,7 +80,8 @@ Dados do usuário:
 - conversas do AI Assistant: `~/Library/Application Support/BunnyGrid/ai-chats.json`
 - chaves de API: Keychain, serviços `app.bunnygrid.anthropic` (Claude) e `app.bunnygrid.openai` (ChatGPT)
 - foto de perfil escolhida no app: `profile-photo.png` na mesma pasta (sem ela, usa a foto da conta do macOS)
-- senhas: Keychain, serviço `app.bunnygrid.connections`
+- senhas: Keychain, serviço `app.bunnygrid.connections` (conta `<id>` para o banco, `<id>.ssh` para a senha SSH ou passphrase da chave, `<id>.ssl-key` para a passphrase da chave do certificado de cliente)
+- host keys SSH aceitas no primeiro uso: `~/Library/Application Support/BunnyGrid/ssh-known-hosts.json`
 
 ## O que já funciona (v0.7)
 

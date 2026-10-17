@@ -18,6 +18,27 @@ public struct KeychainStore: Sendable {
         setPassword(password, account: id.uuidString)
     }
 
+    /// Account of the SSH password or private key passphrase for a connection.
+    public static func sshAccount(for id: UUID) -> String { id.uuidString + ".ssh" }
+    /// Account of the SSL client key passphrase for a connection.
+    public static func sslKeyAccount(for id: UUID) -> String { id.uuidString + ".ssl-key" }
+
+    /// Every secret saved for a connection: database password, SSH secret and SSL key passphrase.
+    public func secrets(for id: UUID) -> ConnectionSecrets {
+        ConnectionSecrets(
+            password: password(for: id),
+            sshSecret: password(account: Self.sshAccount(for: id)),
+            sslKeyPassphrase: password(account: Self.sslKeyAccount(for: id))
+        )
+    }
+
+    /// Saves all of a connection's secrets; nil and empty values remove the item.
+    public func setSecrets(_ secrets: ConnectionSecrets, for id: UUID) {
+        setPassword(secrets.password, for: id)
+        setPassword(secrets.sshSecret, account: Self.sshAccount(for: id))
+        setPassword(secrets.sslKeyPassphrase, account: Self.sslKeyAccount(for: id))
+    }
+
     public func password(account: String) -> String? {
         var query = baseQuery(account)
         query[kSecReturnData as String] = true

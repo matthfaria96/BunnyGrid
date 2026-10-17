@@ -1,46 +1,82 @@
 import Foundation
 import MySQLNIO
+import NIOSSL
 
 /// MySQL / MariaDB driver on `MySQLNIO`. MySQL has no schemas inside a database,
 /// so the "schema" argument in the browser is the database name.
 public actor MySQLDriver: DatabaseDriver {
     public nonisolated let config: ConnectionConfig
     private let password: String?
+    private let secrets: ConnectionSecrets
     private var connection: MySQLConnection?
+    /// The SSH tunnel (if any) the connection goes through; released on disconnect.
+    private var endpoint: ConnectionEndpoint?
 
     public init(config: ConnectionConfig, password: String?) {
+        self.init(config: config, secrets: ConnectionSecrets(password: password))
+    }
+
+    public init(config: ConnectionConfig, secrets: ConnectionSecrets) {
         self.config = config
-        self.password = password
+        self.password = secrets.password
+        self.secrets = secrets
     }
 
     public func connect() async throws {
         guard connection == nil else { return }
-        var tlsConfig: TLSConfiguration?
-        if config.tls != .disable {
-            var tls = TLSConfiguration.makeClientConfiguration()
-            tls.certificateVerification = .none
-            tlsConfig = tls
-        }
+        let endpoint = try await ConnectionEndpoint.open(for: config, sshSecret: secrets.sshSecret)
         do {
-            let address = try SocketAddress.makeAddressResolvingHost(config.host, port: config.port)
+            connection = try await openConnection(at: endpoint)
+            self.endpoint = endpoint
+        } catch {
+            await endpoint.close()
+            throw error
+        }
+    }
+
+    /// A new connection to the server through `endpoint` (direct, socket file or SSH tunnel) with the SSL tab's settings.
+    func openConnection(at endpoint: ConnectionEndpoint) async throws -> MySQLConnection {
+        let tlsConfig: TLSConfiguration?
+        let address: SocketAddress
+        do {
+            // MySQL treats socket files as secure transport, so SSL only applies over TCP.
+            tlsConfig = endpoint.usesTLS ? try ConnectionTLS.configuration(for: config, keyPassphrase: secrets.sslKeyPassphrase) : nil
+            switch endpoint.address {
+            case .tcp(let host, let port): address = try SocketAddress.makeAddressResolvingHost(host, port: port)
+            case .unixSocket(let path): address = try SocketAddress(unixDomainSocketPath: path)
+            }
+        } catch {
+            throw DatabaseError.connectionFailed(ConnectionErrorText.describe(error))
+        }
+        let connection: MySQLConnection
+        do {
             connection = try await MySQLConnection.connect(
                 to: address,
                 username: config.username,
                 database: config.database,
                 password: password,
                 tlsConfiguration: tlsConfig,
-                serverHostname: config.host,
+                serverHostname: endpoint.tlsServerName,
                 logger: Logger(label: "BunnyGrid.MySQL"),
                 on: MultiThreadedEventLoopGroup.singleton.any()
             ).get()
         } catch {
-            throw DatabaseError.connectionFailed(String(describing: error))
+            throw DatabaseError.connectionFailed(ConnectionErrorText.describe(error))
         }
+        // MySQLNIO falls back to plain TCP when the server has no SSL; Require and Verify modes must not.
+        if tlsConfig != nil, config.tls.isEnforced,
+           (try? await connection.channel.pipeline.containsHandler(type: NIOSSLClientHandler.self).get()) == nil {
+            try? await connection.close().get()
+            throw DatabaseError.connectionFailed(ConnectionTLSError.serverRefusedSSL(mode: config.tls).errorDescription ?? "")
+        }
+        return connection
     }
 
     public func disconnect() async {
         try? await connection?.close().get()
         connection = nil
+        await endpoint?.close()
+        endpoint = nil
     }
 
     public func serverVersion() async throws -> String {

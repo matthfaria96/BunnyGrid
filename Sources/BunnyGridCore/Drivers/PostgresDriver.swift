@@ -6,53 +6,75 @@ import PostgresNIO
 public actor PostgresDriver: DatabaseDriver {
     public nonisolated let config: ConnectionConfig
     private let password: String?
+    private let secrets: ConnectionSecrets
     private var connection: PostgresConnection?
+    /// The SSH tunnel (if any) the connection goes through; released on disconnect.
+    private var endpoint: ConnectionEndpoint?
     private let logger = Logger(label: "BunnyGrid.Postgres")
 
     public init(config: ConnectionConfig, password: String?) {
+        self.init(config: config, secrets: ConnectionSecrets(password: password))
+    }
+
+    public init(config: ConnectionConfig, secrets: ConnectionSecrets) {
         self.config = config
-        self.password = password
+        self.password = secrets.password
+        self.secrets = secrets
     }
 
     public func connect() async throws {
         guard connection == nil else { return }
-        let tls: PostgresConnection.Configuration.TLS
+        let endpoint = try await ConnectionEndpoint.open(for: config, sshSecret: secrets.sshSecret)
         do {
-            var tlsConfig = TLSConfiguration.makeClientConfiguration()
-            // Same semantics as libpq's sslmode=prefer/require: encrypt without verifying the chain.
-            tlsConfig.certificateVerification = .none
-            switch config.tls {
-            case .disable: tls = .disable
-            case .prefer: tls = .prefer(try NIOSSLContext(configuration: tlsConfig))
-            case .require: tls = .require(try NIOSSLContext(configuration: tlsConfig))
-            }
+            connection = try await openConnection(at: endpoint)
+            self.endpoint = endpoint
         } catch {
-            throw DatabaseError.connectionFailed(error.localizedDescription)
+            await endpoint.close()
+            throw error
         }
+    }
 
-        let configuration = PostgresConnection.Configuration(
-            host: config.host,
-            port: config.port,
-            username: config.username,
-            password: password,
-            database: config.database.isEmpty ? nil : config.database,
-            tls: tls
-        )
+    /// A new connection to the server through `endpoint` (direct, socket file or SSH tunnel) with the SSL tab's settings.
+    func openConnection(at endpoint: ConnectionEndpoint, id: Int = 1) async throws -> PostgresConnection {
+        var configuration: PostgresConnection.Configuration
+        let database = config.database.isEmpty ? nil : config.database
+        switch endpoint.address {
+        case .unixSocket(let path):
+            // Like libpq, SSL doesn't apply to socket files.
+            configuration = .init(unixSocketPath: path, username: config.username, password: password, database: database)
+        case .tcp(let host, let port):
+            let tls: PostgresConnection.Configuration.TLS
+            do {
+                if let tlsConfig = try ConnectionTLS.configuration(for: config, keyPassphrase: secrets.sslKeyPassphrase) {
+                    let context = try NIOSSLContext(configuration: tlsConfig)
+                    tls = config.tls.isEnforced ? .require(context) : .prefer(context)
+                } else {
+                    tls = .disable
+                }
+            } catch {
+                throw DatabaseError.connectionFailed(ConnectionErrorText.describe(error))
+            }
+            configuration = .init(host: host, port: port, username: config.username, password: password, database: database, tls: tls)
+            configuration.options.tlsServerName = endpoint.tlsServerName
+        }
+        configuration.options.connectTimeout = .seconds(15)
         do {
-            connection = try await PostgresConnection.connect(
+            return try await PostgresConnection.connect(
                 on: MultiThreadedEventLoopGroup.singleton.any(),
                 configuration: configuration,
-                id: 1,
+                id: id,
                 logger: logger
             ).get()
         } catch {
-            throw DatabaseError.connectionFailed(Self.message(for: error))
+            throw DatabaseError.connectionFailed(Self.connectMessage(for: error, mode: config.tls))
         }
     }
 
     public func disconnect() async {
         try? await connection?.close().get()
         connection = nil
+        await endpoint?.close()
+        endpoint = nil
     }
 
     public func serverVersion() async throws -> String {
@@ -334,6 +356,19 @@ public actor PostgresDriver: DatabaseDriver {
     private static let timestampTZFormat = Date.ISO8601FormatStyle(timeZone: .current)
         .year().month().day().dateTimeSeparator(.space).time(includingFractionalSeconds: false).timeZone(separator: .colon)
     private static let dateFormat = Date.ISO8601FormatStyle(timeZone: .gmt).year().month().day()
+
+    /// Connection errors: server messages, SSL refusals and handshake failures in words.
+    private static func connectMessage(for error: any Error, mode: TLSMode) -> String {
+        if let psql = error as? PSQLError {
+            if let serverMessage = psql.serverInfo?[.message] { return serverMessage }
+            if psql.code == .sslUnsupported {
+                return ConnectionTLSError.serverRefusedSSL(mode: mode).errorDescription ?? "SSL is not supported by the server."
+            }
+            if let underlying = psql.underlying { return ConnectionErrorText.describe(underlying) }
+            return String(reflecting: psql.code)
+        }
+        return ConnectionErrorText.describe(error)
+    }
 
     private static func message(for error: any Error) -> String {
         if let psql = error as? PSQLError {
