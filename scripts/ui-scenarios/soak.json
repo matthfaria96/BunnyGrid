@@ -16,24 +16,31 @@
       {"op": "waitFor", "probe": "tabKind", "equals": "query"},
       {"op": "action", "name": "closeTab"}
     ]},
+    {"op": "hangs", "mode": "report", "maxMs": 100, "note": "tabs"},
     {"op": "waitFor", "probe": "tabCount", "equals": 0},
+    {"op": "wait", "ms": 1000},
     {"op": "log", "text": "memory after 200 tabs (MB):", "probe": "memoryMB"},
+    {"op": "hangs", "mode": "start"},
     {"op": "action", "name": "openQuery", "text": "SELECT 1"},
     {"op": "repeat", "times": 500, "logEvery": 100, "note": "run 500 queries", "steps": [
       {"op": "action", "name": "runQuery", "text": "SELECT c.*, $i AS run FROM customers c LIMIT 200"},
       {"op": "assert", "probe": "tab.resultCount", "equals": 1}
     ]},
+    {"op": "hangs", "mode": "report", "maxMs": 100, "note": "queries"},
     {"op": "log", "text": "memory after 500 queries (MB):", "probe": "memoryMB"},
     {"op": "action", "name": "closeAllTabs"},
     {"op": "action", "name": "openTable", "table": "customers"},
     {"op": "action", "name": "openTable", "table": "orders"},
     {"op": "action", "name": "openQuery", "text": "SELECT * FROM products"},
     {"op": "action", "name": "openModel"},
+    {"op": "hangs", "mode": "start"},
     {"op": "repeat", "times": 200, "note": "switch tabs", "steps": [
       {"op": "action", "name": "selectTab", "text": "$i"},
       {"op": "wait", "ms": 15}
     ]},
+    {"op": "hangs", "mode": "report", "maxMs": 100, "note": "tab switching"},
     {"op": "action", "name": "closeAllTabs"},
+    {"op": "hangs", "mode": "start"},
     {"op": "repeat", "times": 10, "note": "open every Tools wizard", "steps": [
       {"op": "menuBar", "path": ["Tools", "Data Transfer…"]},
       {"op": "waitFor", "sheet": true, "equals": "true"},
@@ -48,8 +55,8 @@
       {"op": "closeSheet"},
       {"op": "waitFor", "sheet": true, "equals": "false"}
     ]},
+    {"op": "hangs", "mode": "report", "maxMs": 100, "note": "wizards"},
     {"op": "wait", "ms": 1500},
-    {"op": "log", "text": "memory at end (MB):", "probe": "memoryMB"},
-    {"op": "hangs", "mode": "report", "maxMs": 100}
+    {"op": "log", "text": "memory at end (MB):", "probe": "memoryMB"}
   ]
 }

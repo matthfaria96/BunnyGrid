@@ -81,6 +81,14 @@ public actor PostgresDriver: DatabaseDriver {
         }
     }
 
+    deinit {
+        // A driver released without disconnect() (a tab closed mid-connect, a test that expected a failure) must
+        // still close its socket: PostgresNIO asserts on a connection released open, and the server keeps the backend.
+        if let connection, !connection.isClosed {
+            connection.close().whenComplete { _ in _ = connection }
+        }
+    }
+
     public func disconnect() async {
         wantsConnection = false
         await dropConnection()

@@ -351,7 +351,7 @@ final class UIHarness {
                 let over = stretches.filter { $0 > limit }
                 let summary = String(format: "main thread: %d busy stretches, max %.1f ms, %d over %.0f ms", stretches.count,
                                      stretches.max() ?? 0, over.count, limit)
-                logs.append(summary)
+                logs.append(((step["note"] as? String).map { "\($0): " } ?? "") + summary)
                 if step["assert"] as? Bool == true, !over.isEmpty { throw Failure(summary) }
             }
         case "dump":

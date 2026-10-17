@@ -838,7 +838,8 @@ final class GridTableView: NSTableView {
         }
     }
 
-    private var observedClip: NSClipView?
+    // Weak: the clip view owns the table (its document view); a strong reference kept every grid alive.
+    private weak var observedClip: NSClipView?
     private var observesColumns = false
 
     override func viewDidMoveToSuperview() {
