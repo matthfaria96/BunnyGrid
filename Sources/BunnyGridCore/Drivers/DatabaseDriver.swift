@@ -37,6 +37,9 @@ public protocol DatabaseDriver: AnyObject, Sendable {
     /// Runs exactly one statement.
     func executeStatement(_ sql: String) async throws -> QueryResult
 
+    /// Runs one statement with typed values bound to its placeholders (`SQLDialect.placeholder(_:)`).
+    func executeStatement(_ sql: String, parameters: [SQLParameter]) async throws -> QueryResult
+
     /// Row estimates, sizes and comments for the Objects tab, keyed by table name.
     func tableStatistics(schema: String?) async throws -> [String: TableStatistics]
     func objectDDL(name: String, kind: DatabaseObjectKind, schema: String?) async throws -> String
@@ -106,19 +109,25 @@ extension DatabaseDriver {
     /// Applies grid changes in one transaction. Rolls back everything if any statement fails
     /// or if an UPDATE/DELETE does not hit exactly one row (the row changed or vanished meanwhile).
     /// With `inOpenTransaction`, the caller owns BEGIN/COMMIT (manual "Begin Transaction" mode) and
-    /// a failure is reported without rolling back. Returns the statements that ran.
+    /// a failure is reported without rolling back.
+    ///
+    /// Values are bound as typed parameters (integers, doubles, booleans, bytes, dates…) chosen from
+    /// `columns`' declared types; columns it doesn't describe are bound as text for the server to convert.
+    /// Returns the statements that ran, rendered with literals for the history log.
     @discardableResult
-    public func applyChanges(_ changes: [RowChange], table: String, schema: String?, inOpenTransaction: Bool = false) async throws -> [String] {
+    public func applyChanges(_ changes: [RowChange], table: String, schema: String?, inOpenTransaction: Bool = false,
+                             columns: [TableColumn] = []) async throws -> [String] {
         guard !changes.isEmpty else { return [] }
         if config.readOnly { throw DatabaseError.readOnly }
-        let statements = changes.map { dialect.sql(for: $0, table: table, schema: schema) }
+        let statements = changes.map { dialect.sql(for: $0, table: table, schema: schema, columns: columns) }
+        let bound = changes.map { dialect.boundStatement(for: $0, table: table, schema: schema, columns: columns) }
         if !inOpenTransaction { _ = try await executeStatement(dialect.beginTransaction) }
         do {
-            for (change, statement) in zip(changes, statements) {
-                let result = try await executeStatement(statement)
+            for (index, change) in changes.enumerated() {
+                let result = try await executeStatement(bound[index].sql, parameters: bound[index].parameters)
                 if change.targetsSingleRow, let affected = result.affectedRows, affected != 1 {
                     throw DatabaseError.queryFailed(
-                        "Expected to change 1 row but changed \(affected). Nothing was saved; reload the table and try again.\n\(statement)")
+                        "Expected to change 1 row but changed \(affected). Nothing was saved; reload the table and try again.\n\(statements[index])")
                 }
             }
             if !inOpenTransaction { _ = try await executeStatement("COMMIT") }

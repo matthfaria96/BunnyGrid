@@ -263,6 +263,49 @@ struct PostgresIntegrationTests {
         }
     }
 
+    @Test func editedValuesRoundTripAsTypedParameters() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.execute("""
+                CREATE TABLE \(schema).t (id serial PRIMARY KEY, n int4, big int8, f float8, b bool, d date, ts timestamp(6),
+                                          tz timestamptz, u uuid, j jsonb, raw bytea, amount numeric(8,3), code char(5),
+                                          arr int4[], qty int4 DEFAULT 7)
+                """)
+            let columns = try await driver.listColumns(table: "t", schema: schema)
+            let bytes = Data([0x00, 0x27, 0x5c, 0xff])
+            // Everything typed in the grid arrives as text; the column types decide how it's bound.
+            try await driver.applyChanges([.insert(values: [
+                ColumnValue("n", .text("42")), ColumnValue("big", .text("9007199254740993")), ColumnValue("f", .text("2.5")),
+                ColumnValue("b", .text("false")), ColumnValue("d", .text("2024-02-29")), ColumnValue("ts", .text("2024-02-29 13:45:00")),
+                ColumnValue("tz", .text("2026-10-17 09:30:00+00:00")), ColumnValue("u", .text("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")),
+                ColumnValue("j", .text(#"{"b": 1, "a": [true]}"#)), ColumnValue("raw", .blob(bytes)), ColumnValue("amount", .text("12.345")),
+                ColumnValue("code", .text("ab")), ColumnValue("arr", .text("{1,2}")),
+            ])], table: "t", schema: schema, columns: columns)
+
+            let row = try #require(try await driver.executeStatement("""
+                SELECT id, n, big, f, b, d::text, ts::text, tz = '2026-10-17 09:30:00+00'::timestamptz, u::text, j->>'b', raw, amount::text,
+                       code, arr::text, qty FROM \(schema).t
+                """).rows.first)
+            #expect(Array(row.dropFirst()) == [.integer(42), .integer(9_007_199_254_740_993), .double(2.5), .bool(false), .text("2024-02-29"),
+                                               .text("2024-02-29 13:45:00"), .bool(true), .text("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"),
+                                               .text("1"), .blob(bytes), .text("12.345"), .text("ab   "), .text("{1,2}"), .integer(7)])
+
+            // Keys bind too: the padded char(5) value read back still finds its row.
+            try await driver.applyChanges([
+                .update(key: [ColumnValue("id", row[0]), ColumnValue("code", row[12])],
+                        values: [ColumnValue("n", .text("-5")), ColumnValue("raw", .blob(Data())), .defaultValue("qty"), ColumnValue("b", .null)]),
+            ], table: "t", schema: schema, columns: columns)
+            let updated = try await driver.executeStatement("SELECT n, raw, qty, b FROM \(schema).t").rows
+            #expect(updated == [[.integer(-5), .blob(Data()), .integer(7), .null]])
+
+            // Text that isn't an integer goes to the server untouched, which rejects it; nothing is saved.
+            await #expect(throws: DatabaseError.self) {
+                try await driver.applyChanges([.update(key: [ColumnValue("id", row[0])], values: [ColumnValue("n", .text("abc"))])],
+                                              table: "t", schema: schema, columns: columns)
+            }
+            #expect(try await driver.executeStatement("SELECT n FROM \(schema).t").rows == [[.integer(-5)]])
+        }
+    }
+
     @Test func readOnlyConnectionsRejectWrites() async throws {
         let driver = try await PG.driver(readOnly: true)
         await #expect(throws: DatabaseError.self) { try await driver.execute("CREATE TABLE should_not_exist (x int)") }

@@ -133,7 +133,7 @@ struct DataGenerationView: View {
         defer { isRunning = false }
         let rows = ValueGenerator.rows(count: count, columns: plan, types: types, seed: seed)
         do {
-            try await target.context.driver.applyChanges(rows, table: target.object.name, schema: driverSchema)
+            try await target.context.driver.applyChanges(rows, table: target.object.name, schema: driverSchema, columns: columns)
             result = "Generated \(rows.count.formatted()) records in \(target.object.name)."
             seed &+= 1
             for tab in app.tabs {

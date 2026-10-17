@@ -9,6 +9,8 @@ enum GridCellState {
     case inserted
     /// A cell of a new row the user left alone; the column's DEFAULT will apply.
     case defaultValue
+    /// A loaded cell set back to its DEFAULT (`SET col = DEFAULT`).
+    case editedDefault
     case deleted
 }
 
@@ -83,6 +85,10 @@ final class TableTabModel: Identifiable {
     /// Rows added at the bottom of the grid; only the columns the user set are stored.
     private(set) var insertedRows: [[Int: CellValue]] = []
     private(set) var deletedRows: Set<Int> = []
+    /// Loaded cells set back to their column DEFAULT (their entry in `edits` holds a NULL placeholder).
+    private(set) var defaultEdits: Set<GridCell> = []
+    /// Asks the grid to open the value editor popover on a cell.
+    private(set) var editorRequest: GridEditorRequest?
     /// Bumped on every change so the grid knows to redraw even when values are unchanged.
     private(set) var revision = 0
     private(set) var isSaving = false
@@ -348,7 +354,101 @@ final class TableTabModel: Identifiable {
             return inserted[column] == nil ? .defaultValue : .inserted
         }
         if deletedRows.contains(row) { return .deleted }
+        if defaultEdits.contains(GridCell(row: row, column: column)) { return .editedDefault }
         return edits[row]?[column] != nil ? .edited : .normal
+    }
+
+    /// Whether a cell can take a new value: an editable table, not masked, not marked for deletion.
+    func canEditCell(row: Int, column: Int) -> Bool {
+        guard isEditable, !maskedColumnIndexes.contains(column), let page, page.columns.indices.contains(column) else { return false }
+        return row < page.rows.count + insertedRows.count && cellState(row: row, column: column) != .deleted
+    }
+
+    /// One cell as the grid shows it (pending edits and masks applied), without rebuilding every row.
+    func value(row: Int, column: Int) -> CellValue? {
+        guard let page, page.columns.indices.contains(column) else { return nil }
+        let raw: CellValue
+        if row < page.rows.count {
+            raw = edits[row]?[column] ?? page.rows[row][column]
+        } else if insertedRows.indices.contains(row - page.rows.count) {
+            raw = insertedRows[row - page.rows.count][column] ?? .null
+        } else {
+            return nil
+        }
+        return (masks[page.columns[column]] ?? .none).apply(to: raw)
+    }
+
+    /// The column's declared type, for choosing the value editor and binding parameters.
+    func category(ofColumn column: Int) -> ColumnTypeCategory {
+        guard let name = columnName(column) else { return .other }
+        return ColumnTypeCategory.classify(columnTypes[name], kind: kind)
+    }
+
+    func columnName(_ column: Int) -> String? {
+        guard let columns = page?.columns, columns.indices.contains(column) else { return nil }
+        return columns[column]
+    }
+
+    func columnInfo(_ column: Int) -> BunnyGridCore.TableColumn? {
+        guard let name = columnName(column) else { return nil }
+        return columns.first { $0.name == name }
+    }
+
+    /// Values the one-line inline editor can't handle open the value editor instead:
+    /// multi-line or very long text, blobs and binary columns.
+    func prefersValueEditor(row: Int, column: Int) -> Bool {
+        if category(ofColumn: column) == .binary { return true }
+        switch value(row: row, column: column) {
+        case .blob: return true
+        case .text(let text): return text.utf16.count > 500 || text.contains(where: \.isNewline)
+        default: return false
+        }
+    }
+
+    func openValueEditor(row: Int, column: Int) {
+        guard value(row: row, column: column) != nil else { return }
+        focusedCell = GridCell(row: row, column: column)
+        editorRequest = GridEditorRequest(cell: GridCell(row: row, column: column))
+    }
+
+    /// Sets a cell back to its DEFAULT: a new row leaves the column out; a loaded row gets `SET col = DEFAULT`.
+    func setDefault(row: Int, column: Int) {
+        guard canEditCell(row: row, column: column), let page else { return }
+        if row >= page.rows.count {
+            insertedRows[row - page.rows.count][column] = nil
+        } else {
+            edits[row, default: [:]][column] = .null
+            defaultEdits.insert(GridCell(row: row, column: column))
+        }
+        revision += 1
+    }
+
+    /// Copies rows as new pending inserts at the bottom, leaving out generated keys
+    /// (serial / identity / auto-increment / defaulted primary keys) so the database fills them.
+    func duplicateRows(_ rows: IndexSet) {
+        guard isEditable, let page, !rows.isEmpty else { return }
+        let skipped = Set(columns.filter { $0.isGeneratedOnInsert(among: columns, kind: kind) }.map(\.name))
+        let copied = page.columns.indices.filter { !skipped.contains(page.columns[$0]) }
+        var added = 0
+        for row in rows.sorted() {
+            var values: [Int: CellValue] = [:]
+            if row < page.rows.count {
+                for column in copied where !defaultEdits.contains(GridCell(row: row, column: column)) {
+                    values[column] = edits[row]?[column] ?? page.rows[row][column]
+                }
+            } else if insertedRows.indices.contains(row - page.rows.count) {
+                values = insertedRows[row - page.rows.count].filter { copied.contains($0.key) }
+            } else {
+                continue
+            }
+            insertedRows.append(values)
+            added += 1
+        }
+        guard added > 0 else { return }
+        let first = page.rows.count + insertedRows.count - added
+        selectedRows = IndexSet(first..<(first + added))
+        scrollRequest = GridScrollRequest(row: first)
+        revision += 1
     }
 
     func setValue(_ value: CellValue, row: Int, column: Int) {
@@ -367,8 +467,12 @@ final class TableTabModel: Identifiable {
             insertedRows[row - page.rows.count][column] = value
         } else {
             guard !deletedRows.contains(row) else { return }
+            defaultEdits.remove(GridCell(row: row, column: column))
             let original = page.rows[row][column]
-            if original.isNull == value.isNull && original.displayString == value.displayString {
+            // Text typed over a number compares by its text; blobs compare by their bytes.
+            let unchanged = original == value || (original.isNull == value.isNull && !original.isBlob && !value.isBlob
+                                                  && original.displayString == value.displayString)
+            if unchanged {
                 edits[row]?[column] = nil
                 if edits[row]?.isEmpty == true { edits[row] = nil }
             } else {
@@ -415,6 +519,7 @@ final class TableTabModel: Identifiable {
         edits = [:]
         insertedRows = []
         deletedRows = []
+        defaultEdits = []
         saveError = nil
         revision += 1
     }
@@ -426,12 +531,15 @@ final class TableTabModel: Identifiable {
         func key(_ row: Int) -> [ColumnValue] {
             keyIndexes.map { ColumnValue($0.0, page.rows[row][$0.1]) }
         }
-        func values(_ dict: [Int: CellValue]) -> [ColumnValue] {
-            dict.sorted { $0.key < $1.key }.map { ColumnValue(page.columns[$0.key], $0.value) }
+        func values(_ dict: [Int: CellValue], row: Int? = nil) -> [ColumnValue] {
+            dict.sorted { $0.key < $1.key }.map { column, value in
+                if let row, defaultEdits.contains(GridCell(row: row, column: column)) { return .defaultValue(page.columns[column]) }
+                return ColumnValue(page.columns[column], value)
+            }
         }
         var changes: [RowChange] = deletedRows.sorted().map { .delete(key: key($0)) }
         changes += edits.keys.sorted().filter { !deletedRows.contains($0) }.map { row in
-            .update(key: key(row), values: values(edits[row] ?? [:]))
+            .update(key: key(row), values: values(edits[row] ?? [:], row: row))
         }
         changes += insertedRows.map { .insert(values: values($0)) }
         return changes
@@ -439,8 +547,14 @@ final class TableTabModel: Identifiable {
 
     var pendingSQL: String {
         pendingChanges()
-            .map { driver.dialect.sql(for: $0, table: object.name, schema: object.schema) + ";" }
+            .map { driver.dialect.sql(for: $0, table: object.name, schema: object.schema, columns: columns) + ";" }
             .joined(separator: "\n")
+    }
+
+    /// The table and its key for "Copy As" statements.
+    var copyTarget: GridCopyTarget? {
+        guard object.kind == .table || object.kind == .view else { return nil }
+        return GridCopyTarget(table: object.name, schema: object.schema, kind: kind, keyColumns: primaryKeyColumns)
     }
 
     func applyChanges() async {
@@ -448,7 +562,8 @@ final class TableTabModel: Identifiable {
         isSaving = true
         defer { isSaving = false }
         do {
-            let statements = try await driver.applyChanges(pendingChanges(), table: object.name, schema: object.schema, inOpenTransaction: isInTransaction)
+            let statements = try await driver.applyChanges(pendingChanges(), table: object.name, schema: object.schema,
+                                                           inOpenTransaction: isInTransaction, columns: columns)
             for statement in statements { record(statement + ";") }
             await reload()
         } catch {
@@ -457,6 +572,39 @@ final class TableTabModel: Identifiable {
         }
     }
 }
+
+#if DEBUG
+// MARK: - Debug flags
+
+extension TableTabModel {
+    /// `--value-editor [COLUMN] [--row N]` opens the value editor popover, `--cell-editor [COLUMN]` the pane,
+    /// `--demo-duplicate` duplicates the first two rows. Used with `--open-table` for screenshots.
+    func runCellEditingDebugFlags() {
+        let arguments = CommandLine.arguments
+        func value(after flag: String) -> String? {
+            guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1),
+                  !arguments[index + 1].hasPrefix("--") else { return nil }
+            return arguments[index + 1]
+        }
+        func column(after flag: String) -> Int {
+            value(after: flag).flatMap { name in page?.columns.firstIndex(of: name) } ?? min(1, max((page?.columns.count ?? 1) - 1, 0))
+        }
+        let row = value(after: "--row").flatMap(Int.init) ?? 0
+        if arguments.contains("--demo-duplicate") {
+            duplicateRows([0, 1])
+        }
+        if arguments.contains("--cell-editor") {
+            showCellEditor = true
+            focusedCell = GridCell(row: row, column: column(after: "--cell-editor"))
+            selectedRows = [row]
+        }
+        if arguments.contains("--value-editor") {
+            selectedRows = [row]
+            openValueEditor(row: row, column: column(after: "--value-editor"))
+        }
+    }
+}
+#endif
 
 // MARK: - Manual transaction
 
@@ -535,4 +683,24 @@ struct GridCell: Hashable {
 struct GridScrollRequest: Equatable {
     let row: Int
     let id = UUID()
+}
+
+/// Asks the grid to open the value editor on a cell once.
+struct GridEditorRequest: Equatable {
+    let cell: GridCell
+    let id = UUID()
+}
+
+/// What "Copy As" statements target.
+struct GridCopyTarget: Equatable {
+    var table: String
+    var schema: String?
+    var kind: DatabaseKind
+    var keyColumns: [String]
+}
+
+extension CellValue {
+    var isBlob: Bool {
+        if case .blob = self { true } else { false }
+    }
 }

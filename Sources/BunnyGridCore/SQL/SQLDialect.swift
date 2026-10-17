@@ -69,12 +69,18 @@ public struct SQLDialect: Sendable {
     }
 
     /// The statement that applies one grid change to `table`.
-    public func sql(for change: RowChange, table: String, schema: String?) -> String {
+    /// `columns` supplies SQLite's default expressions for values set back to DEFAULT.
+    public func sql(for change: RowChange, table: String, schema: String?, columns: [TableColumn] = []) -> String {
         let target = qualifiedName(table: table, schema: schema)
         switch change {
         case .update(let key, let values):
-            let assignments = values.map { "\(quoteIdentifier($0.column)) = \(literal($0.value))" }
+            let assignments = values.map { part in
+                let value = part.useDefault ? defaultKeyword(for: columns.first { $0.name == part.column }) : literal(part.value)
+                return "\(quoteIdentifier(part.column)) = \(value)"
+            }
             return "UPDATE \(target) SET \(assignments.joined(separator: ", ")) WHERE \(whereClause(key))"
+        case .insert(let values) where values.contains(where: \.useDefault):
+            return sql(for: .insert(values: values.filter { !$0.useDefault }), table: table, schema: schema)
         case .insert(let values) where values.isEmpty:
             return kind == .mysql || kind == .mariadb
                 ? "INSERT INTO \(target) () VALUES ()"

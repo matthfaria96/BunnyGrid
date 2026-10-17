@@ -802,7 +802,8 @@ final class AppModel {
                 navSelection = .object(id, database, object)
                 openTable(object, in: context)
                 #if DEBUG
-                if let tab = selectedTableTab, ["--demo-edits", "--focus-cell", "--begin-transaction", "--generate", "--profile"].contains(where: CommandLine.arguments.contains) {
+                if let tab = selectedTableTab, ["--demo-edits", "--focus-cell", "--begin-transaction", "--generate", "--profile",
+                                                "--value-editor", "--cell-editor", "--demo-duplicate"].contains(where: CommandLine.arguments.contains) {
                     await tab.loadIfNeeded()
                     if CommandLine.arguments.contains("--demo-edits") {
                         tab.setValue(.text("Edited name"), row: 1, column: 1)
@@ -825,6 +826,7 @@ final class AppModel {
                         tab.focusedCell = GridCell(row: 4, column: 2)
                         tab.selectedRows = [4]
                     }
+                    tab.runCellEditingDebugFlags()
                 }
                 #endif
             }

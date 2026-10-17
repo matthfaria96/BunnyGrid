@@ -176,7 +176,7 @@ struct ImportWizardView: View {
             })
         }
         do {
-            try await target.context.driver.applyChanges(changes, table: target.object.name, schema: driverSchema)
+            try await target.context.driver.applyChanges(changes, table: target.object.name, schema: driverSchema, columns: targetColumns)
             result = "Imported \(changes.count.formatted()) records into \(target.object.name)."
             for tab in app.tabs {
                 if case .table(let model) = tab, model.object == target.object { model.requestReload() }

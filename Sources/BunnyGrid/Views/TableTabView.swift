@@ -190,13 +190,21 @@ struct TableTabView: View {
                             revision: model.revision,
                             cellState: { model.cellState(row: $0, column: $1) },
                             onEdit: { model.setValue($2, row: $0, column: $1) },
-                            onToggleDelete: { model.toggleDelete($0) }
+                            onToggleDelete: { model.toggleDelete($0) },
+                            prefersEditor: { model.prefersValueEditor(row: $0, column: $1) },
+                            onSetDefault: { model.setDefault(row: $0, column: $1) },
+                            onDuplicate: { model.duplicateRows($0) }
                         ) : nil,
                         focusedCell: model.focusedCell,
                         lockedColumns: model.maskedColumnIndexes,
                         onFocusChange: { model.focusedCell = $0 },
                         onSelectionChange: { model.selectedRows = $0 },
-                        scrollRequest: model.scrollRequest
+                        scrollRequest: model.scrollRequest,
+                        copyTarget: model.copyTarget,
+                        editorContent: { [model] cell, close in
+                            AnyView(ValueEditorView(model: model, cell: cell, onClose: close).frame(width: 520, height: 360))
+                        },
+                        editorRequest: model.editorRequest
                     )
                 }
             }
@@ -276,6 +284,10 @@ private struct GridFooter: View {
             IconButton(systemImage: "plus", help: "Add Record", isEnabled: model.isEditable) { model.addRow() }
             IconButton(systemImage: "minus", help: "Delete Selected Records (⌫)", isEnabled: model.isEditable && !model.selectedRows.isEmpty) {
                 model.toggleDelete(model.selectedRows)
+            }
+            IconButton(systemImage: "plus.square.on.square", help: "Duplicate Selected Records (generated keys are left to the database)",
+                       isEnabled: model.isEditable && !model.selectedRows.isEmpty) {
+                model.duplicateRows(model.selectedRows)
             }
             IconButton(systemImage: "checkmark", help: "Apply Changes (⌘S)", tint: .green, isEnabled: model.hasChanges && !model.isSaving) {
                 Task { await model.applyChanges() }
@@ -470,74 +482,29 @@ private struct ColumnsPopover: View {
     }
 }
 
-/// Shows the focused cell's full value; long text and JSON can be edited here.
+/// The Cell Editor pane: the value editor for the focused cell (text, JSON, hex/image, date).
 private struct CellEditorPanel: View {
     @Bindable var model: TableTabModel
-    @State private var text = ""
-    @State private var loadedCell: GridCell?
-
-    private var columnName: String? {
-        guard let cell = model.focusedCell, let columns = model.page?.columns, columns.indices.contains(cell.column) else { return nil }
-        return columns[cell.column]
-    }
-
-    private var canEdit: Bool {
-        guard model.isEditable, let cell = model.focusedCell else { return false }
-        if case .blob = model.focusedValue { return false }
-        return model.cellState(row: cell.row, column: cell.column) != .deleted
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Image(systemName: "square.and.pencil").foregroundStyle(.orange)
-                Text(columnName ?? "Cell Editor").font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                if let name = columnName, let type = model.columnTypes[name] {
-                    Text(type).font(.system(size: 11)).foregroundStyle(.secondary)
-                }
+                Text("Cell Editor").font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Spacer()
                 IconButton(systemImage: "xmark", help: "Close Cell Editor") { model.showCellEditor = false }
             }
             .padding(.horizontal, 8)
             .frame(height: 28)
             Divider()
-            if model.focusedCell == nil {
+            if let cell = model.focusedCell, model.value(row: cell.row, column: cell.column) != nil {
+                ValueEditorView(model: model, cell: cell)
+            } else {
                 Text("Click a cell to see its value.")
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                TextEditor(text: $text)
-                    .font(.system(size: 12, design: .monospaced))
-                    .disabled(!canEdit)
-                Divider()
-                HStack {
-                    if model.focusedValue?.isNull == true { Text("NULL").foregroundStyle(.secondary).font(.caption) }
-                    Spacer()
-                    Button("Set NULL") {
-                        if let cell = model.focusedCell { model.setValue(.null, row: cell.row, column: cell.column) }
-                    }
-                    .disabled(!canEdit)
-                    Button("Apply to Cell") {
-                        if let cell = model.focusedCell { model.setValue(.text(text), row: cell.row, column: cell.column) }
-                    }
-                    .disabled(!canEdit)
-                    .keyboardShortcut(.return, modifiers: .command)
-                }
-                .controlSize(.small)
-                .padding(8)
             }
         }
-        .onChange(of: model.focusedCell, initial: true) { _, _ in load() }
-        .onChange(of: model.revision) { _, _ in load() }
-    }
-
-    private func load() {
-        loadedCell = model.focusedCell
-        guard let value = model.focusedValue else {
-            text = ""
-            return
-        }
-        text = value.isNull ? "" : value.displayString
     }
 }
 

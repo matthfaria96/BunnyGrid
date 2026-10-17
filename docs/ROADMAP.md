@@ -16,7 +16,7 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 | ✅ 0.7 | Visual macOS | Layout do Navicat para macOS: chrome unificado, ícones ilustrados, sidebar translúcida, painel Info/AI, aba Objects com ícones e modo grade, menu de contexto da conexão | Navicat macOS |
 | 0.8 | Próximos | Chaves estrangeiras no designer, Table Profile (filtros salvos), Export Wizard (vários objetos), túnel SSH, testes de integração com MySQL | Navicat |
 | 0.3 | Editor SQL | Consultas salvas, formatação, executar o comando sob o cursor, EXPLAIN | Navicat "Query Editor" |
-| 0.3 | Edição | Editor de valor para textos longos, JSON e blobs (inline só aceita uma linha), duplicar linha | Navicat "Cell Editors" |
+| ✅ 0.8 | Edição | Editor de valor pelo tipo da coluna (texto multilinha, JSON com Beautify/Minify/validação, hex e imagem para blobs com carregar/salvar arquivo, calendário e hora), em popover (⌥↩, duplo clique em valores longos) e no painel Cell Editor; NULL / vazio / DEFAULT; duplicar registros; Copy As (INSERT, UPDATE, TSV, CSV, JSON, Markdown); valores enviados como parâmetros tipados | Navicat "Cell Editors" |
 | 0.3 | Conectividade | Túnel SSH (Citadel, puro Swift), SSL com verificação e certificados de cliente, socket Unix | `tunnel.ts` |
 | 0.3 | Estrutura | Designer de tabela (ALTER), índices, chaves estrangeiras, DDL (`getTableCreateScript`) | `alterTableSql` |
 | 0.4 | Import/Export | CSV, JSON, SQL dump, Excel (libxlsxwriter, BSD) | Navicat Import/Export Wizard |
@@ -32,7 +32,8 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 - Automation, Model, BI e Create BI Workspace aparecem na interface, mas ainda mostram "em breve". User (PostgreSQL/MySQL), Others, Export Wizard, Dump SQL e as ações de tabela (excluir, esvaziar, truncar, renomear, duplicar) já funcionam.
 
 - Edições aplicadas enquanto outra consulta roda na mesma conexão entram na mesma transação (há uma conexão por sessão). Separar uma conexão para o editor resolve.
-- Valores editados são enviados como texto (`'42'`) e o banco converte para o tipo da coluna. Funciona em PostgreSQL, MySQL e SQLite, mas tipos exóticos podem precisar de cast.
+- Edições vão como parâmetros tipados escolhidos pelo tipo da coluna (inteiro, double, booleano, bytes, data/hora, NULL). Tipos que o app não modela (numeric, arrays, enums, geometria, intervalos) seguem como texto sem tipo declarado e o banco converte, como faria com um literal. O binding do MySQL/MariaDB ainda não tem teste de integração (o do SQLite e o do PostgreSQL têm).
+- No PostgreSQL, uma linha cuja chave primária é um `timestamp` com frações de segundo não pode ser editada: o valor chega ao grid sem as frações e o WHERE não acha a linha.
 - Cancelar uma consulta só cancela a tarefa local; falta enviar o cancelamento ao servidor (`pg_cancel_backend` / `KILL QUERY`).
 - O realce de sintaxe refaz o documento inteiro a cada tecla; trocar por tree-sitter (CodeEditSourceEditor) quando os scripts ficarem grandes.
 - Resultados são carregados inteiros na memória; falta paginação ou streaming no editor SQL.
