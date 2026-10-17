@@ -47,9 +47,15 @@ public struct TableColumn: Hashable, Identifiable, Sendable {
     /// MySQL / MariaDB: column attributes past type, NULL and DEFAULT that `MODIFY COLUMN` would otherwise drop,
     /// as SQL (`AUTO_INCREMENT`, `ON UPDATE CURRENT_TIMESTAMP`, `COMMENT '…'`). nil elsewhere.
     public var extra: String?
+    /// Column comment (PostgreSQL `COMMENT ON COLUMN`, MySQL `COMMENT`); nil when there is none.
+    public var comment: String?
+    /// The column's collation (PostgreSQL: only when set on the column; MySQL: every text column); nil otherwise.
+    public var collation: String?
 
     public init(name: String, dataType: String, nullable: Bool, defaultValue: String? = nil, isPrimaryKey: Bool = false, ordinal: Int,
-                extra: String? = nil) {
+                extra: String? = nil, comment: String? = nil, collation: String? = nil) {
+        self.comment = comment
+        self.collation = collation
         self.name = name
         self.dataType = dataType
         self.nullable = nullable

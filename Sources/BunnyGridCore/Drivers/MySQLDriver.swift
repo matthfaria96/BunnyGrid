@@ -203,7 +203,7 @@ public actor MySQLDriver: DatabaseDriver {
 
     public func listColumns(table: String, schema: String?) async throws -> [TableColumn] {
         let result = try await executeStatement("""
-            SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, ORDINAL_POSITION, COLUMN_KEY, EXTRA, COLUMN_COMMENT, DATA_TYPE
+            SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, ORDINAL_POSITION, COLUMN_KEY, EXTRA, COLUMN_COMMENT, DATA_TYPE, COLLATION_NAME
               FROM information_schema.COLUMNS
              WHERE TABLE_SCHEMA = \(dialect.quoteLiteral(schema ?? config.database))
                AND TABLE_NAME = \(dialect.quoteLiteral(table))
@@ -220,7 +220,10 @@ public actor MySQLDriver: DatabaseDriver {
                                                      dataType: row[8].displayString, kind: kind),
                 isPrimaryKey: row[5] == .text("PRI"),
                 ordinal: Int(row[4].displayString) ?? 0,
-                extra: Self.preservedAttributes(extra: extra, comment: row[7].isNull ? "" : row[7].displayString)
+                // The comment and collation have fields of their own in the designer, which writes them back.
+                extra: Self.preservedAttributes(extra: extra, comment: ""),
+                comment: row[7].isNull || row[7].displayString.isEmpty ? nil : row[7].displayString,
+                collation: row[9].isNull || row[9].displayString.isEmpty ? nil : row[9].displayString
             )
         }
     }

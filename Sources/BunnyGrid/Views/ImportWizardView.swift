@@ -5,12 +5,13 @@ import UniformTypeIdentifiers
 
 /// What the Import Wizard reads.
 enum ImportSourceKind: String, CaseIterable, Identifiable {
-    case csv, json, sql
+    case csv, json, excel, sql
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .csv: "CSV / TSV"
         case .json: "JSON"
+        case .excel: "Excel"
         case .sql: "SQL File"
         }
     }
@@ -27,6 +28,8 @@ struct ImportWizardView: View {
     @State private var fileURL: URL?
     @State private var csvText = ""
     @State private var jsonTable: ImportedTable?
+    @State private var workbook: XLSXWorkbook?
+    @State private var sheetIndex = 0
     @State private var delimiter: Character = ","
     @State private var hasHeader = true
     @State private var emptyAsNull = true
@@ -40,7 +43,13 @@ struct ImportWizardView: View {
     @State private var error: String?
     @State private var sqlRun = SQLScriptRun()
 
-    private var hasFile: Bool { kind == .csv ? !csvText.isEmpty : jsonTable != nil }
+    private var hasFile: Bool {
+        switch kind {
+        case .csv, .sql: !csvText.isEmpty
+        case .json: jsonTable != nil
+        case .excel: workbook != nil
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -94,6 +103,7 @@ struct ImportWizardView: View {
         }
         .onChange(of: kind) { _, _ in resetFile() }
         .onChange(of: hasHeader) { _, _ in reparse() }
+        .onChange(of: sheetIndex) { _, _ in reparse() }
         .onChange(of: delimiter) { _, _ in reparse() }
     }
 
@@ -118,6 +128,14 @@ struct ImportWizardView: View {
                         Text("Semicolon ( ; )").tag(";")
                         Text("Tab").tag("\t")
                         Text("Pipe ( | )").tag("|")
+                    }
+                    Toggle("First row contains field names", isOn: $hasHeader)
+                }
+                if kind == .excel, let workbook {
+                    if workbook.sheetNames.count > 1 {
+                        Picker("Sheet", selection: $sheetIndex) {
+                            ForEach(Array(workbook.sheetNames.enumerated()), id: \.offset) { Text($0.element).tag($0.offset) }
+                        }
                     }
                     Toggle("First row contains field names", isOn: $hasHeader)
                 }
@@ -220,6 +238,8 @@ struct ImportWizardView: View {
         fileURL = nil
         csvText = ""
         jsonTable = nil
+        workbook = nil
+        sheetIndex = 0
         source = ImportedTable(columns: [], rows: [])
         mapping = [:]
         result = nil
@@ -228,9 +248,11 @@ struct ImportWizardView: View {
 
     private func chooseFile() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = kind == .json
-            ? [.json, .plainText, .text]
-            : [.commaSeparatedText, .tabSeparatedText, .plainText, .text]
+        switch kind {
+        case .json: panel.allowedContentTypes = [.json, .plainText, .text]
+        case .excel: panel.allowedContentTypes = [UTType(filenameExtension: "xlsx") ?? .spreadsheet]
+        case .csv, .sql: panel.allowedContentTypes = [.commaSeparatedText, .tabSeparatedText, .plainText, .text]
+        }
         panel.allowsOtherFileTypes = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         load(url)
@@ -243,6 +265,8 @@ struct ImportWizardView: View {
             switch kind {
             case .json:
                 jsonTable = try JSONTableReader.read(data)
+            case .excel:
+                workbook = try XLSXWorkbook(data: data)
             case .csv, .sql:
                 guard let decoded = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
                     error = "Could not read the file as text."
@@ -263,6 +287,13 @@ struct ImportWizardView: View {
         switch kind {
         case .json:
             source = jsonTable ?? ImportedTable(columns: [], rows: [])
+        case .excel:
+            do {
+                source = try workbook?.table(sheet: sheetIndex, firstRowIsHeader: hasHeader) ?? ImportedTable(columns: [], rows: [])
+            } catch {
+                self.error = error.localizedDescription
+                source = ImportedTable(columns: [], rows: [])
+            }
         case .csv, .sql:
             let rows = CSVParser.parse(csvText, delimiter: delimiter)
             let headers = rows.first.map { first in hasHeader ? first : first.indices.map { "Column \($0 + 1)" } } ?? []

@@ -143,7 +143,7 @@ public struct SQLiteTableRebuild: Sendable {
     /// Constructs CREATE TABLE can hold that the designer would lose; the rebuild refuses them instead.
     static func unsupportedFeatures(in sql: String) -> [String] {
         // Blank out string literals and quoted names so a column called "check" doesn't count.
-        let bare = SQLiteTableOptions.removingPrimaryKeyConflict(sql).replacing(/'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]/, with: "''").uppercased()
+        let bare = SQLiteTableOptions.removingUniqueConflict(SQLiteTableOptions.removingPrimaryKeyConflict(sql)).replacing(/'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]/, with: "''").uppercased()
         let checks: [(String, Regex<Substring>)] = [
             ("CHECK constraints", /\bCHECK\s*\(/),
             ("COLLATE", /\bCOLLATE\b/),
@@ -208,8 +208,9 @@ public struct SQLiteTableRebuild: Sendable {
             index.columns = mapped
             return index
         }
-        for index in liveIndexes where index.name.hasPrefix("sqlite_autoindex_") {
-            parts.append("  UNIQUE (\(index.columns.map(d.quoteIdentifier).joined(separator: ", ")))")
+        // So do uniques with an ON CONFLICT clause, which only a constraint can carry.
+        for index in liveIndexes where index.isTableConstraint {
+            parts.append("  " + SQLiteTableOptions.uniqueConstraint(index, dialect: d))
         }
         for key in foreignKeys {
             parts.append("  " + (try d.foreignKeyClause(key, schema: nil)))
@@ -232,7 +233,7 @@ public struct SQLiteTableRebuild: Sendable {
             "ALTER TABLE \(temporary) RENAME TO \(d.quoteIdentifier(table))",
             "PRAGMA legacy_alter_table = OFF",
         ]
-        for index in liveIndexes where !index.name.hasPrefix("sqlite_autoindex_") {
+        for index in liveIndexes where !index.isTableConstraint {
             statements.append(try d.createIndex(index, table: table, schema: attached))
         }
         statements += triggers.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.map { trigger in

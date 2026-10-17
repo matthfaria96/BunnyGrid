@@ -34,6 +34,100 @@ public struct SQLiteTableOptions: Equatable, Sendable {
         sql.replacing(/(?i)(PRIMARY\s+KEY\s*(?:\([^)]*\))?\s*(?:ASC|DESC)?)\s*ON\s+CONFLICT\s+\w+/) { $0.output.1 }
     }
 
+    /// `UNIQUE ("a", "b") ON CONFLICT x` for a unique written as a table constraint.
+    static func uniqueConstraint(_ index: IndexDesign, dialect d: SQLDialect) -> String {
+        "UNIQUE (\(index.columns.map(d.quoteIdentifier).joined(separator: ", ")))" + (index.onConflict.map { " ON CONFLICT \($0)" } ?? "")
+    }
+
+    /// Sets `onConflict` on the uniques that `sql` (the stored CREATE TABLE) declares with ON CONFLICT.
+    public static func applyingUniqueConflicts(from sql: String?, to indexes: [IndexDesign]) -> [IndexDesign] {
+        guard let sql else { return indexes }
+        let conflicts = uniqueConflicts(in: sql)
+        guard !conflicts.isEmpty else { return indexes }
+        return indexes.map { index in
+            var index = index
+            if index.unique, index.name.hasPrefix("sqlite_autoindex_") { index.onConflict = conflicts[index.columns.map { $0.lowercased() }] }
+            return index
+        }
+    }
+
+    /// The SQL with the ON CONFLICT of UNIQUE constraints removed (the designer models those on the Uniques tab).
+    static func removingUniqueConflict(_ sql: String) -> String {
+        sql.replacing(/(?i)(\bUNIQUE\s*(?:\([^)]*\))?)\s*ON\s+CONFLICT\s+\w+/) { $0.output.1 }
+    }
+
+    /// UNIQUE constraints with an ON CONFLICT clause in a stored CREATE TABLE, by their lowercased field list:
+    /// table constraints (`UNIQUE (a, b) ON CONFLICT REPLACE`) and column ones (`email TEXT UNIQUE ON CONFLICT IGNORE`).
+    public static func uniqueConflicts(in sql: String) -> [[String]: String] {
+        var result: [[String]: String] = [:]
+        for definition in columnDefinitions(in: sql) {
+            let bare = blankQuoted(definition).uppercased()
+            if let table = definition.firstMatch(of: /(?is)^\s*(?:CONSTRAINT\s+(?:"(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\]|\S+)\s+)?UNIQUE\s*\((.*)\)\s*ON\s+CONFLICT\s+(\w+)/) {
+                let columns = splitTopLevel(String(table.output.1)).map { identifierName($0).lowercased() }
+                result[columns] = String(table.output.2).uppercased()
+            } else if !bare.hasPrefix("CONSTRAINT"), !bare.hasPrefix("PRIMARY"), !bare.hasPrefix("FOREIGN"), !bare.hasPrefix("CHECK"),
+                      let column = bare.firstMatch(of: /\bUNIQUE\s+ON\s+CONFLICT\s+(ROLLBACK|ABORT|FAIL|IGNORE|REPLACE)\b/) {
+                result[[identifierName(definition).lowercased()]] = String(column.output.1)
+            }
+        }
+        return result
+    }
+
+    /// The comma-separated definitions between the outer parentheses of a CREATE TABLE.
+    static func columnDefinitions(in sql: String) -> [String] {
+        guard let open = sql.firstIndex(of: "("), let close = sql.lastIndex(of: ")"), open < close else { return [] }
+        return splitTopLevel(String(sql[sql.index(after: open)..<close]))
+    }
+
+    /// Splits on commas outside parentheses, quotes and brackets.
+    static func splitTopLevel(_ text: String) -> [String] {
+        var parts: [String] = [], current = "", depth = 0
+        var quote: Character?
+        for ch in text {
+            if let q = quote {
+                current.append(ch)
+                if ch == q { quote = nil }
+                continue
+            }
+            switch ch {
+            case "'", "\"", "`": quote = ch; current.append(ch)
+            case "[": quote = "]"; current.append(ch)
+            case "(": depth += 1; current.append(ch)
+            case ")": depth -= 1; current.append(ch)
+            case "," where depth == 0: parts.append(current.trimmingCharacters(in: .whitespacesAndNewlines)); current = ""
+            default: current.append(ch)
+            }
+        }
+        let last = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !last.isEmpty { parts.append(last) }
+        return parts
+    }
+
+    /// The first name of a definition, unquoted: `"my col" TEXT` → `my col`.
+    static func identifierName(_ definition: String) -> String {
+        let text = definition.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = text.first else { return "" }
+        let closing: Character? = switch first {
+        case "\"": "\""
+        case "`": "`"
+        case "[": "]"
+        default: nil
+        }
+        guard let closing else { return String(text.prefix { !$0.isWhitespace && $0 != "(" }) }
+        var name = "", index = text.index(after: text.startIndex)
+        while index < text.endIndex {
+            let ch = text[index]
+            let next = text.index(after: index)
+            if ch == closing {
+                if closing != "]", next < text.endIndex, text[next] == closing { name.append(ch); index = text.index(after: next); continue }
+                break
+            }
+            name.append(ch)
+            index = next
+        }
+        return name
+    }
+
     static func blankQuoted(_ sql: String) -> String {
         sql.replacing(/'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]/, with: "''")
     }
