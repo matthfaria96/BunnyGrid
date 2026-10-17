@@ -51,6 +51,9 @@ struct ContentView: View {
         .sheet(item: $app.sqlFileTarget) { target in
             ExecuteSQLFileView(target: target)
         }
+        .sheet(item: $app.syncWizard) { request in
+            SyncWizardView(request: request)
+        }
         .sheet(item: $app.usersSession) { session in
             UsersView(session: session)
         }

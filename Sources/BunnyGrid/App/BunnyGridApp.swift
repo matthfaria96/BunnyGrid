@@ -135,6 +135,10 @@ struct BunnyGridApp: App {
                 }
             }
             CommandMenu("Tools") {
+                ForEach(SyncTool.allCases) { tool in
+                    Button(tool.title + "…") { model.openSyncWizard(tool) }
+                }
+                Divider()
                 Button("AI Assistant") { model.showAssistant = true; model.rightPane = .ai }
                 Button("AI Platform…") { model.showingAccountMenu = true }
                 Button("Query History") {

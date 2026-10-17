@@ -552,5 +552,11 @@ private struct DatabaseActionItems: View {
             Button("Structure Only…") { app.dumpDatabase(context, schema: schema, includeData: false) }
         }
         Button("Reverse Database to Model") { app.openModel(in: context, schema: schema) }
+        Divider()
+        ForEach(SyncTool.allCases) { tool in
+            Button(tool.title + "…") {
+                app.syncWizard = SyncWizardRequest(tool: tool, connectionID: context.session?.id, database: context.name, schema: schema)
+            }
+        }
     }
 }

@@ -64,6 +64,8 @@ final class AppModel {
     var exportTarget: ExportTarget?
     /// Database the Execute SQL File sheet runs against.
     var sqlFileTarget: SQLFileTarget?
+    /// Data Transfer / Data Synchronization / Structure Synchronization sheet.
+    var syncWizard: SyncWizardRequest?
     /// Server whose User manager sheet is open.
     var usersSession: Session?
 
@@ -758,7 +760,7 @@ final class AppModel {
             case "--open-table" where !arguments.isEmpty: tableName = arguments.removeFirst()
             case "--query" where !arguments.isEmpty: query = arguments.removeFirst()
             // Their file arguments are not databases to open (handled after connecting / by the Import Wizard).
-            case "--execute-sql" where !arguments.isEmpty: arguments.removeFirst()
+            case "--execute-sql" where !arguments.isEmpty, "--sync-target" where !arguments.isEmpty: arguments.removeFirst()
             case "--import-wizard":
                 if let kind = arguments.first, ImportSourceKind(rawValue: kind) != nil {
                     arguments.removeFirst()
@@ -818,6 +820,9 @@ final class AppModel {
                 }
             }
         }
+        #endif
+        #if DEBUG
+        runSyncDebugFlags(opened: opened)
         #endif
         if CommandLine.arguments.contains("--open-model"), let id = opened {
             Task {

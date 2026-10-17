@@ -22,7 +22,7 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 | ✅ 0.3 | Estrutura | Designer de tabela (ALTER), índices, chaves estrangeiras, DDL (`getTableCreateScript`) | `alterTableSql` |
 | 0.9 | Import/Export | Importar Excel (.xlsx) e XML, exportar XML/HTML/Markdown, agendar exportações, streaming para tabelas grandes | Navicat Import/Export Wizard |
 | 0.5 | Mais bancos | SQL Server (FreeTDS), Redis (RediStack), MongoDB (MongoKitten) | Navicat §2 |
-| 0.6 | Transferência | Data Transfer entre bancos, comparação e sincronização de estrutura e de dados | Navicat Structure/Data Sync |
+| ✅ 0.9 | Transferência | Data Transfer entre SQLite/PostgreSQL/MySQL (ou para .sql) com tradução de tipos, lotes tipados, progresso e Stop; Structure Synchronization (diff + script de deploy); Data Synchronization (inserções/atualizações/exclusões em transação) | Navicat Structure/Data Sync |
 | ✅ 0.7 | Modelagem | Diagrama ER (engenharia reversa), modelo → SQL | Navicat Modeling |
 | 0.8 | Automação | Jobs agendados (SMAppService + launchd), backup | Navicat Automation |
 | depois | BI e IA | Gráficos com Swift Charts, perfil de dados, assistente de SQL com a Claude API | Navicat BI / AI Assistant |
@@ -49,3 +49,4 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 - Quando a sessão SSH cai, as conexões abertas por ela falham; o próximo connect abre outro túnel, mas não há reconexão automática.
 - SSL (modos Verify, certificado de cliente), socket e túnel SSH do MySQL usam o mesmo caminho do PostgreSQL e têm casos em `MySQLIntegrationTests` (`BUNNYGRID_MYSQL_SSL_CA`, `BUNNYGRID_MYSQL_SOCKET`, `BUNNYGRID_SSH_*`), mas ainda não rodaram contra um servidor real.
 - Builds de desenvolvimento são assinados ad hoc: a cada rebuild o macOS pode pedir de novo acesso às senhas no Keychain. Com assinatura Developer ID isso não acontece.
+- Transferência e sincronização: o Data Sync lê as duas tabelas inteiras e o Data Transfer pagina com OFFSET; falta cursor no servidor para tabelas grandes. Views só são comparadas entre motores iguais; CHECK, triggers, sequências, funções e comentários não entram no diff. Os testes do MySQL (`SyncIntegrationTests.swift`) ainda não rodaram contra um servidor real; os do PostgreSQL rodam.
