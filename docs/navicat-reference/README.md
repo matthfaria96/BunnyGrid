@@ -21,3 +21,9 @@ Each `.tree.txt` lists roles, titles, values and AX child-index paths (usable as
 | context-connection | Connection context menu |
 | askai-not-configured-alert | Ask AI before an assistant exists |
 | new-model-dialog, model-untitled | Model (opened by accident while capturing; not used) |
+| options-ai-assistant-form, ai-add-provider-menu, ai-select-model, ai-disclaimer | Settings › AI with an assistant (local fake Ollama server, no real provider): form, provider menu, disclaimer |
+| ai-chat-empty, ai-chat-answer, ai-chat-hover-* | AI Assistant chat: suggestions, user/assistant bubbles, code block actions |
+| ai-manage-chats, ai-more-chat-actions, ai-attach-menu, ai-assistant-popup | Chat list, “…” menu, Attach menu, assistant picker |
+| ai-compare-offer, ai-compare-result | “You can compare this answer with…” and the stacked second answer |
+| askai-custom, askai-result-code, askai-perform-action-menu, askai-default-menu, askai-explain-result | Ask AI panel, code result with Original / AI Suggested Text, Perform Action, dropdown menu, Explain result |
+| table-view-ai-enabled | Table viewer once AI is enabled |
