@@ -137,7 +137,7 @@ struct StatusBar: View {
             if app.objectCategory == .queries {
                 return "\(plural(app.savedQueries(connectionID: id, database: db).count, "Query")) in \(place)"
             }
-            let count = app.objectCategory == .indexes || app.objectCategory == .triggers
+            let count = [.indexes, .triggers, .backups].contains(app.objectCategory)
                 ? app.listedItemCount
                 : context.objects(in: schema, category: app.objectCategory)?.count ?? 0
             // Navicat: "2 tables".
