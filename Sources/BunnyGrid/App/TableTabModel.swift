@@ -465,10 +465,16 @@ final class TableTabModel: Identifiable {
     }
 
     /// The column's declared type, for choosing the value editor and binding parameters.
+    /// Asked for every cell the grid makes: no `columnTypes` dictionary, and each declared type is parsed once.
     func category(ofColumn column: Int) -> ColumnTypeCategory {
-        guard let name = columnName(column) else { return .other }
-        return ColumnTypeCategory.classify(columnTypes[name], kind: kind)
+        guard let name = columnName(column), let type = columns.first(where: { $0.name == name })?.dataType else { return .other }
+        if let cached = categoryCache[type] { return cached }
+        let category = ColumnTypeCategory.classify(type, kind: kind)
+        categoryCache[type] = category
+        return category
     }
+
+    @ObservationIgnored private var categoryCache: [String: ColumnTypeCategory] = [:]
 
     func columnName(_ column: Int) -> String? {
         guard let columns = page?.columns, columns.indices.contains(column) else { return nil }

@@ -308,7 +308,10 @@ enum Benchmarks {
             try? await Task.sleep(for: .milliseconds(300))
             guard let grid = views(GridTableView.self).last, let scroll = grid.enclosingScrollView else { return }
             if scenario == "scroll" {
-                await scrollGrid(grid, scroll: scroll, name: "grid")
+                // `--bench-cycles N` repeats the passes (for a profiler attached mid-run).
+                for _ in 0..<max(Int(argument("--bench-cycles") ?? "") ?? 1, 1) {
+                    await scrollGrid(grid, scroll: scroll, name: "grid")
+                }
                 await reportBlankCells(grid, "grid.blankCells")
             }
             if scenario == "resize" {
@@ -329,7 +332,7 @@ enum Benchmarks {
             let ids = app.tabs.map(\.id) + [nil]
             var samples: [Double] = []
             if CommandLine.arguments.contains("--bench-hot") {
-                for index in 0..<200 {
+                for index in 0..<(Int(argument("--bench-hot-count") ?? "") ?? 200) {
                     app.selectedTabID = ids[index % ids.count]
                     _ = await RunLoopMonitor.shared.nextIdle()
                 }
