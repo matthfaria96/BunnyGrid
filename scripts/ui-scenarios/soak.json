@@ -1,0 +1,55 @@
+{
+  "name": "soak",
+  "requires": ["soak"],
+  "args": ["{{DB}}", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "openSessions", "equals": 1, "timeout": 20},
+    {"op": "log", "text": "memory at start (MB):", "probe": "memoryMB"},
+    {"op": "hangs", "mode": "start"},
+    {"op": "repeat", "times": 100, "logEvery": 25, "note": "open and close 200 tabs", "steps": [
+      {"op": "action", "name": "openTable", "table": "customers"},
+      {"op": "waitFor", "probe": "tab.rowCount", "atLeast": 20},
+      {"op": "waitFor", "view": "GridTableView", "exists": true},
+      {"op": "scroll", "view": "GridTableView", "dy": -2000, "ticks": 4},
+      {"op": "action", "name": "closeTab"},
+      {"op": "action", "name": "openQuery", "text": "SELECT * FROM orders -- tab $i"},
+      {"op": "waitFor", "probe": "tabKind", "equals": "query"},
+      {"op": "action", "name": "closeTab"}
+    ]},
+    {"op": "waitFor", "probe": "tabCount", "equals": 0},
+    {"op": "log", "text": "memory after 200 tabs (MB):", "probe": "memoryMB"},
+    {"op": "action", "name": "openQuery", "text": "SELECT 1"},
+    {"op": "repeat", "times": 500, "logEvery": 100, "note": "run 500 queries", "steps": [
+      {"op": "action", "name": "runQuery", "text": "SELECT c.*, $i AS run FROM customers c LIMIT 200"},
+      {"op": "assert", "probe": "tab.resultCount", "equals": 1}
+    ]},
+    {"op": "log", "text": "memory after 500 queries (MB):", "probe": "memoryMB"},
+    {"op": "action", "name": "closeAllTabs"},
+    {"op": "action", "name": "openTable", "table": "customers"},
+    {"op": "action", "name": "openTable", "table": "orders"},
+    {"op": "action", "name": "openQuery", "text": "SELECT * FROM products"},
+    {"op": "action", "name": "openModel"},
+    {"op": "repeat", "times": 200, "note": "switch tabs", "steps": [
+      {"op": "action", "name": "selectTab", "text": "$i"},
+      {"op": "wait", "ms": 15}
+    ]},
+    {"op": "action", "name": "closeAllTabs"},
+    {"op": "repeat", "times": 10, "note": "open every Tools wizard", "steps": [
+      {"op": "menuBar", "path": ["Tools", "Data Transfer…"]},
+      {"op": "waitFor", "sheet": true, "equals": "true"},
+      {"op": "closeSheet"},
+      {"op": "waitFor", "sheet": true, "equals": "false"},
+      {"op": "menuBar", "path": ["Tools", "Data Synchronization…"]},
+      {"op": "waitFor", "sheet": true, "equals": "true"},
+      {"op": "closeSheet"},
+      {"op": "waitFor", "sheet": true, "equals": "false"},
+      {"op": "menuBar", "path": ["Tools", "Structure Synchronization…"]},
+      {"op": "waitFor", "sheet": true, "equals": "true"},
+      {"op": "closeSheet"},
+      {"op": "waitFor", "sheet": true, "equals": "false"}
+    ]},
+    {"op": "wait", "ms": 1500},
+    {"op": "log", "text": "memory at end (MB):", "probe": "memoryMB"},
+    {"op": "hangs", "mode": "report", "maxMs": 100}
+  ]
+}

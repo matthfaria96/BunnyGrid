@@ -1,0 +1,26 @@
+{
+  "name": "connection-loss",
+  "args": ["{{DB}}", "--open-table", "customers", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "tab.rowCount", "atLeast": 20, "note": "rows loaded"},
+    {"op": "click", "view": "GridTableView", "anchor": "cell:0,2"},
+    {"op": "wait", "ms": 700},
+    {"op": "doubleClick", "view": "GridTableView", "anchor": "cell:1,2", "note": "edit a cell"},
+    {"op": "wait", "ms": 400},
+    {"op": "key", "key": "a", "modifiers": ["cmd"]},
+    {"op": "type", "text": "Kept across a lost file"},
+    {"op": "key", "key": "return"},
+    {"op": "waitFor", "probe": "tab.changeCount", "equals": 1},
+    {"op": "moveFile", "from": "demo.sqlite", "to": "demo-moved.sqlite", "note": "the database file disappears"},
+    {"op": "key", "key": "s", "modifiers": ["cmd"], "note": "⌘S while the file is gone"},
+    {"op": "waitFor", "probe": "tab.saveError", "contains": "lost", "note": "a clear error"},
+    {"op": "assert", "probe": "tab.changeCount", "equals": 1, "note": "the pending edit is kept"},
+    {"op": "screenshot", "name": "lost"},
+    {"op": "moveFile", "from": "demo-moved.sqlite", "to": "demo.sqlite", "note": "the file is back"},
+    {"op": "key", "key": "s", "modifiers": ["cmd"], "note": "⌘S again reconnects and saves"},
+    {"op": "waitFor", "probe": "tab.changeCount", "equals": 0},
+    {"op": "assert", "probe": "tab.saveError", "equals": "nil"},
+    {"op": "assert", "probe": "sql:$RUN/demo.sqlite|SELECT name FROM customers WHERE name = 'Kept across a lost file'", "equals": "Kept across a lost file", "note": "saved to the file"},
+    {"op": "assert", "probe": "tab.value:1,1", "contains": "Kept across a lost file"}
+  ]
+}

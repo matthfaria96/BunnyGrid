@@ -106,10 +106,15 @@ struct SQLEditorView: NSViewRepresentable {
         /// The text last sent to (or received from) the binding.
         var lastText = ""
 
-        private var optionsObserver: NSObjectProtocol?
+        // Removed in deinit: a block observer stays registered (with its closure) until it is removed.
+        nonisolated(unsafe) private var optionsObserver: NSObjectProtocol?
 
         init(_ parent: SQLEditorView) {
             self.parent = parent
+        }
+
+        deinit {
+            if let optionsObserver { NotificationCenter.default.removeObserver(optionsObserver) }
         }
 
         /// Re-applies Options › Editor and Code Completion when the Options window saves.

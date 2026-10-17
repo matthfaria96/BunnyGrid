@@ -65,6 +65,7 @@ PY
       mongo) nc -z 127.0.0.1 "${UI_TEST_MONGO_PORT:-57017}" >/dev/null 2>&1 || missing+=" mongo" ;;
       redis) nc -z 127.0.0.1 "${UI_TEST_REDIS_PORT:-56379}" >/dev/null 2>&1 || missing+=" redis" ;;
       mock-ai) ;;
+      soak) [[ -n "${UI_TEST_SOAK:-}" ]] || missing+=" UI_TEST_SOAK=1 (long run)" ;;
     esac
   done
   if [[ -n "$missing" ]]; then echo "-- $name (skipped: no$missing)"; skipped=$((skipped+1)); continue; fi

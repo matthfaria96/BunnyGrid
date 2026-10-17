@@ -249,4 +249,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
+
+    /// Quitting with unsaved work asks first, like closing a tab (Navicat does the same).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let app = AppModel.current else { return .terminateNow }
+        let unsaved = app.tabsWithUnsavedChanges
+        guard !unsaved.isEmpty else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = unsaved.count == 1
+            ? "“\(unsaved[0].title)” has unsaved changes."
+            : "\(unsaved.count) tabs have unsaved changes."
+        alert.informativeText = (unsaved.prefix(8).map { "• \($0.title)" } + (unsaved.count > 8 ? ["…"] : []))
+            .joined(separator: "\n") + "\n\nIf you quit now, these changes are lost."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Review Changes")
+        alert.addButton(withTitle: "Quit Anyway")
+        if alert.runModal() == .alertSecondButtonReturn { return .terminateNow }
+        app.selectedTabID = unsaved[0].id
+        return .terminateCancel
+    }
 }

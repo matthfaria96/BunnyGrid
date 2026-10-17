@@ -531,7 +531,9 @@ private struct AdvancedPane: View {
         results = [:]
         Task {
             for (name, address) in targets {
-                var request = URLRequest(url: URL(string: address)!)
+                // A typed address that isn't a URL (spaces, a bare scheme) is just unreachable, not a crash.
+                guard let url = URL(string: address), url.host != nil else { results[name] = false; continue }
+                var request = URLRequest(url: url)
                 request.httpMethod = "HEAD"
                 request.timeoutInterval = 8
                 let reachable = (try? await URLSession.shared.data(for: request)).map { _, response in

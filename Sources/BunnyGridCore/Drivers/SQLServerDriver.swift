@@ -19,8 +19,18 @@ public actor SQLServerDriver: DatabaseDriver {
         self.secrets = secrets
     }
 
+    /// True between `connect()` and `disconnect()`: a closed connection is then reopened on the next call.
+    private var wantsConnection = false
+    /// How many times the connection was reopened after it was lost, for tests and the status bar.
+    public private(set) var reconnectCount = 0
+    /// An open transaction on `connection` (see `TransactionState`); losing the connection then fails instead of reconnecting.
+    public private(set) var inTransaction = false
+    /// One reconnect at a time: calls arriving meanwhile wait for it instead of opening their own.
+    private var reconnecting: Task<Void, any Error>?
+
     public func connect() async throws {
         guard connection == nil else { return }
+        wantsConnection = true
         let endpoint = try await ConnectionEndpoint.open(for: config, sshSecret: secrets.sshSecret)
         do {
             guard case .tcp(let host, let port) = endpoint.address else {
@@ -51,7 +61,44 @@ public actor SQLServerDriver: DatabaseDriver {
         }
     }
 
+    /// The open connection, reopened (with a fresh SSH tunnel) when the server or the network closed it.
+    private func liveConnection() async throws -> TDSConnection {
+        if let connection, connection.isActive { return connection }
+        guard wantsConnection else { throw DatabaseError.notConnected }
+        if let reconnecting {
+            try await reconnecting.value
+        } else {
+            let task = Task { try await reopen() }
+            reconnecting = task
+            defer { reconnecting = nil }
+            try await task.value
+        }
+        guard let connection, connection.isActive else { throw DatabaseError.notConnected }
+        return connection
+    }
+
+    private func reopen() async throws {
+        await dropConnection()
+        try await connect()
+        reconnectCount += 1
+        if inTransaction {
+            inTransaction = false
+            throw DatabaseError.connectionLost("the open transaction was rolled back by the server; nothing in it was saved")
+        }
+        for statement in InitialQueries.statements(config) { _ = try await executeStatement(statement) }
+    }
+
+    private func failure(_ error: any Error, on connection: TDSConnection) -> DatabaseError {
+        let error = Self.queryError(error)
+        return connection.isActive ? error : .connectionLost(error.errorDescription ?? "connection closed")
+    }
+
     public func disconnect() async {
+        wantsConnection = false
+        await dropConnection()
+    }
+
+    private func dropConnection() async {
         await connection?.close()
         connection = nil
         await endpoint?.close()
@@ -70,7 +117,8 @@ public actor SQLServerDriver: DatabaseDriver {
     }
 
     public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {
-        let connection = try requireConnection()
+        let connection = try await liveConnection()
+        inTransaction = TransactionState.after(sql, wasOpen: inTransaction)
         let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.uppercased().hasPrefix(SQLDialect.showplanPrefix) {
             return try await showPlan(String(trimmed.dropFirst(SQLDialect.showplanPrefix.count)), on: connection)
@@ -78,17 +126,18 @@ public actor SQLServerDriver: DatabaseDriver {
         do {
             return Self.result(sql, try await connection.execute(sql, maxRows: maxRows))
         } catch {
-            throw Self.queryError(error)
+            throw failure(error, on: connection)
         }
     }
 
     public func executeStatement(_ sql: String, parameters: [SQLParameter]) async throws -> QueryResult {
         guard !parameters.isEmpty else { return try await executeStatement(sql) }
-        let connection = try requireConnection()
+        let connection = try await liveConnection()
+        inTransaction = TransactionState.after(sql, wasOpen: inTransaction)
         do {
             return Self.result(sql, try await connection.executeSQL(sql, parameters: parameters.map(Self.value)))
         } catch {
-            throw Self.queryError(error)
+            throw failure(error, on: connection)
         }
     }
 
@@ -111,11 +160,6 @@ public actor SQLServerDriver: DatabaseDriver {
         } catch {
             throw Self.queryError(error)
         }
-    }
-
-    private func requireConnection() throws -> TDSConnection {
-        guard let connection else { throw DatabaseError.notConnected }
-        return connection
     }
 
     /// The last result set (a batch that selects several times shows the final one), or the row count.

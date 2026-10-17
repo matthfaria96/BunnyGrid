@@ -61,8 +61,16 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
         endpoint.usesTLS && config.tls.isEnforced
     }
 
+    /// True between `connect()` and `disconnect()`: a closed connection is then reopened on the next call.
+    private var wantsConnection = false
+    /// How many times the connection was reopened after it was lost, for tests and the status bar.
+    public private(set) var reconnectCount = 0
+    /// One reconnect at a time: calls arriving meanwhile wait for it instead of opening their own.
+    private var reconnecting: Task<Void, any Error>?
+
     public func connect() async throws {
         guard connection == nil else { return }
+        wantsConnection = true
         var target = config
         if let options = config.redis, options.usesSentinel {
             let master = try await discoverSentinelMaster(options)
@@ -280,7 +288,38 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
         }
     }
 
+    /// The open connection, reopened (with a fresh SSH tunnel) when the server or the network closed it.
+    private func liveConnection() async throws -> RedisConnection {
+        if let connection, connection.isActive { return connection }
+        guard wantsConnection else { throw DatabaseError.notConnected }
+        if let reconnecting {
+            try await reconnecting.value
+        } else {
+            let task = Task { try await reopen() }
+            reconnecting = task
+            defer { reconnecting = nil }
+            try await task.value
+        }
+        guard let connection, connection.isActive else { throw DatabaseError.notConnected }
+        return connection
+    }
+
+    private func reopen() async throws {
+        await dropConnection()
+        try await connect()
+        reconnectCount += 1
+    }
+
+    private func failure(_ error: any Error, on connection: RedisConnection) -> DatabaseError {
+        !connection.isActive ? .connectionLost(ConnectionErrorText.describe(error)) : .queryFailed(ConnectionErrorText.describe(error))
+    }
+
     public func disconnect() async {
+        wantsConnection = false
+        await dropConnection()
+    }
+
+    private func dropConnection() async {
         for (_, node) in nodes where node !== connection { await node.close() }
         nodes = [:]
         slotRanges = []
@@ -295,7 +334,7 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
 
     /// Sends commands back to back on `database` (with a SELECT first when needed) and returns their replies.
     func pipeline(database: Int?, _ commands: [[Data]]) async throws -> [RESPValue] {
-        guard let connection else { throw DatabaseError.notConnected }
+        let connection = try await liveConnection()
         if isCluster {
             do {
                 return try await clusterPipeline(commands)
@@ -326,8 +365,7 @@ public actor RedisDriver: KeyValueDatabaseDriver, DatabaseDriver {
         } catch let error as RedisError {
             throw error
         } catch {
-            if !connection.isActive { self.connection = nil }
-            throw DatabaseError.queryFailed(ConnectionErrorText.describe(error))
+            throw failure(error, on: connection)
         }
     }
 

@@ -92,7 +92,7 @@ actor TDSConnection {
         try? await channel.close().get()
     }
 
-    var isActive: Bool { channel.isActive }
+    nonisolated var isActive: Bool { channel.isActive }
 
     // MARK: - Login
 

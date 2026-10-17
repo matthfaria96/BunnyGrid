@@ -28,6 +28,8 @@ public actor SQLiteDriver: DatabaseDriver {
         }
         sqlite3_busy_timeout(handle, 5_000)
         db = handle
+        openedPath = path == ":memory:" ? nil : path
+        fileIdentity = openedPath.flatMap(Self.identity)
         interruptHandle.set(handle)
         // The connection's Databases tab: every connection (editor, transaction) sees the same files.
         for database in config.attachedDatabases ?? [] where !database.alias.isEmpty && !database.path.isEmpty {
@@ -39,6 +41,50 @@ public actor SQLiteDriver: DatabaseDriver {
             }
         }
     }
+
+    /// The file the handle was opened on and its device/inode then, to notice it being moved, deleted or replaced.
+    private var openedPath: String?
+    private var fileIdentity: FileIdentity?
+    struct FileIdentity: Equatable { var device: UInt64; var inode: UInt64 }
+
+    static func identity(_ path: String) -> FileIdentity? {
+        var info = stat()
+        guard stat(path, &info) == 0 else { return nil }
+        return FileIdentity(device: UInt64(info.st_dev), inode: UInt64(info.st_ino))
+    }
+
+    /// The open handle, checked against the file on disk first: writing through a handle whose file was moved
+    /// or replaced would go to the wrong file (and its journal to the old path). A replaced file is reopened;
+    /// a missing one fails with `connectionLost` until it is back.
+    private func liveHandle() async throws -> OpaquePointer {
+        if db == nil, let lostPath {
+            guard Self.identity(lostPath) != nil else {
+                throw DatabaseError.connectionLost("the database file was moved or deleted: \(lostPath)")
+            }
+            try await connect()
+            self.lostPath = nil
+        }
+        guard let db else { throw DatabaseError.notConnected }
+        guard let openedPath, let fileIdentity else { return db }
+        let current = Self.identity(openedPath)
+        if current == fileIdentity { return db }
+        await disconnect()
+        guard current != nil else {
+            lostPath = openedPath
+            throw DatabaseError.connectionLost("the database file was moved or deleted: \(openedPath)")
+        }
+        try await connect()
+        if inTransaction {
+            inTransaction = false
+            throw DatabaseError.connectionLost("the database file was replaced during a transaction; nothing in it was saved")
+        }
+        guard let db = self.db else { throw DatabaseError.notConnected }
+        return db
+    }
+    /// Set while the file is missing: the next call reopens it once it is back.
+    private var lostPath: String?
+    /// An open transaction on the handle (see `TransactionState`).
+    public private(set) var inTransaction = false
 
     public func disconnect() async {
         interruptHandle.set(nil)
@@ -375,7 +421,8 @@ public actor SQLiteDriver: DatabaseDriver {
     }
 
     public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {
-        guard let db else { throw DatabaseError.notConnected }
+        let db = try await liveHandle()
+        inTransaction = TransactionState.after(sql, wasOpen: inTransaction)
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
             throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(db)))
@@ -431,7 +478,8 @@ public actor SQLiteDriver: DatabaseDriver {
     /// dates and other text go in as TEXT (SQLite has no date type) and column affinity applies as usual.
     public func executeStatement(_ sql: String, parameters: [SQLParameter]) async throws -> QueryResult {
         guard !parameters.isEmpty else { return try await executeStatement(sql) }
-        guard let db else { throw DatabaseError.notConnected }
+        let db = try await liveHandle()
+        inTransaction = TransactionState.after(sql, wasOpen: inTransaction)
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
             throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(db)))

@@ -252,10 +252,11 @@ final class TableTabModel: Identifiable {
                 page = TablePage(columns: fresh.columns, rows: fresh.rows, offset: 0, limit: max(fresh.rows.count, 1))
                 lastSQL = fresh.statement
                 lastRefresh = Date()
+                clearPendingChanges()
             } catch {
+                // Pending edits stay: they belong to the rows still shown, and a failed reload must not drop them.
                 self.error = error.localizedDescription
             }
-            clearPendingChanges()
             return
         }
         let filter = appliedFilter.isEmpty ? nil : appliedFilter
@@ -281,6 +282,7 @@ final class TableTabModel: Identifiable {
             page = loaded
             lastRefresh = Date()
             record(lastSQL)
+            clearPendingChanges()
             // A short page is the whole result: no need to count.
             if offset == 0 && !loaded.hasMore {
                 totalRows = loaded.rows.count
@@ -293,10 +295,10 @@ final class TableTabModel: Identifiable {
                 }
             }
         } catch {
+            // The old page and its pending edits stay (a dropped connection must not lose unsaved work).
             self.error = error.localizedDescription
             record(lastSQL, error: error.localizedDescription)
         }
-        clearPendingChanges()
         if indexes.isEmpty {
             indexes = (try? await driver.listIndexes(table: object.name, schema: object.schema)) ?? []
         }
@@ -328,11 +330,13 @@ final class TableTabModel: Identifiable {
     var canGoForward: Bool { page?.hasMore == true && !hasChanges }
 
     func nextPage() async {
+        guard !hasChanges else { return }
         offset += pageSize
         await reload()
     }
 
     func previousPage() async {
+        guard !hasChanges else { return }
         offset = max(0, offset - pageSize)
         await reload()
     }
@@ -652,8 +656,15 @@ final class TableTabModel: Identifiable {
             for statement in statements { record(statement + ";") }
             await reload()
         } catch {
+            // The edits stay pending so nothing is lost; the error says why (a lost connection reconnects on retry).
             saveError = error.localizedDescription
             record(pendingSQL, error: error.localizedDescription)
+            if error.isConnectionLost, let dedicated = transactionDriver {
+                // The server rolled the transaction back with the connection: leave transaction mode, keep the edits.
+                transactionDriver = nil
+                transactionError = error.localizedDescription
+                Task { await dedicated.disconnect() }
+            }
         }
     }
 }

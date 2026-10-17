@@ -70,6 +70,30 @@ extension AppModel {
         }
     }
 
+    static var recoveryDirectory: URL { dataDirectory.appending(path: "Recovered Queries", directoryHint: .isDirectory) }
+
+    /// After a crash, every recovered query is also written to Recovered Queries/ before the tabs reopen: a tab
+    /// whose connection no longer opens (server down, connection deleted) would otherwise lose its text when the
+    /// next autosave replaces workspace.json.
+    func keepRecoveredQueries(_ tabs: [WorkspaceSnapshot.Tab]) {
+        let directory = Self.recoveryDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let stamp = formatter.string(from: Date())
+        for (index, tab) in tabs.enumerated() where tab.kind == .query {
+            guard let text = tab.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let safeTitle = tab.title.map { "/:\\".contains($0) ? "-" : $0 }
+            let url = directory.appending(path: "\(stamp)-\(index + 1) \(String(safeTitle)).sql")
+            do {
+                try Data(text.utf8).write(to: url, options: .atomic)
+            } catch {
+                alertMessage = "Could not keep a recovered query in \(directory.path): \(error.localizedDescription)"
+            }
+        }
+    }
+
     /// Reopens the last session's tabs when the user chose "Continue where you left off",
     /// or the unsaved queries when the app didn't quit normally.
     func restoreWorkspaceIfNeeded() {
@@ -81,6 +105,7 @@ extension AppModel {
             continueSession || (recovering && tab.kind == .query && !(tab.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         guard !tabs.isEmpty else { return }
+        if recovering { keepRecoveredQueries(tabs) }
         Task {
             for tab in tabs {
                 guard connection(id: tab.connectionID) != nil, let session = connect(tab.connectionID) else { continue }

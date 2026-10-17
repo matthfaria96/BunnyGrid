@@ -26,8 +26,16 @@ public actor MongoDriver: DocumentDatabaseDriver {
 
     // MARK: - Connecting
 
+    /// True between `connect()` and `disconnect()`: a closed connection is then reopened on the next call.
+    private var wantsConnection = false
+    /// How many times the connection was reopened after it was lost, for tests and the status bar.
+    public private(set) var reconnectCount = 0
+    /// One reconnect at a time: calls arriving meanwhile wait for it instead of opening their own.
+    private var reconnecting: Task<Void, any Error>?
+
     public func connect() async throws {
         guard connection == nil else { return }
+        wantsConnection = true
         do {
             try await openConnection()
         } catch let error as DatabaseError {
@@ -167,7 +175,38 @@ public actor MongoDriver: DocumentDatabaseDriver {
         }
     }
 
+    /// The open connection, reopened (with a fresh SSH tunnel) when the server or the network closed it.
+    private func liveConnection() async throws -> MongoConnection {
+        if let connection, connection.isActive { return connection }
+        guard wantsConnection else { throw DatabaseError.notConnected }
+        if let reconnecting {
+            try await reconnecting.value
+        } else {
+            let task = Task { try await reopen() }
+            reconnecting = task
+            defer { reconnecting = nil }
+            try await task.value
+        }
+        guard let connection, connection.isActive else { throw DatabaseError.notConnected }
+        return connection
+    }
+
+    private func reopen() async throws {
+        await dropConnection()
+        try await connect()
+        reconnectCount += 1
+    }
+
+    private func failure(_ error: any Error, on connection: MongoConnection) -> DatabaseError {
+        !connection.isActive ? .connectionLost(ConnectionErrorText.describe(error)) : .queryFailed(ConnectionErrorText.describe(error))
+    }
+
     public func disconnect() async {
+        wantsConnection = false
+        await dropConnection()
+    }
+
+    private func dropConnection() async {
         await connection?.close()
         connection = nil
         await endpoint?.close()
@@ -186,11 +225,6 @@ public actor MongoDriver: DocumentDatabaseDriver {
         try? await openConnection()
     }
 
-    private func live() throws -> MongoConnection {
-        guard let connection, connection.isActive else { throw DatabaseError.notConnected }
-        return connection
-    }
-
     // MARK: - Commands
 
     private static let taggedCommands: Set<String> = ["find", "aggregate", "count", "distinct", "insert", "update", "delete",
@@ -199,7 +233,7 @@ public actor MongoDriver: DocumentDatabaseDriver {
                                                     "listIndexes", "explain", "collStats", "dbStats"]
 
     public func runCommand(_ command: BSONDocument, database: String) async throws -> BSONDocument {
-        let connection = try live()
+        let connection = try await liveConnection()
         var command = command
         let name = command.elements.first?.key ?? ""
         if Self.taggedCommands.contains(name), command["comment"] == nil, connection.maxWireVersion >= 9 {
@@ -217,10 +251,14 @@ public actor MongoDriver: DocumentDatabaseDriver {
             } catch let error as MongoServerError where error.isNotPrimary && name != "getMore" && hasSeveralHosts {
                 // An election moved the primary: find the new one and run the command there once.
                 await rediscoverPrimary()
-                return try await live().run(command, database: database)
+                return try await liveConnection().run(command, database: database)
             }
         } catch let error as MongoServerError {
             throw DatabaseError.queryFailed(error.isInterruption ? "The operation was cancelled (\(error.message))." : error.localizedDescription)
+        } catch let error as DatabaseError {
+            throw error
+        } catch {
+            throw failure(error, on: connection)
         }
     }
 

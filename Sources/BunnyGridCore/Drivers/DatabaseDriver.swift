@@ -6,6 +6,9 @@ public enum DatabaseError: LocalizedError, Sendable {
     case queryFailed(String)
     case unsupported(String)
     case readOnly
+    /// The server closed the connection, the network dropped or the SSH session died while a call ran.
+    /// The driver reopens the connection (and its SSH tunnel) on the next call.
+    case connectionLost(String)
 
     public var errorDescription: String? {
         switch self {
@@ -14,7 +17,30 @@ public enum DatabaseError: LocalizedError, Sendable {
         case .queryFailed(let message): message
         case .unsupported(let what): "\(what) is not supported by this database."
         case .readOnly: "This connection is read-only."
+        case .connectionLost(let message):
+            "The connection to the server was lost (\(message)). It reconnects on the next action."
         }
+    }
+}
+
+extension DatabaseError {
+    public var isConnectionLost: Bool {
+        if case .connectionLost = self { return true }
+        return false
+    }
+}
+
+extension Error {
+    /// True for `DatabaseError.connectionLost`: the call failed because the link to the server broke.
+    public var isConnectionLost: Bool { (self as? DatabaseError)?.isConnectionLost ?? false }
+}
+
+/// Runs a connection's Initial Queries (Advanced tab) again after a driver reopened its connection,
+/// so session settings (search_path, SET NAMES, …) survive a transparent reconnect.
+public enum InitialQueries {
+    public static func statements(_ config: ConnectionConfig) -> [String] {
+        guard let script = config.initialQueries, !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        return SQLSplitter.split(script)
     }
 }
 

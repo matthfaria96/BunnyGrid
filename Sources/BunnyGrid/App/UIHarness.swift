@@ -316,7 +316,44 @@ final class UIHarness {
             return screenshot(named: step["name"] as? String ?? "shot-\(results.count)")
         case "action":
             guard let app else { throw Failure("no app") }
+            var step = step
+            for key in ["text", "table"] { if let text = step[key] as? String, text.contains("$") { step[key] = substitute(text) } }
             try await UIHarnessActions.perform(step, app: app)
+        case "repeat":
+            // {"op": "repeat", "times": 200, "steps": [...]}: "$i" (0-based) in probes, targets and action texts.
+            let times = Int(step["times"] as? Double ?? 1)
+            let inner = step["steps"] as? [[String: Any]] ?? []
+            for i in 0..<times {
+                variables["i"] = String(i)
+                for innerStep in inner {
+                    let innerOp = innerStep["op"] as? String ?? "?"
+                    do {
+                        _ = try await perform(innerOp, innerStep)
+                    } catch where innerStep["optional"] as? Bool != true {
+                        throw Failure("iteration \(i), \(innerOp) \(innerStep["note"] as? String ?? ""): \(error)")
+                    }
+                    if let after = innerStep["after"] as? Double { try? await Task.sleep(for: .milliseconds(Int(after))) }
+                }
+                if let every = step["logEvery"] as? Double, every > 0, (i + 1) % Int(every) == 0 {
+                    logs.append("repeat \(i + 1)/\(times): memory \(String(format: "%.1f", UIHarnessProbe.footprintMB())) MB")
+                }
+            }
+        case "hangs":
+            // {"op": "hangs", "mode": "start"} records main-thread busy stretches (the bench harness's run-loop
+            // monitor); {"op": "hangs", "mode": "report", "maxMs": 100} logs them and fails when one is longer.
+            RunLoopMonitor.shared.install()
+            if step["mode"] as? String == "start" {
+                RunLoopMonitor.shared.isRecording = true
+            } else {
+                let stretches = RunLoopMonitor.shared.stretches
+                RunLoopMonitor.shared.isRecording = false
+                let limit = step["maxMs"] as? Double ?? 100
+                let over = stretches.filter { $0 > limit }
+                let summary = String(format: "main thread: %d busy stretches, max %.1f ms, %d over %.0f ms", stretches.count,
+                                     stretches.max() ?? 0, over.count, limit)
+                logs.append(summary)
+                if step["assert"] as? Bool == true, !over.isEmpty { throw Failure(summary) }
+            }
         case "dump":
             // The accessibility tree (role, id, label, value, frame) of every window, for writing scenarios.
             var lines: [String] = []
@@ -374,6 +411,14 @@ final class UIHarness {
             let url = shotsDir.appendingPathComponent("\(scenarioName)-\(step["name"] as? String ?? "views").txt")
             try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
             return url.path
+        case "moveFile":
+            // {"op": "moveFile", "from": "demo.sqlite", "to": "moved.sqlite"}: paths inside the run directory
+            // (BUNNYGRID_UI_RUN), to simulate a database file moved away and back.
+            guard let run = ProcessInfo.processInfo.environment["BUNNYGRID_UI_RUN"], !run.isEmpty,
+                  let from = step["from"] as? String, let to = step["to"] as? String,
+                  !from.contains(".."), !to.contains("..") else { throw Failure("moveFile needs BUNNYGRID_UI_RUN, from and to") }
+            let base = URL(fileURLWithPath: run, isDirectory: true)
+            try FileManager.default.moveItem(at: base.appending(path: from), to: base.appending(path: to))
         case "closeSheet":
             for window in NSApp.windows where window.isSheet { window.sheetParent?.endSheet(window) }
         default:

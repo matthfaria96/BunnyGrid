@@ -60,9 +60,20 @@ enum UIHarnessProbe {
         return String(cString: text)
     }
 
+    /// The process's physical footprint (what Activity Monitor shows as Memory), in MB.
+    static func footprintMB() -> Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : 0
+    }
+
     /// Computed state that reflection cannot see.
     private static func named(_ name: String, app: AppModel) -> Any? {
         switch name {
+        case "memoryMB": return Int(footprintMB().rounded())
         case "alert": return app.alertMessage ?? "nil"
         case "tabCount": return app.tabs.count
         case "tabTitle": return app.selectedTab?.title ?? "nil"
@@ -194,6 +205,7 @@ extension QueryTabModel: UIHarnessProbing {
         switch key {
         case "text": text
         case "resultCount": results.count
+        case "isRunning": isRunning
         default: nil
         }
     }
@@ -242,6 +254,20 @@ enum UIHarnessActions {
             app.navSelection = .connection(first.id)
         case "closeAllTabs":
             for tab in app.tabs { app.closeTab(tab.id) }
+        case "closeTab":
+            // The selected tab, without the unsaved-changes prompt.
+            if let tab = app.selectedTab { app.closeTab(tab.id) }
+        case "selectTab":
+            let index = Int(step["index"] as? Double ?? Double(step["text"] as? String ?? "") ?? 0)
+            if !app.tabs.isEmpty { app.selectedTabID = app.tabs[index % app.tabs.count].id }
+        case "runQuery":
+            // Runs the selected query tab (optionally with new text) and waits for it to finish.
+            guard let query = app.selectedQueryTab else { throw UIHarness.Failure("no query tab") }
+            if let text = step["text"] as? String { query.text = text }
+            query.run()
+            let deadline = ContinuousClock.now + .seconds(30)
+            while query.isRunning, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+            if query.isRunning { throw UIHarness.Failure("query still running after 30 s") }
         case "defaults":
             // {"name": "defaults", "key": "...", "value": ...}
             if let key = step["key"] as? String { UserDefaults.standard.set(step["value"], forKey: key) }

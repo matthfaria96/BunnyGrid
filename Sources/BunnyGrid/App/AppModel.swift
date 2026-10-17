@@ -95,6 +95,12 @@ final class AppModel {
     }
     /// Tab waiting for "discard unsaved changes?" confirmation.
     var tabPendingClose: WorkspaceTab?
+    /// The app's model, for the app delegate (quitting with unsaved work asks first).
+    @ObservationIgnored static weak var current: AppModel?
+
+    /// Tabs whose work would be lost by quitting: pending grid edits, open transactions, modified queries,
+    /// design changes, unsaved keys and documents.
+    var tabsWithUnsavedChanges: [WorkspaceTab] { tabs.filter(\.hasUnsavedChanges) }
     var objectCategory: ObjectCategory = .tables
     private var queryCounter = 0
 
@@ -148,16 +154,21 @@ final class AppModel {
         self.historyStore = historyStore
         self.keychain = keychain
         self.assistant = AssistantModel(storeURL: AppModel.dataDirectory.appending(path: "ai-chats.json"))
-        do {
-            connections = try store.load()
-        } catch {
-            alertMessage = "Could not read saved connections: \(error.localizedDescription)"
+        // An unreadable file is moved aside (not overwritten by the next save) and reported once.
+        var problems: [String] = []
+        func load<T>(_ url: URL, _ body: () throws -> [T]) -> [T] {
+            let loaded = StoreQuarantine.load(url, body)
+            if let problem = loaded.problem { problems.append(problem) }
+            return loaded.elements
         }
-        history = (try? historyStore.load()) ?? []
-        savedQueries = (try? savedQueryStore.load()) ?? []
-        favorites = (try? favoriteStore.load()) ?? []
-        tableProfiles = (try? profileStore.load()) ?? []
-        snippets = (try? snippetStore.load()) ?? []
+        connections = load(store.fileURL) { try store.load() }
+        history = load(historyStore.fileURL) { try historyStore.load() }
+        savedQueries = load(savedQueryStore.fileURL) { try savedQueryStore.load() }
+        favorites = load(favoriteStore.fileURL) { try favoriteStore.load() }
+        tableProfiles = load(profileStore.fileURL) { try profileStore.load() }
+        snippets = load(snippetStore.fileURL) { try snippetStore.load() }
+        if !problems.isEmpty { alertMessage = problems.joined(separator: "\n") }
+        AppModel.current = self
         for group in Set(connections.compactMap(\.group)) { expanded.insert(.group(group)) }
         assistant.app = self
         #if DEBUG || BUNNYGRID_BENCH

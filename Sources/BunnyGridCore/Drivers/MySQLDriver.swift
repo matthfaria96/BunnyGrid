@@ -24,8 +24,18 @@ public actor MySQLDriver: DatabaseDriver {
         self.secrets = secrets
     }
 
+    /// True between `connect()` and `disconnect()`: a closed connection is then reopened on the next call.
+    private var wantsConnection = false
+    /// How many times the connection was reopened after it was lost, for tests and the status bar.
+    public private(set) var reconnectCount = 0
+    /// An open transaction on `connection` (see `TransactionState`); losing the connection then fails instead of reconnecting.
+    public private(set) var inTransaction = false
+    /// One reconnect at a time: calls arriving meanwhile wait for it instead of opening their own.
+    private var reconnecting: Task<Void, any Error>?
+
     public func connect() async throws {
         guard connection == nil else { return }
+        wantsConnection = true
         let endpoint = try await ConnectionEndpoint.open(for: config, sshSecret: secrets.sshSecret)
         do {
             connection = try await openConnection(at: endpoint)
@@ -159,7 +169,43 @@ public actor MySQLDriver: DatabaseDriver {
         }
     }
 
+    /// The open connection, reopened (with a fresh SSH tunnel) when the server or the network closed it.
+    private func liveConnection() async throws -> MySQLConnection {
+        if let connection, connection.channel.isActive { return connection }
+        guard wantsConnection else { throw DatabaseError.notConnected }
+        if let reconnecting {
+            try await reconnecting.value
+        } else {
+            let task = Task { try await reopen() }
+            reconnecting = task
+            defer { reconnecting = nil }
+            try await task.value
+        }
+        guard let connection, connection.channel.isActive else { throw DatabaseError.notConnected }
+        return connection
+    }
+
+    private func reopen() async throws {
+        await dropConnection()
+        try await connect()
+        reconnectCount += 1
+        if inTransaction {
+            inTransaction = false
+            throw DatabaseError.connectionLost("the open transaction was rolled back by the server; nothing in it was saved")
+        }
+        for statement in InitialQueries.statements(config) { _ = try await executeStatement(statement) }
+    }
+
+    private func failure(_ error: any Error, on connection: MySQLConnection) -> DatabaseError {
+        !connection.channel.isActive ? .connectionLost(Self.message(error)) : .queryFailed(Self.message(error))
+    }
+
     public func disconnect() async {
+        wantsConnection = false
+        await dropConnection()
+    }
+
+    private func dropConnection() async {
         try? await connection?.close().get()
         connection = nil
         await endpoint?.close()
@@ -389,7 +435,8 @@ public actor MySQLDriver: DatabaseDriver {
 
     /// MySQLNIO has no backpressure: past `maxRows` the remaining rows still arrive, but are dropped as they do.
     public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {
-        guard let connection else { throw DatabaseError.notConnected }
+        let connection = try await liveConnection()
+        inTransaction = TransactionState.after(sql, wasOpen: inTransaction)
         let box = MetadataBox()
         do {
             try await connection.query(sql, onRow: { row in
@@ -411,10 +458,10 @@ public actor MySQLDriver: DatabaseDriver {
                     }
                 }).get()
             } catch {
-                throw DatabaseError.queryFailed(Self.message(error))
+                throw failure(error, on: connection)
             }
         } catch {
-            throw DatabaseError.queryFailed(Self.message(error))
+            throw failure(error, on: connection)
         }
         let rows = box.rows
         var columns = rows.first?.columnDefinitions.map(\.name) ?? []
@@ -510,14 +557,15 @@ public actor MySQLDriver: DatabaseDriver {
     /// DATE / DATETIME / TIMESTAMP as MySQL time values, everything else as strings.
     public func executeStatement(_ sql: String, parameters: [SQLParameter]) async throws -> QueryResult {
         guard !parameters.isEmpty else { return try await executeStatement(sql) }
-        guard let connection else { throw DatabaseError.notConnected }
+        let connection = try await liveConnection()
+        inTransaction = TransactionState.after(sql, wasOpen: inTransaction)
         let binds = parameters.map(Self.data)
         let box = MetadataBox()
         let rows: [MySQLRow]
         do {
             rows = try await connection.query(sql, binds, onMetadata: { box.affected = Int($0.affectedRows) }).get()
         } catch {
-            throw DatabaseError.queryFailed(Self.message(error))
+            throw failure(error, on: connection)
         }
         let columns = rows.first?.columnDefinitions.map(\.name) ?? []
         let values = rows.map { row in

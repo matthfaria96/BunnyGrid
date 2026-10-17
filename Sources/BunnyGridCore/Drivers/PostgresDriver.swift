@@ -24,8 +24,16 @@ public actor PostgresDriver: DatabaseDriver {
         self.secrets = secrets
     }
 
+    /// True between `connect()` and `disconnect()`: a closed connection is then reopened on the next call.
+    private var wantsConnection = false
+    /// How many times the connection was reopened after it was lost, for tests and the status bar.
+    public private(set) var reconnectCount = 0
+    /// An open transaction on `connection` (see `TransactionState`); losing the connection then fails instead of reconnecting.
+    public private(set) var inTransaction = false
+
     public func connect() async throws {
         guard connection == nil else { return }
+        wantsConnection = true
         let endpoint = try await ConnectionEndpoint.open(for: config, sshSecret: secrets.sshSecret)
         do {
             connection = try await openConnection(at: endpoint)
@@ -74,11 +82,50 @@ public actor PostgresDriver: DatabaseDriver {
     }
 
     public func disconnect() async {
+        wantsConnection = false
+        await dropConnection()
+    }
+
+    private func dropConnection() async {
         try? await connection?.close().get()
         connection = nil
         await endpoint?.close()
         endpoint = nil
         backendPID = nil
+    }
+
+    /// The open connection, reopened (with a fresh SSH tunnel and the Initial Queries) when the server closed it.
+    private func liveConnection() async throws -> PostgresConnection {
+        if let connection, !connection.isClosed { return connection }
+        guard wantsConnection else { throw DatabaseError.notConnected }
+        if let reconnecting {
+            try await reconnecting.value
+        } else {
+            let task = Task { try await reopen() }
+            reconnecting = task
+            defer { reconnecting = nil }
+            try await task.value
+        }
+        guard let connection, !connection.isClosed else { throw DatabaseError.notConnected }
+        return connection
+    }
+
+    /// One reconnect at a time: calls arriving meanwhile wait for it instead of opening their own.
+    private var reconnecting: Task<Void, any Error>?
+
+    private func reopen() async throws {
+        await dropConnection()
+        try await connect()
+        reconnectCount += 1
+        if inTransaction {
+            inTransaction = false
+            throw DatabaseError.connectionLost("the open transaction was rolled back by the server; nothing in it was saved")
+        }
+        for statement in InitialQueries.statements(config) { _ = try await executeStatement(statement) }
+    }
+
+    private func failure(_ error: any Error, on connection: PostgresConnection) -> DatabaseError {
+        connection.isClosed ? .connectionLost(Self.message(for: error)) : .queryFailed(Self.message(for: error))
     }
 
     private func captureBackendPID() async {
@@ -361,7 +408,8 @@ public actor PostgresDriver: DatabaseDriver {
     }
 
     public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {
-        guard let connection else { throw DatabaseError.notConnected }
+        let connection = try await liveConnection()
+        inTransaction = TransactionState.after(sql, wasOpen: inTransaction)
         do {
             if !Self.isReadOnlyStatement(sql) {
                 // The future-based API exposes the command tag, which carries the affected row count.
@@ -390,7 +438,7 @@ public actor PostgresDriver: DatabaseDriver {
             }
             return QueryResult(statement: sql, columns: columns, rows: rows, isTruncated: truncated)
         } catch {
-            throw DatabaseError.queryFailed(Self.message(for: error))
+            throw failure(error, on: connection)
         }
     }
 
@@ -500,7 +548,8 @@ public actor PostgresDriver: DatabaseDriver {
     /// enums and domains compare exactly as before).
     public func executeStatement(_ sql: String, parameters: [SQLParameter]) async throws -> QueryResult {
         guard !parameters.isEmpty else { return try await executeStatement(sql) }
-        guard let connection else { throw DatabaseError.notConnected }
+        let connection = try await liveConnection()
+        inTransaction = TransactionState.after(sql, wasOpen: inTransaction)
         var binds = PostgresBindings(capacity: parameters.count)
         for parameter in parameters {
             switch parameter {
@@ -520,7 +569,7 @@ public actor PostgresDriver: DatabaseDriver {
             return QueryResult(statement: sql, columns: columns, rows: result.rows.map { $0.map(Self.value) },
                                affectedRows: columns.isEmpty ? result.metadata.rows : nil)
         } catch {
-            throw DatabaseError.queryFailed(Self.message(for: error))
+            throw failure(error, on: connection)
         }
     }
 
