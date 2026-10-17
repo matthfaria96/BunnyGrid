@@ -15,8 +15,14 @@ import UniformTypeIdentifiers
 /// app's own window (`CGWindowListCreateImage` of its window id, falling back to `cacheDisplay`).
 ///
 /// A scenario is `{"name", "args": [launch flags, read by scripts/ui-test.sh], "steps": [...]}`. Step ops:
-/// wait, waitFor, assert, click, doubleClick, rightClick, hover, drag, dragDrop, key, type, scroll, magnify, menu
-/// (choose in the open menu), menuBar, screenshot, action (model-level setup), log. See scripts/ui-scenarios/README.md.
+/// wait, waitFor, assert, remember, click, doubleClick, rightClick, hover, drag, release, dragDrop, key, type, scroll,
+/// magnify, menu (choose in the open menu), menuBar, panel, screenshot, dump, dumpViews, menuDump, action (model-level
+/// setup), log, selfTest. The README ("Testes de interface") describes targets, probes and scripts/ui-test.sh.
+///
+/// While a scenario runs the app behaves as if it were frontmost with the scripted pointer over it, whatever the person
+/// is doing: views accept the first click, windows report key, `NSEvent.pressedMouseButtons` / `mouseLocation` follow
+/// the synthesized events, menu-bar shortcuts and keystrokes go straight to the window, the general pasteboard is a
+/// private one, and open/save panels answer from the scenario. None of this exists in release builds.
 @MainActor
 final class UIHarness {
     static let shared = UIHarness()
@@ -222,28 +228,6 @@ final class UIHarness {
             try await drain()
         case "mode":
             postMode = step["mode"] as? String ?? "cg"
-        case "keyEquivalentProbe":
-            let window = try targetWindow(step)
-            let key = step["key"] as? String ?? "s"
-            for kind in ["ns", "cg"] {
-                var event: NSEvent?
-                if kind == "ns" {
-                    event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
-                                             windowNumber: window.windowNumber, context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false,
-                                             keyCode: Self.letterCodes[Character(key)] ?? 0)
-                } else if let cg = CGEvent(keyboardEventSource: nil, virtualKey: Self.letterCodes[Character(key)] ?? 0, keyDown: true) {
-                    cg.flags = .maskCommand
-                    event = NSEvent(cgEvent: cg)
-                }
-                guard let event else { continue }
-                let box = UncheckedBox(event)
-                let windowBox = UncheckedBox(window)
-                let byWindow = await onRunLoop { windowBox.value.performKeyEquivalent(with: box.value) }
-                let responder = window.firstResponder.map { String(describing: type(of: $0)) } ?? "-"
-                let handled = byWindow ? false : await onRunLoop { NSApp.mainMenu?.performKeyEquivalent(with: box.value) ?? false }
-                logs.append("keyEquivalent \(kind) ⌘\(key): window=\(byWindow) menu=\(handled) responder=\(responder) active=\(NSApp.isActive)")
-                try await drain(ms: 300)
-            }
         case "menuDump":
             // The menu bar: title, key equivalent, enabled.
             var lines: [String] = []
@@ -631,7 +615,8 @@ final class UIHarness {
             }
             guard matches.indices.contains(index) else { throw Failure("no view \(className) #\(index) (found \(matches.count))") }
             let (window, view) = matches[index]
-            var frame = view.convert(view.bounds, to: nil)
+            // The part on screen: a scrolled document (a 1,000-row grid) is far taller than what shows.
+            var frame = view.convert(view.visibleRect.isEmpty ? view.bounds : view.visibleRect, to: nil)
             if let anchor = spec["anchor"] as? String {
                 guard let provider = view as? UIHarnessAnchors else { throw Failure("\(className) has no anchors") }
                 guard let rect = provider.harnessAnchor(anchor) else { throw Failure("\(className) has no anchor \(anchor)") }
@@ -942,14 +927,27 @@ final class UIHarness {
         let screenPoint = window.convertPoint(toScreen: point)
         let height = NSScreen.screens.first?.frame.height ?? 0
         for _ in 0..<max(1, ticks) {
-            guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
-                                   wheel1: Int32(dy / Double(max(1, ticks))), wheel2: Int32(dx / Double(max(1, ticks))), wheel3: 0) else { throw Failure("scroll event") }
+            // A mouse wheel: line units (about 10 pt a line), no gesture phases.
+            guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
+                                   wheel1: Int32((dy / 10 / Double(max(1, ticks))).rounded()), wheel2: Int32((dx / 10 / Double(max(1, ticks))).rounded()),
+                                   wheel3: 0) else { throw Failure("scroll event") }
             cg.location = CGPoint(x: screenPoint.x, y: height - screenPoint.y)
             cg.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
             cg.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
             guard let event = NSEvent(cgEvent: cg) else { throw Failure("scroll event") }
-            // Through the window, as AppKit delivers the wheel: it routes to the view under the point.
-            NSApp.postEvent(event, atStart: false)
+            // To the view under the point, as the window would route it (a wheel event built this way carries no
+            // window of its own); it travels up the responder chain to the scroll view.
+            let box = UncheckedBox((event, window, point))
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let (event, window, point) = box.value
+                    let hit = window.contentView?.superview?.hitTest(point) ?? window.contentView
+                    if ProcessInfo.processInfo.environment["BUNNYGRID_UI_TRACE"] != nil {
+                        FileHandle.standardError.write(Data("[ui-trace] wheel → \(hit.map { String(describing: type(of: $0)) } ?? "-") dy=\(event.scrollingDeltaY) precise=\(event.hasPreciseScrollingDeltas)\n".utf8))
+                    }
+                    hit?.scrollWheel(with: event)
+                }
+            }
         }
     }
 

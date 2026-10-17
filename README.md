@@ -42,6 +42,19 @@ Também com `--open-table`: `--value-editor [COLUNA] [--row N]` abre o editor de
 
 Medidas de desempenho: `--bench CENÁRIO` (no build de debug, ou em release com `swift build -c release -Xswiftc -DBUNNYGRID_BENCH`) executa ações roteirizadas e grava os tempos em `BUNNYGRID_PERF_LOG` (uma linha por medida: nome, ms, detalhe), depois fecha o app. Cenários: `launch`, `connect`, `expand` e `objects` (banco com milhares de tabelas), `open-table`, `scroll` e `resize` (tabela `events`, ou `--bench-table NOME`), `tabs`, `typing` e `autocomplete` (com `--bench-script ARQUIVO.sql`), `query100k` (`--bench-rows N`) e `er`. Os intervalos também aparecem no Instruments (Points of Interest, `PerfTrace`). `BUNNYGRID_BENCH=1 swift test` roda o benchmark do realce de sintaxe.
 
+### Testes de interface (cenários roteirizados)
+
+```sh
+scripts/ui-test.sh                      # monta o app de debug e roda todos os cenários
+scripts/ui-test.sh grid bi --no-build   # só esses, sem recompilar
+```
+
+`--ui-script ARQUIVO.json` (só no build de debug) roda um cenário **dentro do app**: os eventos (clique, duplo clique, botão direito, arrastar, teclas, roda do mouse, pinça) são criados com `NSEvent` e entregues às janelas do próprio BunnyGrid, então o ponteiro de verdade não se mexe e nada chega a outros apps, mesmo com o app em segundo plano. Os alvos são achados pela árvore de acessibilidade (`.accessibilityIdentifier`, rótulo, papel) ou pela classe da view AppKit com uma âncora (`{"view": "QueryBuilderCanvasView", "anchor": "column:orders.status"}`, `GridTableView` com `cell:LINHA,COLUNA` / `header:NOME`, `ERCanvasView` com `table:NOME`). Arrastar-e-soltar do sistema (`.draggable` / `.onDrag`) é entregue direto ao destino com um pasteboard privado (`dragDrop`). Os passos esperam e conferem o estado do modelo (`{"probe": "tab.query.joins.count"}`, `sql:ARQUIVO|SELECT …`, `file:CAMINHO`, `pasteboard`), salvam capturas da própria janela e gravam um `results.json`.
+
+O `scripts/ui-test.sh` usa, para cada cenário, uma pasta nova em `$UI_TEST_OUT` (padrão `$TMPDIR/bunnygrid-ui-test`) com uma cópia de `Resources/Samples/demo.sqlite` (`{{DB}}`), `demo2.sqlite`, `empty.sqlite`, `BUNNYGRID_DATA_DIR` próprio, Keychain em memória (`BUNNYGRID_MEMORY_KEYCHAIN=1`), uma cópia do app com outro bundle id (preferências separadas, apagadas antes de cada cenário), painéis de abrir/salvar respondidos pelo cenário (`{"op": "panel", "path": "$RUN/out"}`), área de transferência privada, sem notificações e sem LaunchAgents de verdade. A IA aponta para um servidor local (`scripts/ui-scenarios/mock-ai.py`, que imita o SSE da Messages API e da Responses API); nada vai para a internet. Cenários com `"requires": ["postgres" | "mysql" | "mongo" | "redis"]` usam servidores descartáveis nas portas 55432 / 53306 / 57017 / 56379 (`UI_TEST_PG_PORT` etc.) e são pulados se eles não estiverem no ar; `"fixture": "servers"` grava `scripts/ui-scenarios/fixtures/servers/connections.json` e as senhas em memória.
+
+Saída: `ok`, `FAIL nome: passo …` (com captura `fail-NN.png` e a árvore de acessibilidade `fail-NN-tree.txt`), `xfail` para cenários marcados com `"knownIssue"` (bug conhecido ainda aberto) e `XPASS` quando um desses passa. Operações: `wait`, `waitFor`, `assert`, `remember` (e `$nome` depois), `click`, `doubleClick`, `rightClick` (com `"menu": ["Copy As", "CSV"]`), `hover`, `drag` (`"by": [dx, dy]` ou `"to"`, `"release": false` + `release`), `dragDrop`, `key`, `type` (`"replace": true`), `scroll`, `magnify`, `menu`, `menuBar`, `panel`, `screenshot`, `dump` / `dumpViews` / `menuDump` (para escrever cenários), `action` (atalhos de preparação) e `selfTest`. `BUNNYGRID_UI_TRACE=1` registra cada evento entregue e a view sob ele.
+
 ### Testes de integração com PostgreSQL
 
 Com um PostgreSQL acessível (ex.: `brew install postgresql@17 && brew services start postgresql@17`):

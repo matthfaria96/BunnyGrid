@@ -18,7 +18,9 @@ Visual check without touching the user's saved connections or driving the mouse:
 ```sh
 BUNNYGRID_DATA_DIR=<scratch dir> build/BunnyGrid.app/Contents/MacOS/BunnyGrid Resources/Samples/demo.sqlite --open-table customers
 ```
-then capture the window with `screencapture -l <windowID>`. Debug-only flags: `--demo-edits`, `--focus-cell`, `--show-objects`.
+then capture the window with `screencapture -l <windowID>`.
+
+Interactions (drags, menus, typing, wizards) are tested with in-app scenarios: `scripts/ui-test.sh [name…]` runs `scripts/ui-scenarios/*.json` through `--ui-script` (debug-only `App/UIHarness*.swift`: synthetic NSEvents to the app's own windows, never the real pointer). Add a scenario (and `.accessibilityIdentifier`s) for new interactive features and for each interaction bug fixed. Debug-only flags: `--demo-edits`, `--focus-cell`, `--show-objects`.
 
 The UI mirrors Navicat Premium's layout (see the user's reference screenshot): keep new features in the same places (main toolbar, navigator tree, Objects tab, table toolbar/footer, status bar, AI pane). Never copy Navicat's artwork; use SF Symbols.
 The AI Assistant talks to Claude (Messages API, default `claude-opus-5-5`, `fallbacks: "default"`) or ChatGPT (OpenAI Responses API, default `gpt-6-astra`, `store: false`), both over raw HTTP (`Sources/BunnyGridCore/AI`). Chat history is stored in Messages-API block shape; `OpenAIClient.input(fromMessages:)` converts it. The platform is picked from the toolbar avatar (`Views/AIAccountView.swift`). Editor Ask AI / Fix with AI live in `Views/AskAIView.swift`; prompts, Markdown blocks and line diff in core (`AIActions`, `MarkdownBlocks`, `LineDiff`). Debug flags: `--account-menu`, `--ai-pane`, `--ai-ask TEXT [--ai-compare]`, `--ask-ai explain|optimize|beautify|fixError|explainError|custom` (with `--query`), `--settings -settingsTab ai`, `-aiProvider chatgpt`. `BUNNYGRID_ANTHROPIC_BASE_URL` / `BUNNYGRID_OPENAI_BASE_URL` point the clients at a proxy or a local mock that speaks the same SSE.
