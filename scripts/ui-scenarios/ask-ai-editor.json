@@ -1,0 +1,27 @@
+{
+  "name": "ask-ai-editor",
+  "requires": ["mock-ai"],
+  "args": ["{{DB}}", "--query", "SELECT * FROM customers WHERE city = 'Lisboa'", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "tabKind", "equals": "query"},
+    {"op": "waitFor", "id": "query.askAI", "exists": true},
+    {"op": "click", "id": "query.askAI", "at": [0.85, 0.5], "menu": ["Explain SQL"], "note": "Ask AI menu (arrow) → Explain SQL"},
+    {"op": "waitFor", "probe": "tab.aiRun.isRunning", "equals": "false", "timeout": 15},
+    {"op": "assert", "probe": "tab.aiRun.text", "contains": "Mock reply to:"},
+    {"op": "assert", "probe": "tab.aiRun.error", "equals": "nil"},
+    {"op": "assert", "probe": "file:$RUN/requests.jsonl", "contains": "Lisboa", "note": "the statement was sent"},
+    {"op": "screenshot", "name": "explain"},
+    {"op": "key", "key": "escape", "note": "close the result card"},
+    {"op": "waitFor", "probe": "tab.aiRun.isNil", "equals": "true", "timeout": 5, "optional": true},
+    {"op": "click", "label": "AI", "role": "AXButton", "index": 0, "note": "AI pane"},
+    {"op": "type", "target": {"id": "ai.draft"}, "text": "Optimize it"},
+    {"op": "click", "id": "ai.send"},
+    {"op": "waitFor", "probe": "assistant.chats.0.messages.count", "equals": 2, "timeout": 15},
+    {"op": "waitFor", "probe": "assistant.isStreaming", "equals": "false", "timeout": 15},
+    {"op": "click", "labelContains": "ChatGPT", "index": 0, "note": "compare the answer with ChatGPT"},
+    {"op": "waitFor", "probe": "file:$RUN/requests.jsonl", "contains": "/v1/responses", "timeout": 15, "note": "the Responses API was called"},
+    {"op": "waitFor", "probe": "assistant.isStreaming", "equals": "false", "timeout": 15},
+    {"op": "assert", "probe": "assistant.error", "equals": "nil"},
+    {"op": "screenshot", "name": "compare"}
+  ]
+}

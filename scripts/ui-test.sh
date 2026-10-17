@@ -94,7 +94,7 @@ for name, text in setup["files"].items():
   fi
   mock_pid=""
   if [[ " $requires " == *" mock-ai "* ]]; then
-    /usr/bin/python3 -I "$ROOT/scripts/ui-scenarios/mock-ai.py" 58989 > "$run/mock-ai.log" 2>&1 &
+    (cd "$run" && exec /usr/bin/python3 -I "$ROOT/scripts/ui-scenarios/mock-ai.py" 58989) > "$run/mock-ai.log" 2>&1 &
     mock_pid=$!
     sleep 0.5
   fi
@@ -105,6 +105,7 @@ for name, text in setup["files"].items():
     cd "$run"
     BUNNYGRID_DATA_DIR="$run/data" BUNNYGRID_MEMORY_KEYCHAIN=1 BUNNYGRID_UI_RUN="$run" BUNNYGRID_LAUNCH_AGENTS_DIR="$run/agents" \
     BUNNYGRID_ANTHROPIC_BASE_URL="http://127.0.0.1:58989" BUNNYGRID_OPENAI_BASE_URL="http://127.0.0.1:58989" \
+    ANTHROPIC_API_KEY="mock-key" OPENAI_API_KEY="mock-key" \
     "$APP" "${final[@]}" -AppleLanguages '(en)' -AppleLocale en_US -ApplePersistenceIgnoreState YES -NSQuitAlwaysKeepsWindows NO \
       --ui-script "$file" --ui-results "$run/results.json" --ui-shots "$run/shots" > "$run/app.log" 2>&1 &
     pid=$!

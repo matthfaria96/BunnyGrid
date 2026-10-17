@@ -591,6 +591,7 @@ private struct Composer: View {
                     .opacity(0)
                     .accessibilityHidden(true)
                 TextEditor(text: $assistant.draft)
+                    .accessibilityIdentifier("ai.draft")
                     .font(.system(size: 12.5))
                     .scrollContentBackground(.hidden)
                     .scrollIndicators(.never)
@@ -661,6 +662,7 @@ private struct Composer: View {
                                isEnabled: !assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
                         assistant.send()
                     }
+                    .accessibilityIdentifier("ai.send")
                 }
             }
         }

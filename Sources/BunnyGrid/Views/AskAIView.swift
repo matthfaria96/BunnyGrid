@@ -184,6 +184,7 @@ struct AskAIButton: View {
         .fixedSize()
         .disabled(query.isBlank)
         .help("Ask AI")
+        .accessibilityIdentifier("query.askAI")
         .sheet(isPresented: $showingConvert) {
             ConvertSQLSheet(query: query)
         }

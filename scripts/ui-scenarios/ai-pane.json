@@ -1,0 +1,20 @@
+{
+  "name": "ai-pane",
+  "requires": ["mock-ai"],
+  "args": ["{{DB}}", "--open-table", "customers", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "tabKind", "equals": "table"},
+    {"op": "click", "label": "AI", "role": "AXButton", "index": 0, "note": "right pane AI tab"},
+    {"op": "waitFor", "id": "ai.draft", "exists": true},
+    {"op": "type", "target": {"id": "ai.draft"}, "text": "Which customers live in Lisboa?"},
+    {"op": "waitFor", "probe": "assistant.draft", "contains": "Lisboa"},
+    {"op": "click", "id": "ai.send", "note": "send to the mock Claude"},
+    {"op": "waitFor", "probe": "assistant.chats.0.messages.count", "equals": 2, "timeout": 15},
+    {"op": "waitFor", "probe": "assistant.isStreaming", "equals": "false", "timeout": 15},
+    {"op": "assert", "probe": "assistant.chats.0.messages.1.text", "contains": "Mock reply to: Which customers live in Lisboa?"},
+    {"op": "assert", "probe": "file:$RUN/requests.jsonl", "contains": "/v1/messages", "note": "the Messages API was called"},
+    {"op": "assert", "probe": "file:$RUN/requests.jsonl", "contains": "customers", "note": "with the open table as context"},
+    {"op": "assert", "probe": "assistant.error", "equals": "nil"},
+    {"op": "screenshot", "name": "reply"}
+  ]
+}

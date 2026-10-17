@@ -524,7 +524,7 @@ final class UIHarness {
             guard let app else { throw Failure("no app") }
             return UIHarnessProbe.evaluate(substitute(path), app: app) ?? "nil"
         }
-        if step["id"] != nil || step["label"] != nil || step["view"] != nil || step["role"] != nil {
+        if step["id"] != nil || step["label"] != nil || step["view"] != nil || step["role"] != nil || step["labelContains"] != nil {
             if step["exists"] != nil { return (try? element(step)) == nil ? "false" : "true" }
             let found = try element(step)
             switch step["attribute"] as? String ?? "value" {
@@ -639,7 +639,7 @@ final class UIHarness {
         let identifier = spec["id"] as? String
         let label = spec["label"] as? String
         let role = spec["role"] as? String
-        guard identifier != nil || label != nil || role != nil else { throw Failure("target needs id, label, role or view") }
+        guard identifier != nil || label != nil || role != nil || spec["labelContains"] != nil else { throw Failure("target needs id, label, role or view") }
         var matches: [Element] = []
         for window in candidates {
             walkAccessibility(AXNode(window), depth: 0) { node in
@@ -647,6 +647,7 @@ final class UIHarness {
                 let title = node.label
                 let valueString = node.value
                 if let label, title != label, valueString != label, node.placeholder != label { return }
+                if let partial = spec["labelContains"] as? String, !title.contains(partial), !(valueString ?? "").contains(partial) { return }
                 if let role, node.role != role, node.role != "AX" + role.prefix(1).uppercased() + role.dropFirst() { return }
                 let screen = node.frame
                 guard screen.width > 0 || screen.height > 0 else { return }
