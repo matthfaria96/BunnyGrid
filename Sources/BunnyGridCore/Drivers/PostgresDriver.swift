@@ -7,6 +7,8 @@ public actor PostgresDriver: DatabaseDriver {
     public nonisolated let config: ConnectionConfig
     private let password: String?
     private var connection: PostgresConnection?
+    /// `pg_backend_pid()` of `connection`, for `pg_cancel_backend` from a second connection.
+    public private(set) var backendPID: Int?
     private let logger = Logger(label: "BunnyGrid.Postgres")
 
     public init(config: ConnectionConfig, password: String?) {
@@ -48,11 +50,35 @@ public actor PostgresDriver: DatabaseDriver {
         } catch {
             throw DatabaseError.connectionFailed(Self.message(for: error))
         }
+        await captureBackendPID()
     }
 
     public func disconnect() async {
         try? await connection?.close().get()
         connection = nil
+        backendPID = nil
+    }
+
+    private func captureBackendPID() async {
+        if case .integer(let pid)? = try? await executeStatement("SELECT pg_backend_pid()").rows.first?.first {
+            backendPID = Int(pid)
+        }
+    }
+
+    /// Opens a short-lived second connection (same settings, so through the same tunnel or TLS) and runs
+    /// `pg_cancel_backend` on this connection's backend. The actor is free meanwhile: a running statement
+    /// is suspended on the network, not holding it.
+    public func cancelCurrentQuery() async throws {
+        guard connection != nil, let backendPID else { return }
+        let canceller = PostgresDriver(config: config, password: password)
+        try await canceller.connect()
+        do {
+            _ = try await canceller.executeStatement("SELECT pg_cancel_backend(\(backendPID))")
+        } catch {
+            await canceller.disconnect()
+            throw error
+        }
+        await canceller.disconnect()
     }
 
     public func serverVersion() async throws -> String {
@@ -255,6 +281,10 @@ public actor PostgresDriver: DatabaseDriver {
     }
 
     public func executeStatement(_ sql: String) async throws -> QueryResult {
+        try await executeStatement(sql, maxRows: nil)
+    }
+
+    public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {
         guard let connection else { throw DatabaseError.notConnected }
         do {
             if !Self.isReadOnlyStatement(sql) {
@@ -263,20 +293,26 @@ public actor PostgresDriver: DatabaseDriver {
                 let future: EventLoopFuture<PostgresQueryResult> = connection.query(PostgresQuery(unsafeSQL: sql), logger: logger)
                 let result = try await future.get()
                 let columns = result.rows.first.map { $0.map(\.columnName) } ?? []
-                return QueryResult(
+                return QueryResult.capped(QueryResult(
                     statement: sql,
                     columns: columns,
                     rows: result.rows.map { $0.map(Self.value) },
                     affectedRows: columns.isEmpty ? result.metadata.rows : nil
-                )
+                ), maxRows: maxRows)
             }
             let sequence = try await connection.query(PostgresQuery(unsafeSQL: sql), logger: logger)
             let columns = sequence.columns.map(\.name)
             var rows: [[CellValue]] = []
+            var truncated = false
             for try await row in sequence {
+                // Leaving the loop drops the stream: PostgresNIO discards the remaining rows as they arrive.
+                if let maxRows, rows.count >= max(maxRows, 0) {
+                    truncated = true
+                    break
+                }
                 rows.append(row.map(Self.value))
             }
-            return QueryResult(statement: sql, columns: columns, rows: rows)
+            return QueryResult(statement: sql, columns: columns, rows: rows, isTruncated: truncated)
         } catch {
             throw DatabaseError.queryFailed(Self.message(for: error))
         }

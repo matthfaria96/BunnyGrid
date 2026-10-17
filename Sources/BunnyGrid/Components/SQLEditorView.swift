@@ -13,6 +13,17 @@ struct SQLEditorView: NSViewRepresentable {
     var onTextView: ((NSTextView) -> Void)?
     /// Called when the selection or cursor moves (status bar Line / Col).
     var onCursorChange: ((NSTextView) -> Void)?
+    /// Commands put at the top of the context menu (Run Current Statement, Explain…).
+    var menuItems: [MenuItem] = []
+
+    /// A context-menu command. The shortcut is shown in the menu; the owner registers the real one.
+    struct MenuItem {
+        let title: String
+        var key = ""
+        var modifiers: NSEvent.ModifierFlags = []
+        let isEnabled: Bool
+        let action: () -> Void
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -45,6 +56,7 @@ struct SQLEditorView: NSViewRepresentable {
         textView.drawsBackground = true
         textView.backgroundColor = .textBackgroundColor
         textView.string = text
+        textView.menuItems = menuItems
         SQLHighlighter.highlight(textView)
 
         scrollView.documentView = textView
@@ -57,6 +69,7 @@ struct SQLEditorView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
+        (scrollView.documentView as? SQLTextView)?.menuItems = menuItems
         guard let textView = scrollView.documentView as? NSTextView, textView.string != text else { return }
         textView.string = text
         SQLHighlighter.highlight(textView)
@@ -119,6 +132,18 @@ struct SQLEditorView: NSViewRepresentable {
 
 /// Text view that completes identifiers (including `alias.column`) instead of dictionary words.
 final class SQLTextView: NSTextView {
+    var menuItems: [SQLEditorView.MenuItem] = []
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        guard !menuItems.isEmpty else { return menu }
+        menu.insertItem(.separator(), at: 0)
+        for item in menuItems.reversed() {
+            menu.insertItem(ClosureMenuItem(item), at: 0)
+        }
+        return menu
+    }
+
     private static func isIdentifierChar(_ c: unichar) -> Bool {
         guard let scalar = Unicode.Scalar(c) else { return false }
         return CharacterSet.alphanumerics.contains(scalar) || c == 0x5F /* _ */ || c == 0x24 /* $ */
@@ -173,6 +198,26 @@ final class SQLTextView: NSTextView {
         }
         super.keyDown(with: event)
     }
+}
+
+/// A context-menu item that runs a closure and is enabled as its `MenuItem` says.
+private final class ClosureMenuItem: NSMenuItem, NSMenuItemValidation {
+    private let handler: () -> Void
+    private let allowsAction: Bool
+
+    init(_ item: SQLEditorView.MenuItem) {
+        handler = item.action
+        allowsAction = item.isEnabled
+        super.init(title: item.title, action: #selector(runHandler), keyEquivalent: item.key)
+        keyEquivalentModifierMask = item.modifiers
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    @objc private func runHandler() { handler() }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { allowsAction }
 }
 
 @MainActor

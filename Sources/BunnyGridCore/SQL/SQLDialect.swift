@@ -101,6 +101,20 @@ public struct SQLDialect: Sendable {
         kind == .mysql || kind == .mariadb ? "START TRANSACTION" : "BEGIN"
     }
 
+    /// The statement that shows `sql`'s plan without running it: `EXPLAIN QUERY PLAN` on SQLite,
+    /// `EXPLAIN (FORMAT JSON)` on PostgreSQL and `EXPLAIN FORMAT=JSON` on MySQL/MariaDB, which
+    /// `QueryPlan.parse` turns into a tree. A statement that already starts with EXPLAIN is kept as typed.
+    public func explain(_ sql: String) -> String {
+        var statement = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+        while statement.hasSuffix(";") { statement = String(statement.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines) }
+        if statement.prefix(while: { $0.isLetter }).uppercased() == "EXPLAIN" { return statement }
+        return switch kind {
+        case .sqlite: "EXPLAIN QUERY PLAN " + statement
+        case .postgresql: "EXPLAIN (FORMAT JSON) " + statement
+        case .mysql, .mariadb: "EXPLAIN FORMAT=JSON " + statement
+        }
+    }
+
     public func countRows(table: String, schema: String?, filter: String? = nil) -> String {
         var sql = "SELECT COUNT(*) FROM \(qualifiedName(table: table, schema: schema))"
         if let filter = filter?.trimmingCharacters(in: .whitespacesAndNewlines), !filter.isEmpty {
