@@ -50,6 +50,12 @@ final class AppModel {
     var importTarget: ImportTarget?
     /// Table the Data Generation sheet fills.
     var generationTarget: ImportTarget?
+    /// Drop / empty / truncate / rename waiting for confirmation (ObjectActions.swift).
+    var pendingObjectAction: PendingObjectAction?
+    /// Export Wizard sheet target.
+    var exportTarget: ExportTarget?
+    /// Server whose User manager sheet is open.
+    var usersSession: Session?
 
     // Navigator
     var navSelection: NavNode?
@@ -203,6 +209,12 @@ final class AppModel {
     }
 
     /// The database the navigator points at, falling back to the open tab's database.
+    /// The connection the toolbar acts on: the navigator's, else the open tab's.
+    var currentSession: Session? {
+        if let id = navSelection?.connectionID, let session = sessions[id] { return session }
+        return currentContext?.session
+    }
+
     var currentContext: DatabaseContext? {
         if let node = navSelection, let id = node.connectionID, let session = sessions[id] {
             if let db = node.databaseName { return session.context(db) }

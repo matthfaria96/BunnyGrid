@@ -46,16 +46,35 @@ struct MainToolbar: View {
                 ForEach(ObjectCategory.toolbarCategories(for: app.currentContext?.kind), id: \.self) { category in
                     objectButton(category, category.noun, category.iconName)
                 }
-                ChromeButton(title: "User", comingSoon: "Manage users, roles and privileges on the server.") {} glyph: {
-                    AppIcon(name: "user", size: 32)
+                let server = app.currentSession
+                ChromeButton(title: "User", isEnabled: server?.state == .connected && server?.config.kind != .sqlite,
+                             help: "Users and roles of the server") {
+                    app.usersSession = server
+                } glyph: {
+                    AppIcon(name: "user", size: 32, isEnabled: server?.state == .connected && server?.config.kind != .sqlite)
                 }
-                if app.currentContext?.kind != .sqlite {
-                    ChromeButton(title: "Others", comingSoon: "Triggers, sequences, types, events and other objects.") {} glyph: {
-                        AppIcon(name: "others", size: 32)
-                            .overlay(alignment: .topTrailing) {
-                                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(.secondary).offset(x: 7, y: 2)
+                if let context = app.currentContext, context.kind != .sqlite {
+                    Menu {
+                        ForEach(context.driver.dialect.otherObjectQueries, id: \.title) { item in
+                            Button(item.title) {
+                                app.openQuery(text: item.sql + ";", in: context)
+                                app.selectedQueryTab?.title = item.title
+                                app.selectedQueryTab?.run()
                             }
+                        }
+                    } label: {
+                        ChromeLabel(title: "Others") {
+                            AppIcon(name: "others", size: 32)
+                                .overlay(alignment: .topTrailing) {
+                                    Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(.secondary).offset(x: 7, y: 2)
+                                }
+                        }
                     }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Sequences, types, triggers, indexes and other objects")
                 }
                 objectButton(.queries, "Query", "query")
                 objectButton(.backups, "Backup", "backup")

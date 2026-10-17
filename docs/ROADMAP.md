@@ -29,7 +29,7 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 ## Débitos técnicos conhecidos
 
 - O AI Assistant não foi testado contra a API real nesta máquina (sem chave); o protocolo está coberto por testes unitários.
-- "Others", Role, Automation, Model, BI, Backup, Data Profiling, Data Masking e Create BI Workspace aparecem na interface, mas estão desativados.
+- Automation, Model, BI e Create BI Workspace aparecem na interface, mas ainda mostram "em breve". User (PostgreSQL/MySQL), Others, Export Wizard, Dump SQL e as ações de tabela (excluir, esvaziar, truncar, renomear, duplicar) já funcionam.
 
 - Edições aplicadas enquanto outra consulta roda na mesma conexão entram na mesma transação (há uma conexão por sessão). Separar uma conexão para o editor resolve.
 - Valores editados são enviados como texto (`'42'`) e o banco converte para o tipo da coluna. Funciona em PostgreSQL, MySQL e SQLite, mas tipos exóticos podem precisar de cast.

@@ -45,6 +45,13 @@ struct ContentView: View {
         .sheet(item: $app.generationTarget) { target in
             DataGenerationView(target: target)
         }
+        .sheet(item: $app.exportTarget) { target in
+            ExportWizardView(target: target)
+        }
+        .sheet(item: $app.usersSession) { session in
+            UsersView(session: session)
+        }
+        .modifier(ObjectActionAlert())
         .alert("BunnyGrid", isPresented: Binding(
             get: { app.alertMessage != nil },
             set: { if !$0 { app.alertMessage = nil } }

@@ -1,85 +1,82 @@
 {
-  "fill" : {
-    "solid" : "srgb:0.11765,0.12549,0.18824,1.00000"
-  },
+  "fill-specializations" : [
+    {
+      "value" : {
+        "linear-gradient" : [
+          "srgb:1.00000,0.67451,0.78824,1.00000",
+          "srgb:0.89412,0.23529,0.58431,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0.5,
+            "y" : 0
+          },
+          "stop" : {
+            "x" : 0.5,
+            "y" : 0.85
+          }
+        }
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "linear-gradient" : [
+          "srgb:0.32157,0.08627,0.21961,1.00000",
+          "srgb:0.12549,0.03137,0.10196,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0.5,
+            "y" : 0
+          },
+          "stop" : {
+            "x" : 0.5,
+            "y" : 0.85
+          }
+        }
+      }
+    }
+  ],
   "groups" : [
     {
       "name" : "Bunny",
       "layers" : [
         {
-          "name" : "bunny",
-          "image-name" : "bunny.png",
+          "name" : "eye",
+          "image-name" : "eye.png",
           "glass" : true,
-          "position" : {
-            "scale" : 0.86,
-            "translation-in-points" : [ 0, 0 ]
-          }
-        }
-      ],
-      "lighting" : "individual",
-      "shadow" : {
-        "kind" : "layer-color",
-        "opacity" : 0.5
-      },
-      "specular" : true,
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.15
-      }
-    },
-    {
-      "name" : "Database",
-      "layers" : [
-        {
-          "name" : "coins",
-          "image-name" : "coins.png",
-          "glass" : true,
-          "position" : {
-            "scale" : 0.86,
-            "translation-in-points" : [ 0, 0 ]
-          }
-        }
-      ],
-      "lighting" : "individual",
-      "shadow" : {
-        "kind" : "layer-color",
-        "opacity" : 0.5
-      },
-      "specular" : true,
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.1
-      }
-    },
-    {
-      "name" : "Background",
-      "layers" : [
-        {
-          "name" : "background",
-          "image-name" : "background.png",
-          "glass" : false,
-          "opacity-specializations" : [
-            { "appearance" : "dark", "value" : 0 }
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "srgb:1.00000,0.63922,0.80784,1.00000"
+              }
+            }
           ]
         },
         {
-          "name" : "background-dark",
-          "image-name" : "background-dark.png",
-          "glass" : false,
-          "opacity-specializations" : [
-            { "value" : 0 },
-            { "appearance" : "dark", "value" : 1 }
+          "name" : "outline",
+          "image-name" : "outline.png",
+          "glass" : true,
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "srgb:1.00000,0.63922,0.80784,1.00000"
+              }
+            }
           ]
         }
       ],
       "shadow" : {
-        "kind" : "none",
-        "opacity" : 0
+        "kind" : "neutral",
+        "opacity" : 0.5
       },
-      "specular" : false,
+      "specular" : true,
       "translucency" : {
-        "enabled" : false,
-        "value" : 0
+        "enabled" : true,
+        "value" : 0.3
       }
     }
   ],

@@ -7,8 +7,6 @@ struct ObjectsView: View {
     @Environment(AppModel.self) private var app
     @State private var search = ""
     @State private var selection: Set<String> = []
-    @State private var pendingDrop: DatabaseObject?
-    @State private var confirmName = ""
     @State private var querySelection: Set<UUID> = []
     @State private var statistics: [String: TableStatistics] = [:]
     @State private var statisticsVersion = 0
@@ -36,25 +34,6 @@ struct ObjectsView: View {
             Divider()
             content
         }
-        // Options › General › "Use safe confirm dialog": type the object's name to delete it.
-        .alert(
-            "Delete \(pendingDrop.map { "“\($0.name)”" } ?? "")?",
-            isPresented: Binding(get: { pendingDrop != nil }, set: { if !$0 { pendingDrop = nil; confirmName = "" } })
-        ) {
-            if AppOptions.shared.values.useSafeConfirmDialog {
-                TextField("Object name", text: $confirmName)
-            }
-            Button("Delete", role: .destructive) {
-                if let object = pendingDrop, !AppOptions.shared.values.useSafeConfirmDialog || confirmName == object.name { drop(object) }
-                pendingDrop = nil
-                confirmName = ""
-            }
-            Button("Cancel", role: .cancel) { confirmName = "" }
-        } message: {
-            Text(AppOptions.shared.values.useSafeConfirmDialog
-                 ? "This permanently drops it from the database. Type \(pendingDrop.map { "“\($0.name)”" } ?? "the name") to confirm."
-                 : "This permanently drops it from the database.")
-        }
     }
 
     private var selectedObject: DatabaseObject? {
@@ -66,7 +45,9 @@ struct ObjectsView: View {
         HStack(alignment: .center, spacing: 4) {
             if connectionSession != nil {
                 ToolIcon("folder", .blue, "Open Database", isEnabled: !selection.isEmpty) { openSelectedDatabases() }
-                ToolIcon("plus.circle", .green, "New Database — coming soon", isEnabled: false) {}
+                ToolIcon("plus.circle", .green, "New Database", isEnabled: connectionSession?.config.kind != .sqlite) {
+                    app.creatingDatabaseFor = connectionSession?.id
+                }
             } else if category == .queries {
                 let selected = selectedSavedQuery
                 ToolIcon("folder", .blue, "Open Query", isEnabled: selected != nil) {
@@ -93,13 +74,20 @@ struct ObjectsView: View {
                 }
                 ToolIcon("minus.circle", .red, "Delete \(noun)",
                          isEnabled: selectedObject != nil && [.tables, .views, .materializedViews].contains(category) && writable) {
-                    pendingDrop = selectedObject
+                    if let object = selectedObject, let context {
+                        app.pendingObjectAction = PendingObjectAction(kind: .drop, object: object, context: context)
+                    }
                 }
                 Divider().frame(height: 18).padding(.horizontal, 6)
                 ToolIcon("square.and.arrow.down", .green, "Import Wizard", isEnabled: isTables && writable && selectedObject != nil) {
                     if let object = selectedObject, let context { app.importTarget = ImportTarget(context: context, object: object) }
                 }
-                ToolIcon("square.and.arrow.up", .orange, "Export Wizard — coming soon. Use a table's Export button for now.", isEnabled: false) {}
+                ToolIcon("square.and.arrow.up", .orange, "Export Wizard", isEnabled: context != nil && [.tables, .views, .materializedViews].contains(category)) {
+                    if let context {
+                        let chosen = objects.filter { selection.contains($0.id) }
+                        app.exportTarget = ExportTarget(context: context, objects: chosen.isEmpty ? objects : chosen)
+                    }
+                }
             }
             Divider().frame(height: 18).padding(.horizontal, 6)
             ToolIcon("arrow.clockwise", .secondary, "Refresh", isEnabled: context != nil || connectionSession != nil) {
@@ -250,16 +238,8 @@ struct ObjectsView: View {
                         Button(app.isFavorite(object, connectionID: connectionID, database: context.name) ? "Remove from Favorites" : "Add to Favorites") {
                             app.toggleFavorite(object, connectionID: connectionID, database: context.name)
                         }
-                        if object.kind == .table {
-                            Button("Design Table") { app.openDesign(table: object, in: context) }
-                        }
                         Divider()
-                    }
-                    if let object = objects.first(where: { ids.contains($0.id) }), object.kind != .routine {
-                        Button("Open \(category.noun)") { open(object) }
-                        Button("Select Top 100 in New Query") {
-                            app.openQuery(text: context.driver.dialect.selectPage(table: object.name, schema: object.schema, offset: 0, limit: 100) + ";", in: context)
-                        }
+                        ObjectActionItems(object: object, context: context)
                     }
                 } primaryAction: { ids in
                     if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
@@ -319,13 +299,7 @@ struct ObjectsView: View {
         }
         .contextMenu(forSelectionType: String.self) { ids in
             if let object = objects.first(where: { ids.contains($0.id) }) {
-                Button("Open \(category.noun)") { open(object) }
-                if object.kind == .table {
-                    Button("Design Table") { app.openDesign(table: object, in: context) }
-                }
-                Button("Select Top 100 in New Query") {
-                    app.openQuery(text: context.driver.dialect.selectPage(table: object.name, schema: object.schema, offset: 0, limit: 100) + ";", in: context)
-                }
+                ObjectActionItems(object: object, context: context)
             }
         } primaryAction: { ids in
             if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
@@ -351,25 +325,6 @@ struct ObjectsView: View {
             app.setExpanded(.database(session.id, name), true)
         }
         if let first = selection.first { app.select(.database(session.id, first)) }
-    }
-
-    private func drop(_ object: DatabaseObject) {
-        guard let context else { return }
-        let keyword = switch object.kind {
-        case .view: "VIEW"
-        case .materializedView: "MATERIALIZED VIEW"
-        default: "TABLE"
-        }
-        let sql = "DROP \(keyword) \(context.driver.dialect.qualifiedName(object))"
-        Task {
-            do {
-                _ = try await context.driver.executeTimed(sql)
-                for tab in app.tabs where tab.tableObject == object { app.closeTab(tab.id) }
-                await context.loadObjects(schema: schema, force: true)
-            } catch {
-                app.alertMessage = error.localizedDescription
-            }
-        }
     }
 }
 

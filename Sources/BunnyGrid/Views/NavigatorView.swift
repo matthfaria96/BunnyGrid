@@ -366,16 +366,23 @@ private struct NavContextMenu: View {
                     app.sessions[id]?.closeDatabase(db)
                 }
                 Button("New Query") { app.openQuery(in: context) }
+                if !context.usesSchemas { DatabaseActionItems(context: context, schema: nil) }
+                Divider()
                 Button("Refresh") { Task { await context.refresh() } }
             } else {
                 Button("Open Database") { app.setExpanded(node, true) }
             }
         case .schema(let id, let db, let schema):
             Button("New Query") { app.openQuery(in: app.sessions[id]?.context(db)) }
+            if let context = app.sessions[id]?.context(db) { DatabaseActionItems(context: context, schema: schema) }
+            Divider()
             Button("Refresh") { Task { await app.sessions[id]?.context(db)?.loadObjects(schema: schema, force: true) } }
         case .category(let id, let db, let schema, let category):
-            if category == .tables, let context = app.sessions[id]?.context(db), !context.driver.config.readOnly {
-                Button("New Table") { app.openDesign(table: nil, in: context) }
+            if category == .tables, let context = app.sessions[id]?.context(db) {
+                if !context.driver.config.readOnly { Button("New Table") { app.openDesign(table: nil, in: context) } }
+                Button("Export Wizard…") {
+                    app.exportTarget = ExportTarget(context: context, objects: context.objects(in: schema, category: .tables) ?? [])
+                }
             }
             if category == .queries, let context = app.sessions[id]?.context(db) {
                 Button("New Query") { app.openQuery(in: context) }
@@ -391,23 +398,8 @@ private struct NavContextMenu: View {
                 app.toggleFavorite(object, connectionID: id, database: db)
             }
             Divider()
-            if object.kind == .table, let context = app.sessions[id]?.context(db) {
-                Button("Design Table") { app.openDesign(table: object, in: context) }
-                if !context.driver.config.readOnly {
-                    Button("Import Wizard…") { app.importTarget = ImportTarget(context: context, object: object) }
-                    Button("Data Generation…") { app.generationTarget = ImportTarget(context: context, object: object) }
-                }
-            }
-            if object.kind != .routine {
-                Button("Open \(object.kind == .table ? "Table" : "View")") { app.activate(node) }
-                Button("Select Top 100 in New Query") {
-                    guard let context = app.sessions[id]?.context(db) else { return }
-                    app.openQuery(text: context.driver.dialect.selectPage(table: object.name, schema: object.schema, offset: 0, limit: 100) + ";", in: context)
-                }
-            }
-            Button("Copy Name") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(object.name, forType: .string)
+            if let context = app.sessions[id]?.context(db) {
+                ObjectActionItems(object: object, context: context)
             }
         case .myConnections, .group:
             Button("New Connection…") { app.newConnection() }
@@ -536,6 +528,28 @@ extension ConnectionColor {
         case .blue: .blue
         case .purple: .purple
         case .gray: .gray
+        }
+    }
+}
+
+/// Database / schema menu items: new table, run a script, export and dump.
+private struct DatabaseActionItems: View {
+    @Environment(AppModel.self) private var app
+    let context: DatabaseContext
+    let schema: String?
+
+    var body: some View {
+        if !context.driver.config.readOnly {
+            Button("New Table") { app.openDesign(table: nil, in: context) }
+            Button("Execute SQL File…") { app.executeSQLFile(in: context) }
+        }
+        Button("Export Wizard…") {
+            let objects = (context.objects(in: schema, category: .tables) ?? []) + (context.objects(in: schema, category: .views) ?? [])
+            app.exportTarget = ExportTarget(context: context, objects: objects)
+        }
+        Menu("Dump SQL File") {
+            Button("Structure and Data…") { app.dumpDatabase(context, schema: schema, includeData: true) }
+            Button("Structure Only…") { app.dumpDatabase(context, schema: schema, includeData: false) }
         }
     }
 }
