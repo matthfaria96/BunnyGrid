@@ -272,6 +272,13 @@ struct ResultGridView: NSViewRepresentable {
         }
 
         /// Double-clicking a header divider fits the column to its content.
+        /// The row-marker column stays first: it can't be dragged, and no data column can be dropped in front of it.
+        func tableView(_ tableView: NSTableView, shouldReorderColumn columnIndex: Int, toColumn newColumnIndex: Int) -> Bool {
+            let columns = tableView.tableColumns
+            if columns.indices.contains(columnIndex), columns[columnIndex].identifier == Self.markerID { return false }
+            return !(newColumnIndex == 0 && columns.first?.identifier == Self.markerID)
+        }
+
         func tableView(_ tableView: NSTableView, sizeToFitWidthOfColumn columnIndex: Int) -> CGFloat {
             let column = tableView.tableColumns[columnIndex]
             guard let index = Int(column.identifier.rawValue) else { return column.width }

@@ -1,6 +1,5 @@
 {
   "name": "grid-marker-column",
-  "knownIssue": "A data column can be dragged in front of the row-marker column (ResultGridView sets allowsColumnReordering but no tableView(_:shouldReorderColumn:toColumn:) refuses position 0), leaving the marker between data columns.",
   "args": ["{{DB}}", "--open-table", "customers", "--window-size", "1400x900"],
   "steps": [
     {"op": "waitFor", "probe": "tab.rowCount", "atLeast": 20},
