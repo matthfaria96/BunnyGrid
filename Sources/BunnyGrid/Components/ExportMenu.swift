@@ -7,6 +7,7 @@ struct ExportMenu: View {
     let columns: [String]
     let rows: [[CellValue]]
     let suggestedName: String
+    @Environment(\.toolbarIconsOnly) private var iconsOnly
 
     var body: some View {
         Menu {
@@ -40,6 +41,7 @@ struct ExportChip: View {
     let columns: [String]
     let rows: [[CellValue]]
     let suggestedName: String
+    @Environment(\.toolbarIconsOnly) private var iconsOnly
 
     var body: some View {
         Menu {
@@ -51,11 +53,11 @@ struct ExportChip: View {
         } label: {
             HStack(spacing: 4) {
                 AppIcon(name: "tb-export", size: 17)
-                Text("Export")
+                if !iconsOnly { Text("Export") }
             }
             .font(.system(size: 12.5))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 3)
+            .padding(.horizontal, iconsOnly ? 6 : 5)
+            .padding(.vertical, iconsOnly ? 5 : 3)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)

@@ -26,7 +26,10 @@ extension ERModel {
             ? relationships.filter { ids.contains($0.fromTable) && ids.contains($0.toTable) }
             : []
         // Only PostgreSQL keeps the model's schema; MySQL databases and SQLite files are the target itself.
-        func schema(_ table: ERTable) -> String? { kind == .postgresql ? table.schema : nil }
+        // SQL Server keeps the schema of a SQL Server model; other models land in the default schema (dbo).
+        func schema(_ table: ERTable) -> String? {
+            kind == .postgresql || (kind == .sqlserver && sourceKind == .sqlserver) ? table.schema : nil
+        }
         func name(_ id: String) -> String { table(id)?.name ?? id }
 
         var statements: [String] = []
@@ -122,10 +125,12 @@ extension ERModel {
     }
 
     private func autoIncrement(_ column: ERColumn, in table: ERTable, to kind: DatabaseKind) -> String {
-        guard kind == .mysql || kind == .mariadb, kind != sourceKind, column.isPrimaryKey, table.primaryKey.count == 1 else { return "" }
+        guard kind == .mysql || kind == .mariadb || kind == .sqlserver, kind != sourceKind, column.isPrimaryKey, table.primaryKey.count == 1 else { return "" }
         let type = column.dataType.lowercased()
         let serial = type.hasPrefix("serial") || type.hasPrefix("bigserial") || isSequence(column)
-        return serial ? " AUTO_INCREMENT" : ""
+            || column.defaultValue?.lowercased().contains("auto_increment") == true
+        guard serial else { return "" }
+        return kind == .sqlserver ? " IDENTITY(1,1)" : " AUTO_INCREMENT"
     }
 
     /// A default that every engine reads the same way, or "" to drop it.
@@ -161,6 +166,14 @@ extension ERModel {
             case "smallint", "int2", "smallserial", "serial2": return "smallint"
             case "tinyint": return params == "(1)" ? "bool" : "smallint"
             case "bool", "boolean", "bit" where params.isEmpty || params == "(1)": return "bool"
+            case "money" where source == .sqlserver, "smallmoney": return "decimal"
+            case "ntext", "sysname": return "text"
+            case "xml" where source == .sqlserver: return "text"
+            case "image": return "blob"
+            case "datetime2", "smalldatetime", "datetimeoffset": return "timestamp"
+            case "uniqueidentifier": return "uuid"
+            case "nvarchar" where params == "(max)", "varchar" where params == "(max)": return "text"
+            case "varbinary" where params == "(max)": return "blob"
             case "real" where source == .sqlite, "double", "double precision", "float8": return "double"
             case "real", "float", "float4": return "float"
             case "numeric", "decimal", "number", "dec": return "decimal"
@@ -181,6 +194,8 @@ extension ERModel {
         let precision = ["timestamp", "time"].contains(kind) ? params : ""
 
         switch target {
+        case .mongodb:
+            return trimmed
         case .sqlite:
             switch kind {
             case "int", "bigint", "smallint", "bool": return "INTEGER"
@@ -235,6 +250,28 @@ extension ERModel {
             case "json": return "json"
             default: return trimmed
             }
+        case .sqlserver:
+            switch kind {
+            case "int": return "int"
+            case "bigint": return "bigint"
+            case "smallint": return "smallint"
+            case "bool": return "bit"
+            case "double": return "float"
+            case "float": return "real"
+            case "decimal": return "decimal" + (params.isEmpty ? "(18,4)" : params)
+            case "varchar": return "nvarchar" + (params.isEmpty ? "(255)" : params)
+            case "char": return "nchar" + (params.isEmpty ? "(1)" : params)
+            // Index keys can't be nvarchar(max).
+            case "text", "json": return isKey ? "nvarchar(450)" : "nvarchar(max)"
+            case "blob": return "varbinary(max)"
+            case "date": return "date"
+            case "timestamp":
+                return base.contains("tz") || base.contains("with time zone") || base == "datetimeoffset" ? "datetimeoffset" + precision : "datetime2" + precision
+            case "time": return "time" + precision
+            case "uuid": return "uniqueidentifier"
+            default: return trimmed
+            }
+        case .redis: return trimmed
         }
     }
 }

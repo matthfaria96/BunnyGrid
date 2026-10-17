@@ -59,6 +59,9 @@ final class TableDesignModel: Identifiable {
     var comment = ""
     private(set) var originalEngine = ""
     var engine = ""
+    /// SQLite Options tab: Primary Key ON CONFLICT, AUTOINCREMENT, WITHOUT ROWID (read from the stored CREATE TABLE).
+    private(set) var originalSQLiteOptions = SQLiteTableOptions()
+    var sqliteOptions = SQLiteTableOptions()
     private(set) var isLoading = false
     private(set) var isSaving = false
     var saveError: String?
@@ -78,7 +81,9 @@ final class TableDesignModel: Identifiable {
             let idType = switch context.kind {
             case .sqlite: "INTEGER"
             case .postgresql: "serial"
-            case .mysql, .mariadb: "int"
+            case .redis: ""
+            case .mysql, .mariadb, .mongodb: "int"
+            case .sqlserver: "int IDENTITY(1,1)"
             }
             columns = [ColumnDesign(name: "id", type: idType, nullable: false, isPrimaryKey: true)]
         }
@@ -91,9 +96,10 @@ final class TableDesignModel: Identifiable {
 
     private var driverSchema: String? {
         switch kind {
-        case .postgresql: schema
-        case .mysql, .mariadb: databaseName
+        case .postgresql, .sqlserver: schema
+        case .mysql, .mariadb, .mongodb: databaseName
         case .sqlite: nil
+        case .redis: nil
         }
     }
 
@@ -115,6 +121,8 @@ final class TableDesignModel: Identifiable {
         foreignKeys = (try? await driver.listForeignKeys(table: originalName, schema: driverSchema)) ?? []
         foreignKeyDesigns = foreignKeys.map(ForeignKeyDesign.init)
         originalSQL = kind == .sqlite ? try? await driver.storedTableSQL(originalName) : nil
+        originalSQLiteOptions = originalSQL.map(SQLiteTableOptions.init(sql:)) ?? SQLiteTableOptions()
+        sqliteOptions = originalSQLiteOptions
         #if DEBUG
         // --demo-fk: a pending foreign key change, to see the Foreign Keys tab and SQL Preview with an edit.
         if CommandLine.arguments.contains("--demo-fk"), !foreignKeyDesigns.isEmpty {
@@ -171,14 +179,15 @@ final class TableDesignModel: Identifiable {
     /// Schemas and the default schema's tables, for the Foreign Keys menus.
     private func loadReferenceCatalog() async {
         switch kind {
-        case .postgresql:
+        case .postgresql, .sqlserver:
             referenceSchemas = ((try? await driver.listSchemas()) ?? [])
-                .filter { !$0.hasPrefix("pg_") && $0 != "information_schema" }
-        case .mysql, .mariadb:
+                .filter { !$0.hasPrefix("pg_") && $0.lowercased() != "information_schema" && $0 != "sys" }
+        case .mysql, .mariadb, .mongodb:
             referenceSchemas = ((try? await driver.listDatabases()) ?? [])
                 .filter { !["information_schema", "performance_schema", "mysql", "sys"].contains($0) }
         case .sqlite:
             referenceSchemas = []
+        case .redis: referenceSchemas = []
         }
         await loadReferenceTables(schema: defaultReferenceSchema)
     }
@@ -201,8 +210,10 @@ final class TableDesignModel: Identifiable {
         let name = "\(tableName.isEmpty ? "table" : tableName)_trigger\(triggers.count + newTriggers.count + 1)"
         let template: String = switch kind {
         case .sqlite: "CREATE TRIGGER \(name) AFTER UPDATE ON \(table)\nBEGIN\n  -- statements\n  SELECT 1;\nEND"
-        case .mysql, .mariadb: "CREATE TRIGGER \(name) BEFORE INSERT ON \(table)\nFOR EACH ROW\nSET NEW.created_at = NOW()"
+        case .mysql, .mariadb, .mongodb: "CREATE TRIGGER \(name) BEFORE INSERT ON \(table)\nFOR EACH ROW\nSET NEW.created_at = NOW()"
         case .postgresql: "CREATE TRIGGER \(name) BEFORE UPDATE ON \(table)\nFOR EACH ROW EXECUTE FUNCTION function_name()"
+        case .sqlserver: "CREATE TRIGGER \(dialect.qualifiedName(table: name, schema: driverSchema)) ON \(table)\nAFTER UPDATE\nAS\nBEGIN\n  SET NOCOUNT ON;\n  -- statements\nEND"
+        case .redis: ""
         }
         newTriggers.append(template)
     }
@@ -211,26 +222,32 @@ final class TableDesignModel: Identifiable {
     var plan: Result<[String], any Error> {
         Result {
             if isNew {
-                return [try dialect.createTable(name: tableName, schema: driverSchema, columns: columns, foreignKeys: foreignKeyDesigns.map(\.key))]
+                return [try dialect.createTable(name: tableName, schema: driverSchema, columns: columns, foreignKeys: foreignKeyDesigns.map(\.key),
+                                                sqliteOptions: kind == .sqlite ? sqliteOptions : nil)]
                     + (try dialect.alterIndexes(table: tableName, schema: driverSchema, original: [], design: indexDesigns))
             }
             let currentName = originalName ?? tableName
             let finalName = tableName.isEmpty ? currentName : tableName
             let rename: String? = {
                 guard let originalName, tableName != originalName, !tableName.isEmpty else { return nil }
+                if kind == .sqlserver {
+                    return dialect.renameObject(DatabaseObject(schema: driverSchema, name: originalName, kind: .table), to: tableName)
+                }
                 return kind == .mysql || kind == .mariadb
                     ? "RENAME TABLE \(dialect.qualifiedName(table: originalName, schema: driverSchema)) TO \(dialect.qualifiedName(table: tableName, schema: driverSchema))"
                     : "ALTER TABLE \(dialect.qualifiedName(table: originalName, schema: driverSchema)) RENAME TO \(dialect.quoteIdentifier(tableName))"
             }()
             var statements: [String]
-            if kind == .sqlite, SQLiteTableRebuild.isNeeded(originalColumns: originalColumns, columns: columns, originalIndexes: indexes,
-                                                             originalForeignKeys: foreignKeys, foreignKeys: foreignKeyDesigns) {
+            if kind == .sqlite, sqliteOptions != originalSQLiteOptions
+                || SQLiteTableRebuild.isNeeded(originalColumns: originalColumns, columns: columns, originalIndexes: indexes,
+                                               originalForeignKeys: foreignKeys, foreignKeys: foreignKeyDesigns) {
                 // SQLite: rebuild under the current name (indexes, kept triggers and keys included), then rename natively.
                 let rebuild = SQLiteTableRebuild(
                     table: currentName, originalSQL: originalSQL, originalColumns: originalColumns, columns: columns,
                     originalIndexes: indexes, indexes: indexDesigns, foreignKeys: foreignKeyDesigns.map(\.key),
                     triggers: triggers.filter { !droppedTriggers.contains($0.name) }.map(\.definition),
-                    checkForeignKeys: SQLDialect.foreignKeysChanged(original: foreignKeys, design: foreignKeyDesigns))
+                    checkForeignKeys: SQLDialect.foreignKeysChanged(original: foreignKeys, design: foreignKeyDesigns),
+                    options: sqliteOptions)
                 statements = try rebuild.statements()
                 if let rename { statements.append(rename) }
             } else {
@@ -252,8 +269,17 @@ final class TableDesignModel: Identifiable {
             if comment != originalComment {
                 switch kind {
                 case .postgresql: statements.append("COMMENT ON TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) IS \(dialect.quoteLiteral(comment))")
-                case .mysql, .mariadb: statements.append("ALTER TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) COMMENT = \(dialect.quoteLiteral(comment))")
+                case .mysql, .mariadb, .mongodb: statements.append("ALTER TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) COMMENT = \(dialect.quoteLiteral(comment))")
                 case .sqlite: break
+                case .sqlserver:
+                    // The description SSMS shows lives in an extended property.
+                    let level = "N'SCHEMA', \(dialect.quoteLiteral(driverSchema ?? "dbo")), N'TABLE', \(dialect.quoteLiteral(finalName))"
+                    statements.append("""
+                        IF EXISTS (SELECT 1 FROM sys.extended_properties WHERE major_id = OBJECT_ID(\(dialect.quoteLiteral(dialect.qualifiedName(table: finalName, schema: driverSchema)))) AND minor_id = 0 AND name = N'MS_Description') \
+                        EXEC sys.sp_updateextendedproperty N'MS_Description', \(dialect.quoteLiteral(comment)), \(level) \
+                        ELSE EXEC sys.sp_addextendedproperty N'MS_Description', \(dialect.quoteLiteral(comment)), \(level)
+                        """)
+                case .redis: break
                 }
             }
             if (kind == .mysql || kind == .mariadb), !engine.isEmpty, engine != originalEngine {

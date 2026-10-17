@@ -42,8 +42,7 @@ public actor MySQLDriver: DatabaseDriver {
         let tlsConfig: TLSConfiguration?
         let address: SocketAddress
         do {
-            // MySQL treats socket files as secure transport, so SSL only applies over TCP.
-            tlsConfig = endpoint.usesTLS ? try ConnectionTLS.configuration(for: config, keyPassphrase: secrets.sslKeyPassphrase) : nil
+            tlsConfig = try Self.tlsConfiguration(for: config, overTCP: endpoint.usesTLS, keyPassphrase: secrets.sslKeyPassphrase)
             switch endpoint.address {
             case .tcp(let host, let port): address = try SocketAddress.makeAddressResolvingHost(host, port: port)
             case .unixSocket(let path): address = try SocketAddress(unixDomainSocketPath: path)
@@ -53,26 +52,86 @@ public actor MySQLDriver: DatabaseDriver {
         }
         let connection: MySQLConnection
         do {
-            connection = try await MySQLConnection.connect(
-                to: address,
-                username: config.username,
-                database: config.database,
-                password: password,
-                tlsConfiguration: tlsConfig,
-                serverHostname: endpoint.tlsServerName,
-                logger: Logger(label: "BunnyGrid.MySQL"),
-                on: MultiThreadedEventLoopGroup.singleton.any()
-            ).get()
+            connection = try await Self.connectRetryingStalls { loop in
+                MySQLConnection.connect(
+                    to: address,
+                    username: self.config.username,
+                    database: self.config.database,
+                    password: self.password,
+                    tlsConfiguration: tlsConfig,
+                    serverHostname: endpoint.tlsServerName,
+                    logger: Logger(label: "BunnyGrid.MySQL"),
+                    on: loop
+                )
+            }
+        } catch let error as MySQLError {
+            throw DatabaseError.connectionFailed(Self.message(error))
         } catch {
             throw DatabaseError.connectionFailed(ConnectionErrorText.describe(error))
         }
         // MySQLNIO falls back to plain TCP when the server has no SSL; Require and Verify modes must not.
-        if tlsConfig != nil, config.tls.isEnforced,
+        if tlsConfig != nil, endpoint.usesTLS, config.tls.isEnforced,
            (try? await connection.channel.pipeline.containsHandler(type: NIOSSLClientHandler.self).get()) == nil {
             try? await connection.close().get()
             throw DatabaseError.connectionFailed(ConnectionTLSError.serverRefusedSSL(mode: config.tls).errorDescription ?? "")
         }
         return connection
+    }
+
+    /// The SSL tab's settings over TCP. Over a socket file the server already counts the transport as secure, so on a
+    /// full `caching_sha2_password` authentication it expects the password in clear text, but MySQLNIO only sends it in
+    /// clear over TLS (otherwise it asks for the RSA key, and the server reads that request as a wrong password).
+    /// So socket connections use TLS without verification whenever the server offers it; client certificates still apply.
+    static func tlsConfiguration(for config: ConnectionConfig, overTCP: Bool, keyPassphrase: String?) throws -> TLSConfiguration? {
+        if overTCP { return try ConnectionTLS.configuration(for: config, keyPassphrase: keyPassphrase) }
+        var local = config
+        local.tls = .require
+        return try ConnectionTLS.configuration(for: local, keyPassphrase: keyPassphrase)
+    }
+
+    struct HandshakeTimeout: LocalizedError {
+        var errorDescription: String? { "Timed out waiting for the server's handshake." }
+    }
+
+    /// Now and then (a few times in a few hundred connections to a local server) MySQLNIO's handshake stalls:
+    /// the client never answers, and the server drops it after `connect_timeout` with "Got timeout reading
+    /// communication packets". A handshake that takes longer than `timeout` is abandoned and tried once more.
+    static func connectRetryingStalls(timeout: TimeAmount = .seconds(6), attempts: Int = 2,
+                                      _ open: @escaping @Sendable (any EventLoop) -> EventLoopFuture<MySQLConnection>) async throws -> MySQLConnection {
+        var attempt = 1
+        while true {
+            do {
+                return try await withHandshakeTimeout(timeout, open)
+            } catch is HandshakeTimeout where attempt < attempts {
+                attempt += 1
+            }
+        }
+    }
+
+    private static func withHandshakeTimeout(_ timeout: TimeAmount,
+                                             _ open: @Sendable (any EventLoop) -> EventLoopFuture<MySQLConnection>) async throws -> MySQLConnection {
+        let loop = MultiThreadedEventLoopGroup.singleton.any()
+        let promise = loop.makePromise(of: MySQLConnection.self)
+        let timer = loop.scheduleTask(in: timeout) { promise.fail(HandshakeTimeout()) }
+        open(loop).hop(to: loop).whenComplete { result in
+            timer.cancel()
+            switch result {
+            case .success(let connection):
+                // Completing an already timed-out promise is a no-op, so close the late connection instead.
+                promise.futureResult.whenFailure { _ in _ = connection.close() }
+                promise.succeed(connection)
+            case .failure(let error):
+                promise.fail(error)
+            }
+        }
+        return try await promise.futureResult.get()
+    }
+
+    deinit {
+        // MySQLNIO asserts that a connection is closed before it's released; keep it alive until the close finishes.
+        if let connection, connection.channel.isActive {
+            connection.close().whenComplete { _ in _ = connection }
+        }
     }
 
     public func disconnect() async {
@@ -144,22 +203,60 @@ public actor MySQLDriver: DatabaseDriver {
 
     public func listColumns(table: String, schema: String?) async throws -> [TableColumn] {
         let result = try await executeStatement("""
-            SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, ORDINAL_POSITION, COLUMN_KEY
+            SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, ORDINAL_POSITION, COLUMN_KEY, EXTRA, COLUMN_COMMENT, DATA_TYPE
               FROM information_schema.COLUMNS
              WHERE TABLE_SCHEMA = \(dialect.quoteLiteral(schema ?? config.database))
                AND TABLE_NAME = \(dialect.quoteLiteral(table))
              ORDER BY ORDINAL_POSITION
             """)
+        let kind = config.kind
         return result.rows.map { row in
-            TableColumn(
+            let extra = row[6].isNull ? "" : row[6].displayString
+            return TableColumn(
                 name: row[0].displayString,
                 dataType: row[1].displayString,
                 nullable: row[2] == .text("YES"),
-                defaultValue: row[3].isNull ? nil : row[3].displayString,
+                defaultValue: Self.defaultExpression(row[3].isNull ? nil : row[3].displayString, extra: extra,
+                                                     dataType: row[8].displayString, kind: kind),
                 isPrimaryKey: row[5] == .text("PRI"),
-                ordinal: Int(row[4].displayString) ?? 0
+                ordinal: Int(row[4].displayString) ?? 0,
+                extra: Self.preservedAttributes(extra: extra, comment: row[7].isNull ? "" : row[7].displayString)
             )
         }
+    }
+
+    /// `information_schema.COLUMNS.COLUMN_DEFAULT` as the SQL expression the designer writes after DEFAULT.
+    /// MariaDB (10.2.7+) already stores SQL: `'text'` quoted, `current_timestamp()`, and the word `NULL` for no default.
+    /// MySQL gives literals raw (`it's`) and flags expressions with `DEFAULT_GENERATED` in EXTRA.
+    static func defaultExpression(_ raw: String?, extra: String, dataType: String, kind: DatabaseKind) -> String? {
+        guard let raw else { return nil }
+        if kind == .mariadb { return raw == "NULL" ? nil : raw }
+        if extra.localizedCaseInsensitiveContains("DEFAULT_GENERATED") {
+            let upper = raw.uppercased()
+            let bare = ["CURRENT_TIMESTAMP", "NOW(", "LOCALTIME", "CURRENT_DATE", "CURRENT_TIME"].contains { upper.hasPrefix($0) }
+            return bare ? raw : "(\(raw))"
+        }
+        let numeric = ["tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "float", "double", "real", "year"]
+        if numeric.contains(dataType.lowercased()), Double(raw) != nil { return raw }
+        if dataType.lowercased() == "bit", raw.hasPrefix("b'") { return raw }
+        return "'" + raw.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "''") + "'"
+    }
+
+    /// The EXTRA flags and comment that `MODIFY COLUMN` must repeat to keep them; generated columns and
+    /// MySQL's DEFAULT_GENERATED marker aren't repeatable attributes, so they're left out.
+    static func preservedAttributes(extra: String, comment: String) -> String? {
+        var parts: [String] = []
+        let flags = extra.lowercased()
+        if flags.contains("auto_increment") { parts.append("AUTO_INCREMENT") }
+        if let range = extra.range(of: "on update ", options: .caseInsensitive) {
+            let rest = extra[range.upperBound...].split(separator: " ").first.map(String.init) ?? "CURRENT_TIMESTAMP"
+            parts.append("ON UPDATE \(rest)")
+        }
+        if flags.split(separator: " ").contains("invisible") { parts.append("INVISIBLE") }
+        if !comment.isEmpty {
+            parts.append("COMMENT '" + comment.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "''") + "'")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
     /// MySQL prints the exact DDL with SHOW CREATE TABLE / VIEW / FUNCTION.
@@ -292,13 +389,29 @@ public actor MySQLDriver: DatabaseDriver {
             throw DatabaseError.queryFailed(Self.message(error))
         }
         let rows = box.rows
-        let columns = rows.first?.columnDefinitions.map(\.name) ?? []
+        var columns = rows.first?.columnDefinitions.map(\.name) ?? []
+        if rows.isEmpty, (box.affected ?? 0) == 0 {
+            // No rows, so MySQLNIO gave no column definitions: ask the server for the statement's metadata.
+            columns = await Self.describeColumns(sql, on: connection)
+        }
         let values = rows.map { row in
             zip(row.columnDefinitions, row.values).map { definition, buffer in
                 Self.value(definition: definition, buffer: buffer, format: row.format)
             }
         }
         return QueryResult(statement: sql, columns: columns, rows: values, affectedRows: columns.isEmpty ? box.affected : nil, isTruncated: box.truncated)
+    }
+
+    /// Result column names of `sql` from COM_STMT_PREPARE, without executing it; empty for statements without a
+    /// result set or that can't be prepared.
+    static func describeColumns(_ sql: String, on connection: MySQLConnection) async -> [String] {
+        let command = MySQLDescribeCommand(sql: sql)
+        do {
+            try await connection.send(command, logger: connection.logger).get()
+        } catch {
+            return []
+        }
+        return command.columns.map(\.name)
     }
 
     // MARK: - Decoding
@@ -328,6 +441,9 @@ public actor MySQLDriver: DatabaseDriver {
             isUnsigned: definition.flags.contains(.COLUMN_UNSIGNED)
         )
         switch definition.columnType {
+        case .year where format == .binary:
+            // Binary YEAR is a 2-byte integer that MySQLData doesn't decode.
+            return buffer.readInteger(endianness: .little, as: UInt16.self).map { .integer(Int64($0)) } ?? .null
         case .tiny, .short, .int24, .long, .longlong, .year:
             if data.isUnsigned, let u = data.uint64, u > UInt64(Int64.max) { return .text(String(u)) }
             return data.int64.map(CellValue.integer) ?? .null
@@ -373,7 +489,7 @@ public actor MySQLDriver: DatabaseDriver {
         do {
             rows = try await connection.query(sql, binds, onMetadata: { box.affected = Int($0.affectedRows) }).get()
         } catch {
-            throw DatabaseError.queryFailed(String(describing: error))
+            throw DatabaseError.queryFailed(Self.message(error))
         }
         let columns = rows.first?.columnDefinitions.map(\.name) ?? []
         let values = rows.map { row in

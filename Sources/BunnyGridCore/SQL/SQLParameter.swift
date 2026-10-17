@@ -71,7 +71,11 @@ public struct BoundStatement: Hashable, Sendable {
 extension SQLDialect {
     /// The placeholder for the `index`-th parameter (1-based): `$1` on PostgreSQL, `?` elsewhere.
     public func placeholder(_ index: Int) -> String {
-        kind == .postgresql ? "$\(index)" : "?"
+        switch kind {
+        case .postgresql: "$\(index)"
+        case .sqlserver: "@p\(index)"
+        default: "?"
+        }
     }
 
     /// The statement that applies one grid change, with every value bound as a typed parameter.
@@ -82,6 +86,8 @@ extension SQLDialect {
         let byName = Dictionary(columns.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         var parameters: [SQLParameter] = []
         func bind(_ part: ColumnValue) -> String {
+            // A typeless NULL: an nvarchar NULL parameter couldn't be converted to varbinary and other types.
+            if kind == .sqlserver, part.value.isNull { return "NULL" }
             parameters.append(SQLParameter(part.value, category: ColumnTypeCategory.classify(byName[part.column]?.dataType, kind: kind)))
             return placeholder(parameters.count)
         }

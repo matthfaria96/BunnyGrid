@@ -39,15 +39,22 @@ public struct UserDraft: Sendable {
 
 /// Server users and roles (Navicat's "User" button). SQLite has none.
 extension SQLDialect {
-    public var supportsUsers: Bool { kind != .sqlite }
+    public var supportsUsers: Bool { kind != .sqlite && kind != .redis }
 
     public var listUsersSQL: String? {
         switch kind {
         case .postgresql:
             "SELECT rolname, rolsuper, rolcanlogin, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname"
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             "SELECT User, Host, Super_priv, Create_priv FROM mysql.user ORDER BY User, Host"
-        case .sqlite: nil
+        case .sqlserver:
+            """
+            SELECT p.name, p.type_desc, IS_SRVROLEMEMBER('sysadmin', p.name), IS_SRVROLEMEMBER('dbcreator', p.name), p.is_disabled
+              FROM sys.server_principals p
+             WHERE p.type IN ('S', 'U', 'G', 'E', 'X') AND p.name NOT LIKE '##%'
+             ORDER BY p.name
+            """
+        case .sqlite, .redis: nil
         }
     }
 
@@ -70,6 +77,15 @@ extension SQLDialect {
                 if yes(row[safe: 3]) { flags.append("Create DB") }
                 if yes(row[safe: 4]) { flags.append("Create role") }
                 return DatabaseUser(name: name, attributes: flags)
+            case .sqlserver:
+                var flags: [String] = []
+                if let type = row[safe: 1]?.displayString {
+                    flags.append(type == "SQL_LOGIN" ? "SQL login" : type.capitalized.replacingOccurrences(of: "_", with: " "))
+                }
+                if yes(row[safe: 2]) { flags.append("sysadmin") }
+                if yes(row[safe: 3]) { flags.append("dbcreator") }
+                if yes(row[safe: 4]) { flags.append("Disabled") }
+                return DatabaseUser(name: name, attributes: flags)
             default:
                 var flags: [String] = []
                 if yes(row[safe: 2]) { flags.append("Super") }
@@ -81,7 +97,7 @@ extension SQLDialect {
 
     func account(_ name: String, host: String?) -> String {
         switch kind {
-        case .mysql, .mariadb: "\(quoteLiteral(name))@\(quoteLiteral(host ?? "%"))"
+        case .mysql, .mariadb, .mongodb: "\(quoteLiteral(name))@\(quoteLiteral(host ?? "%"))"
         default: quoteIdentifier(name)
         }
     }
@@ -96,12 +112,18 @@ extension SQLDialect {
             if draft.createDatabases { options.append("CREATEDB") }
             if !draft.password.isEmpty { options.append("PASSWORD \(quoteLiteral(draft.password))") }
             return ["CREATE ROLE \(quoteIdentifier(name)) \(options.joined(separator: " "))"]
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             var statements = ["CREATE USER \(account(name, host: draft.host)) IDENTIFIED BY \(quoteLiteral(draft.password))"]
             if draft.superuser { statements.append("GRANT ALL PRIVILEGES ON *.* TO \(account(name, host: draft.host)) WITH GRANT OPTION") }
             else if draft.createDatabases { statements.append("GRANT CREATE ON *.* TO \(account(name, host: draft.host))") }
             return statements
-        case .sqlite:
+        case .sqlserver:
+            var statements = ["CREATE LOGIN \(quoteIdentifier(name)) WITH PASSWORD = \(quoteLiteral(draft.password))"]
+            if draft.superuser { statements.append("ALTER SERVER ROLE [sysadmin] ADD MEMBER \(quoteIdentifier(name))") }
+            if draft.createDatabases { statements.append("ALTER SERVER ROLE [dbcreator] ADD MEMBER \(quoteIdentifier(name))") }
+            if !draft.canLogin { statements.append("ALTER LOGIN \(quoteIdentifier(name)) DISABLE") }
+            return statements
+        case .sqlite, .redis:
             throw DatabaseError.unsupported("Users")
         }
     }
@@ -109,6 +131,7 @@ extension SQLDialect {
     public func dropUser(_ user: DatabaseUser) -> String {
         switch kind {
         case .postgresql: "DROP ROLE \(quoteIdentifier(user.name))"
+        case .sqlserver: "DROP LOGIN \(quoteIdentifier(user.name))"
         default: "DROP USER \(account(user.name, host: user.host))"
         }
     }
@@ -116,6 +139,7 @@ extension SQLDialect {
     public func setPassword(_ user: DatabaseUser, to password: String) -> String {
         switch kind {
         case .postgresql: "ALTER ROLE \(quoteIdentifier(user.name)) PASSWORD \(quoteLiteral(password))"
+        case .sqlserver: "ALTER LOGIN \(quoteIdentifier(user.name)) WITH PASSWORD = \(quoteLiteral(password))"
         default: "ALTER USER \(account(user.name, host: user.host)) IDENTIFIED BY \(quoteLiteral(password))"
         }
     }
@@ -129,8 +153,19 @@ extension SQLDialect {
               FROM information_schema.role_table_grants WHERE grantee = \(quoteLiteral(user.name))
              GROUP BY table_schema, table_name ORDER BY 1
             """
-        case .mysql, .mariadb: "SHOW GRANTS FOR \(account(user.name, host: user.host))"
-        case .sqlite: nil
+        case .sqlite, .redis: nil
+        case .mysql, .mariadb, .mongodb: "SHOW GRANTS FOR \(account(user.name, host: user.host))"
+        case .sqlserver:
+            """
+            SELECT 'SERVER ROLE' AS object, r.name AS privileges FROM sys.server_role_members m
+              JOIN sys.server_principals r ON r.principal_id = m.role_principal_id
+              JOIN sys.server_principals u ON u.principal_id = m.member_principal_id WHERE u.name = \(quoteLiteral(user.name))
+            UNION ALL
+            SELECT 'SERVER', p.state_desc + ' ' + p.permission_name FROM sys.server_permissions p
+              JOIN sys.server_principals u ON u.principal_id = p.grantee_principal_id WHERE u.name = \(quoteLiteral(user.name))
+            ORDER BY 1, 2
+            """
+        case .sqlite, .redis: nil
         }
     }
 
@@ -144,13 +179,22 @@ extension SQLDialect {
              ("Indexes", "SELECT schemaname AS schema, tablename AS table_name, indexname, indexdef FROM pg_indexes WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY 1, 2, 3"),
              ("Extensions", "SELECT extname AS name, extversion AS version FROM pg_extension ORDER BY 1"),
              ("Schemas", "SELECT schema_name, schema_owner FROM information_schema.schemata WHERE schema_name NOT LIKE 'pg\\_%' AND schema_name <> 'information_schema' ORDER BY 1")]
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             [("Triggers", "SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE, ACTION_TIMING, EVENT_MANIPULATION FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() ORDER BY 1"),
              ("Events", "SELECT EVENT_NAME, STATUS, EVENT_TYPE, EXECUTE_AT, INTERVAL_VALUE, INTERVAL_FIELD FROM information_schema.EVENTS WHERE EVENT_SCHEMA = DATABASE() ORDER BY 1"),
              ("Indexes", "SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS columns FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() GROUP BY 1, 2, 3 ORDER BY 1, 2")]
+        case .sqlserver:
+            [("Procedures", "SELECT SCHEMA_NAME(schema_id) AS [schema], name, create_date, modify_date FROM sys.procedures WHERE is_ms_shipped = 0 ORDER BY 1, 2"),
+             ("Triggers", "SELECT OBJECT_SCHEMA_NAME(parent_id) AS [schema], OBJECT_NAME(parent_id) AS table_name, name, is_instead_of_trigger, is_disabled FROM sys.triggers WHERE parent_class = 1 ORDER BY 1, 2, 3"),
+             ("Sequences", "SELECT SCHEMA_NAME(schema_id) AS [schema], name, start_value, increment, current_value FROM sys.sequences ORDER BY 1, 2"),
+             ("Synonyms", "SELECT SCHEMA_NAME(schema_id) AS [schema], name, base_object_name FROM sys.synonyms ORDER BY 1, 2"),
+             ("Types", "SELECT SCHEMA_NAME(schema_id) AS [schema], name, TYPE_NAME(system_type_id) AS base_type, max_length, is_nullable FROM sys.types WHERE is_user_defined = 1 ORDER BY 1, 2"),
+             ("Indexes", "SELECT OBJECT_SCHEMA_NAME(i.object_id) AS [schema], OBJECT_NAME(i.object_id) AS table_name, i.name, i.type_desc, i.is_unique FROM sys.indexes i JOIN sys.objects o ON o.object_id = i.object_id WHERE o.is_ms_shipped = 0 AND i.name IS NOT NULL ORDER BY 1, 2, 3"),
+             ("Schemas", "SELECT s.name, p.name AS owner FROM sys.schemas s JOIN sys.database_principals p ON p.principal_id = s.principal_id ORDER BY 1")]
         case .sqlite:
             [("Indexes", "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index' ORDER BY tbl_name, name"),
              ("Triggers", "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY tbl_name, name")]
+        case .redis: []
         }
     }
 }

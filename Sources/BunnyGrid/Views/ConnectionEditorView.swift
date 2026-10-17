@@ -32,7 +32,7 @@ struct ConnectionEditorView: View {
     }
 
     enum Tab: String, CaseIterable, Identifiable {
-        case general = "General", advanced = "Advanced", ssl = "SSL", ssh = "SSH", remarks = "Remarks"
+        case general = "General", advanced = "Advanced", databases = "Databases", ssl = "SSL", ssh = "SSH", http = "HTTP", remarks = "Remarks"
         var id: Self { self }
     }
 
@@ -47,8 +47,11 @@ struct ConnectionEditorView: View {
     }
 
     private var typeName: String { type?.name ?? config.kind.displayName }
-    private var title: String { "\(isNew ? "New" : "Edit") Connection (\(typeName))" }
-    private var tabs: [Tab] { config.kind.isFileBased ? [.general, .advanced, .remarks] : Tab.allCases }
+    /// Navicat: "New Connection (SQLite)", or "Name — Edit Connection (SQLite)".
+    private var title: String {
+        isNew || config.name.isEmpty ? "\(isNew ? "New" : "Edit") Connection (\(typeName))" : "\(config.name) — Edit Connection (\(typeName))"
+    }
+    private var tabs: [Tab] { config.kind.isFileBased ? [.general, .advanced, .databases, .http, .remarks] : Tab.allCases }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -68,6 +71,8 @@ struct ConnectionEditorView: View {
                         case .advanced: advanced
                         case .ssl: ssl
                         case .ssh: ssh
+                        case .databases: databasesTab
+                        case .http: httpTab
                         case .remarks: remarks
                         }
                     }
@@ -96,9 +101,16 @@ struct ConnectionEditorView: View {
 
     private var profiles: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Connection Profiles")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HStack {
+                Text("Connection Profiles")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Image(systemName: "plus.circle")
+                    .foregroundStyle(.tertiary)
+                    .help("More connection profiles aren't supported yet")
+            }
+            .padding(.trailing, 12)
                 .padding(.top, 44)
                 .padding(.horizontal, 16)
             HStack(spacing: 6) {
@@ -135,7 +147,7 @@ struct ConnectionEditorView: View {
                             .foregroundStyle(tab == item ? Color.white : Color.primary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 3)
-                            .background(RoundedRectangle(cornerRadius: 5).fill(tab == item ? Color.accentColor.opacity(0.85) : .clear))
+                            .background(RoundedRectangle(cornerRadius: 5).fill(tab == item ? Color.accentColor.opacity(0.55) : .clear))
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -195,10 +207,24 @@ struct ConnectionEditorView: View {
             TextField("", value: $config.port, format: .number.grouping(.never)).frame(width: 90)
                 .disabled(usesSocket && config.kind != .postgresql)
         }
-        row("User Name") { TextField("", text: $config.username) }
+        if config.kind == .sqlserver {
+            row("Authentication") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Picker("", selection: .constant(0)) {
+                        Text("SQL Server Authentication").tag(0)
+                        Text("Windows Authentication").tag(1).selectionDisabled()
+                    }
+                    .labelsHidden().frame(width: 240)
+                    Text("Windows (Kerberos/NTLM) and Microsoft Entra sign-in aren't supported yet; use a SQL Server login.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        if config.kind.isDocumentStore { MongoConnectionRows(config: $config) }
+        row("User Name") { TextField("", text: $config.username, prompt: config.kind == .sqlserver ? Text("sa") : nil) }
         row("Password") { SecureField("", text: $password) }
-        row(config.kind == .postgresql ? "Initial Database" : "Default Database") {
-            TextField("", text: $config.database, prompt: Text(config.kind == .postgresql ? "postgres" : "Optional"))
+        row(config.kind.connectsPerDatabase ? "Initial Database" : "Default Database") {
+            TextField("", text: $config.database, prompt: Text(config.kind.serverDatabase ?? (config.kind == .redis ? "0 (database index)" : "Optional")))
         }
     }
 
@@ -220,7 +246,7 @@ struct ConnectionEditorView: View {
                         .help("Blocks INSERT, UPDATE, DELETE and DDL from BunnyGrid.")
                 }
             }
-            if !config.kind.isFileBased {
+            if !config.kind.isFileBased && config.kind != .sqlserver {
                 row("") {
                     Toggle("Use socket file", isOn: Binding(
                         get: { config.socketPath != nil },
@@ -389,7 +415,7 @@ struct ConnectionEditorView: View {
     private var usesSocket: Bool { config.activeSocketPath != nil }
 
     private var defaultSocketPath: String {
-        config.kind == .postgresql ? "/tmp" : "/tmp/mysql.sock"
+        config.kind == .postgresql ? "/tmp" : config.kind == .redis ? "/tmp/redis.sock" : "/tmp/mysql.sock"
     }
 
     /// A path field with a "…" button that opens a file panel.
@@ -410,6 +436,51 @@ struct ConnectionEditorView: View {
                 if panel.runModal() == .OK, let url = panel.url { path.wrappedValue = url.path }
             }
         }
+    }
+
+    // MARK: Databases / HTTP (shown as in Navicat; not supported yet, so inert)
+
+    private var databasesTab: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    Text(config.kind.isFileBased ? "Database" : "Database").frame(width: 150, alignment: .leading)
+                    Divider().frame(height: 14)
+                    Text(config.kind.isFileBased ? "File" : "Show").padding(.leading, 6).frame(maxWidth: .infinity, alignment: .leading)
+                    Divider().frame(height: 14)
+                    Text(config.kind.isFileBased ? "Encrypted" : "").padding(.leading, 6).frame(width: 70, alignment: .leading)
+                }
+                .font(.system(size: 11.5, weight: .semibold))
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                Divider()
+                Color(nsColor: .textBackgroundColor).frame(height: 360)
+            }
+            .overlay(Rectangle().strokeBorder(Color(nsColor: .separatorColor)))
+            HStack(spacing: 12) {
+                Image(systemName: "plus")
+                Image(systemName: "minus")
+            }
+            .foregroundStyle(.tertiary)
+            .padding(.leading, 8)
+        }
+        .frame(width: 660)
+        .help(config.kind.isFileBased ? "Attaching more database files isn't supported yet." : "Choosing which databases to show isn't supported yet.")
+    }
+
+    private var httpTab: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("Use HTTP tunnel", isOn: .constant(false)).toggleStyle(.checkbox)
+            HStack {
+                Text("Tunnel URL:")
+                TextField("", text: .constant("")).frame(width: 300)
+            }
+            .padding(.leading, 20)
+            Toggle("Encode outgoing query with base64", isOn: .constant(false)).toggleStyle(.checkbox)
+        }
+        .disabled(true)
+        .frame(width: 660, alignment: .leading)
+        .help("HTTP tunnels aren't supported yet; use SSH instead.")
     }
 
     // MARK: Remarks

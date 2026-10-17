@@ -48,6 +48,8 @@ struct ObjectsView: View {
                 ToolIcon("plus.circle", .green, "New Database", isEnabled: connectionSession?.config.kind != .sqlite) {
                     app.creatingDatabaseFor = connectionSession?.id
                 }
+            } else if category == .backups {
+                BackupToolbarItems(context: context, schema: schema)
             } else if category == .queries {
                 let selected = selectedSavedQuery
                 ToolIcon("folder", .blue, "Open Query", isEnabled: selected != nil) {
@@ -107,7 +109,7 @@ struct ObjectsView: View {
             }
             .font(.system(size: 13))
             .padding(.horizontal, 10)
-            .frame(width: 200, height: 28)
+            .frame(minWidth: 90, maxWidth: 200, minHeight: 28, maxHeight: 28)
             .glassBackground(in: Capsule())
         }
         .padding(.horizontal, 12)
@@ -117,50 +119,41 @@ struct ObjectsView: View {
     @ViewBuilder
     private var content: some View {
         if let session = connectionSession {
-            Table(session.databases.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }.map(DatabaseRow.init), selection: $selection) {
-                TableColumn("Name") { row in
-                    Label {
-                        Text(row.name).foregroundStyle(session.context(row.name)?.isOpen == true ? .primary : .secondary)
-                    } icon: {
-                        AppIcon(name: session.context(row.name)?.isOpen == true ? "database-open" : "database-closed", size: 16)
-                    }
+            let names = session.databases.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }
+            ObjectListTable(
+                columns: [ObjectListColumn(title: "Name", width: 260, minWidth: 120), ObjectListColumn(title: "Status", width: 90)],
+                rows: names.map { name in
+                    let open = session.context(name)?.isOpen == true
+                    return ObjectListRow(id: name, icon: open ? "database-open" : "database-closed", cells: [name, open ? "Open" : "Closed"],
+                                         dimmed: !open, secondaryColumns: [1])
+                },
+                selection: $selection,
+                onOpen: { ids in
+                    selection = ids
+                    openSelectedDatabases()
                 }
-                TableColumn("Status") { row in
-                    Text(session.context(row.name)?.isOpen == true ? "Open" : "Closed").foregroundStyle(.secondary)
-                }
-                .width(90)
-            }
-            .tableStyle(.inset(alternatesRowBackgrounds: false))
-            .contextMenu(forSelectionType: String.self) { _ in } primaryAction: { ids in
-                selection = ids
-                openSelectedDatabases()
-            }
+            )
         } else if let context, category == .queries, let connectionID = context.session?.id {
             let queries = app.savedQueries(connectionID: connectionID, database: context.name)
                 .filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
-            Table(queries, selection: $querySelection) {
-                TableColumn("Name") { query in
-                    Label {
-                        Text(query.name)
-                    } icon: {
-                        AppIcon(name: "query", size: 16)
-                    }
+            ObjectListTable(
+                columns: [ObjectListColumn(title: "Name", width: 220, minWidth: 120), ObjectListColumn(title: "Modified", width: 160),
+                          ObjectListColumn(title: "SQL", width: 400)],
+                rows: queries.map { query in
+                    ObjectListRow(id: query.id.uuidString, icon: "query",
+                                  cells: [query.name, query.updatedAt.formatted(.dateTime.year().month().day().hour().minute()),
+                                          query.sql.replacingOccurrences(of: "\n", with: " ")],
+                                  secondaryColumns: [1, 2])
+                },
+                selection: Binding(get: { Set(querySelection.map(\.uuidString)) },
+                                   set: { querySelection = Set($0.compactMap(UUID.init(uuidString:))) }),
+                onOpen: { ids in openQueries(Set(ids.compactMap(UUID.init(uuidString:))), queries: queries, in: context) }
+            )
+            .contextMenu {
+                if !querySelection.isEmpty {
+                    Button("Open Query") { openQueries(querySelection, queries: queries, in: context) }
+                    Button("Delete Query", role: .destructive) { for id in querySelection { app.deleteSavedQuery(id) } }
                 }
-                TableColumn("Modified") { query in
-                    Text(query.updatedAt, format: .dateTime.year().month().day().hour().minute()).foregroundStyle(.secondary)
-                }
-                .width(min: 120, ideal: 160)
-                TableColumn("SQL") { query in
-                    Text(query.sql.replacingOccurrences(of: "\n", with: " ")).lineLimit(1).foregroundStyle(.secondary)
-                        .font(.system(size: 11, design: .monospaced))
-                }
-            }
-            .tableStyle(.inset(alternatesRowBackgrounds: false))
-            .contextMenu(forSelectionType: UUID.self) { ids in
-                Button("Open Query") { openQueries(ids, queries: queries, in: context) }
-                Button("Delete Query", role: .destructive) { for id in ids { app.deleteSavedQuery(id) } }
-            } primaryAction: { ids in
-                openQueries(ids, queries: queries, in: context)
             }
             .overlay {
                 if queries.isEmpty {
@@ -170,139 +163,80 @@ struct ObjectsView: View {
         } else if let context, category == .indexes || category == .triggers {
             IndexTriggerList(context: context, category: category, search: search)
         } else if let context {
-            if category.objectKind == nil {
-                ContentUnavailableView("No \(category.rawValue)", systemImage: category.systemImage, description: Text("Backups are coming soon."))
+            if category == .backups {
+                BackupListView(context: context, schema: schema, search: search)
+            } else if category.objectKind == nil {
+                ContentUnavailableView("No \(category.rawValue)", systemImage: category.systemImage)
             } else if context.objects(in: schema) == nil {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                     .task { await context.loadObjects(schema: schema) }
             } else {
                 ZStack {
-                if gridMode {
-                    ObjectTiles(objects: objects, selection: $selection, tint: category.tint) { open($0) }
-                } else {
-                // Statistics travel inside the row values: SwiftUI's Table doesn't redraw cells for outside state.
-                if context.kind == .sqlite {
-                    sqliteTable(context: context, objects: objects)
-                } else {
-                Table(objects.map { ObjectRow(object: $0, stats: statistics[$0.name]) }, selection: $selection) {
-                    TableColumn("Name") { row in
-                        let object = row.object
-                        Label {
-                            Text(object.name)
-                            if let connectionID = context.session?.id, app.isFavorite(object, connectionID: connectionID, database: context.name) {
-                                Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow)
-                            }
-                        } icon: {
-                            AppIcon(name: object.kind.iconName, size: 16)
-                        }
+                    if gridMode {
+                        ObjectTiles(objects: objects, selection: $selection, tint: category.tint) { open($0) }
+                    } else {
+                        objectList(context: context)
                     }
-                    .width(min: 160, ideal: 240)
-                    TableColumn("Rows") { row in
-                        Text(row.stats?.rows.map { $0.formatted() } ?? "")
-                            .monospacedDigit()
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    .width(min: 60, ideal: 90)
-                    TableColumn("Data Length") { row in
-                        Text(row.stats?.sizeBytes.flatMap { $0 > 0 ? ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) : nil } ?? "")
-                            .monospacedDigit()
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    .width(min: 70, ideal: 100)
-                    TableColumn(context.kind == .mysql || context.kind == .mariadb ? "Engine" : (context.usesSchemas ? "Schema" : "Database")) { row in
-                        Text(row.stats?.engine ?? row.object.schema ?? context.name).foregroundStyle(.secondary)
-                    }
-                    .width(min: 70, ideal: 110)
-                    TableColumn("Created Date") { row in
-                        Text(row.stats?.created ?? "").foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    .width(min: 90, ideal: 140)
-                    TableColumn("Modified Date") { row in
-                        Text(row.stats?.modified ?? "").foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    .width(min: 90, ideal: 140)
-                    TableColumn("Collation") { row in
-                        Text(row.stats?.collation ?? "").foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    .width(min: 80, ideal: 130)
-                    TableColumn("Comment") { row in
-                        Text(row.stats?.comment ?? "").foregroundStyle(.secondary).lineLimit(1)
+                    if objects.isEmpty {
+                        Text(search.isEmpty ? "No \(category.rawValue.lowercased())" : "No matches").foregroundStyle(.tertiary)
                     }
                 }
-                .tableStyle(.inset(alternatesRowBackgrounds: false))
                 .task(id: "\(context.session?.id.uuidString ?? "")/\(context.name)/\(schema ?? "")/\(category.rawValue)/\(statisticsVersion)") {
-                    statistics = (try? await context.driver.tableStatistics(schema: context.usesSchemas ? schema : (context.kind == .sqlite ? nil : context.name))) ?? [:]
-                }
-                .contextMenu(forSelectionType: String.self) { ids in
-                    if let object = objects.first(where: { ids.contains($0.id) }), let connectionID = context.session?.id {
-                        Button(app.isFavorite(object, connectionID: connectionID, database: context.name) ? "Remove from Favorites" : "Add to Favorites") {
-                            app.toggleFavorite(object, connectionID: connectionID, database: context.name)
-                        }
-                        Divider()
-                        ObjectActionItems(object: object, context: context)
-                    }
-                } primaryAction: { ids in
-                    if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
-                }
-                }
-                }
-                if objects.isEmpty {
-                    Text(search.isEmpty ? "No \(category.rawValue.lowercased())" : "No matches").foregroundStyle(.tertiary)
-                }
+                    let driverSchema = context.driverSchema(schema)
+                    statistics = (try? await context.driver.tableStatistics(schema: driverSchema)) ?? [:]
                 }
             }
         } else {
             // Nothing selected: an empty list with just its column headers, like Navicat.
-            Table([DatabaseRow]()) {
-                TableColumn("Name") { Text($0.name) }
-                TableColumn("Rows") { _ in Text("") }
-                TableColumn("Data Length") { _ in Text("") }
-                TableColumn("Engine") { _ in Text("") }
-                TableColumn("Created Date") { _ in Text("") }
-                TableColumn("Modified Date") { _ in Text("") }
-            }
-            .tableStyle(.inset(alternatesRowBackgrounds: false))
+            ObjectListTable(columns: ["Name", "Rows", "Data Length", "Engine", "Created Date", "Modified Date"].map {
+                ObjectListColumn(title: $0, width: $0 == "Name" ? 200 : 110)
+            }, rows: [], selection: .constant([]))
         }
     }
 
-    /// SQLite's columns in Navicat: Name, Root Page, Has Indexes, Has Triggers.
-    private func sqliteTable(context: DatabaseContext, objects: [DatabaseObject]) -> some View {
-        Table(objects.map { ObjectRow(object: $0, stats: statistics[$0.name]) }, selection: $selection) {
-            TableColumn("Name") { row in
-                Label {
-                    Text(row.object.name)
-                } icon: {
-                    AppIcon(name: row.object.kind.iconName, size: 16)
+    /// The object list: SQLite shows Name, Root Page, Has Indexes, Has Triggers (as Navicat does); servers show
+    /// Rows, Data Length, Engine, dates, Collation and Comment.
+    private func objectList(context: DatabaseContext) -> some View {
+        let isSQLite = context.kind == .sqlite
+        let columns: [ObjectListColumn] = isSQLite
+            ? [ObjectListColumn(title: "Name", width: 190, minWidth: 120), ObjectListColumn(title: "Root Page", width: 95),
+               ObjectListColumn(title: "Has Indexes", width: 97), ObjectListColumn(title: "Has Triggers", width: 97),
+               ObjectListColumn(title: "Rows", width: 80, trailing: true)]
+            : [ObjectListColumn(title: "Name", width: 190, minWidth: 120), ObjectListColumn(title: "Rows", width: 50, trailing: true),
+               ObjectListColumn(title: "Data Length", width: 118, trailing: true),
+               ObjectListColumn(title: context.kind == .mysql || context.kind == .mariadb ? "Engine" : (context.usesSchemas ? "Schema" : "Database"), width: 78),
+               ObjectListColumn(title: "Created Date", width: 148), ObjectListColumn(title: "Modified Date", width: 148),
+               ObjectListColumn(title: "Collation", width: 130), ObjectListColumn(title: "Comment", width: 200)]
+        let connectionID = context.session?.id
+        let rows = objects.map { object -> ObjectListRow in
+            let stats = statistics[object.name]
+            let cells: [String]
+            if isSQLite {
+                cells = [object.name, stats?.rootPage.map(String.init) ?? "", stats?.hasIndexes.map { $0 ? "Yes" : "No" } ?? "",
+                         stats?.hasTriggers.map { $0 ? "Yes" : "No" } ?? "", stats?.rows.map { $0.formatted() } ?? ""]
+            } else {
+                cells = [object.name, stats?.rows.map { $0.formatted() } ?? "",
+                         stats?.sizeBytes.flatMap { $0 > 0 ? ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) : nil } ?? "",
+                         stats?.engine ?? object.schema ?? context.name, stats?.created ?? "", stats?.modified ?? "",
+                         stats?.collation ?? "", stats?.comment ?? ""]
+            }
+            let starred = connectionID.map { app.isFavorite(object, connectionID: $0, database: context.name) } ?? false
+            return ObjectListRow(id: object.id, icon: object.kind.iconName, cells: cells, starred: starred,
+                                 secondaryColumns: isSQLite ? [] : [3, 4, 5, 6, 7])
+        }
+        return ObjectListTable(columns: columns, rows: rows, selection: $selection, onOpen: { ids in
+            if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
+        }, autosaveName: "objects-\(context.kind.rawValue)")
+        .contextMenu {
+            if let object = selectedObject {
+                if let connectionID {
+                    Button(app.isFavorite(object, connectionID: connectionID, database: context.name) ? "Remove from Favorites" : "Add to Favorites") {
+                        app.toggleFavorite(object, connectionID: connectionID, database: context.name)
+                    }
+                    Divider()
                 }
-            }
-            .width(min: 160, ideal: 240)
-            TableColumn("Root Page") { row in
-                Text(row.stats?.rootPage.map(String.init) ?? "").monospacedDigit()
-            }
-            .width(min: 70, ideal: 100)
-            TableColumn("Has Indexes") { row in
-                Text(row.stats?.hasIndexes.map { $0 ? "Yes" : "No" } ?? "")
-            }
-            .width(min: 70, ideal: 100)
-            TableColumn("Has Triggers") { row in
-                Text(row.stats?.hasTriggers.map { $0 ? "Yes" : "No" } ?? "")
-            }
-            .width(min: 70, ideal: 100)
-            TableColumn("Rows") { row in
-                Text(row.stats?.rows.map { $0.formatted() } ?? "").monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .width(min: 60, ideal: 90)
-        }
-        .tableStyle(.inset(alternatesRowBackgrounds: false))
-        .task(id: "\(context.session?.id.uuidString ?? "")/\(context.name)/\(category.rawValue)/\(statisticsVersion)") {
-            statistics = (try? await context.driver.tableStatistics(schema: nil)) ?? [:]
-        }
-        .contextMenu(forSelectionType: String.self) { ids in
-            if let object = objects.first(where: { ids.contains($0.id) }) {
                 ObjectActionItems(object: object, context: context)
             }
-        } primaryAction: { ids in
-            if let object = objects.first(where: { ids.contains($0.id) }) { open(object) }
         }
     }
 
@@ -422,28 +356,20 @@ private struct IndexTriggerList: View {
     let search: String
     @State private var entries: [Entry] = []
     @State private var loaded = false
+    @State private var selection: Set<String> = []
 
     private var shown: [Entry] {
         search.isEmpty ? entries : entries.filter { $0.name.localizedCaseInsensitiveContains(search) || $0.table.localizedCaseInsensitiveContains(search) }
     }
 
     var body: some View {
-        Table(shown) {
-            TableColumn("Name") { entry in
-                Label {
-                    Text(entry.name)
-                } icon: {
-                    AppIcon(name: category.iconName, size: 16)
-                }
-            }
-            .width(min: 160, ideal: 220)
-            TableColumn("Table") { entry in Text(entry.table) }
-                .width(min: 100, ideal: 160)
-            TableColumn(category == .indexes ? "Unique" : "Fires") { entry in Text(entry.detail).foregroundStyle(.secondary) }
-                .width(min: 70, ideal: 100)
-            TableColumn(category == .indexes ? "Fields" : "Events") { entry in Text(entry.extra).foregroundStyle(.secondary).lineLimit(1) }
-        }
-        .tableStyle(.inset(alternatesRowBackgrounds: false))
+        ObjectListTable(
+            columns: [ObjectListColumn(title: "Name", width: 220, minWidth: 120), ObjectListColumn(title: "Table", width: 160),
+                      ObjectListColumn(title: category == .indexes ? "Unique" : "Fires", width: 100),
+                      ObjectListColumn(title: category == .indexes ? "Fields" : "Events", width: 260)],
+            rows: shown.map { ObjectListRow(id: $0.id, icon: category.iconName, cells: [$0.name, $0.table, $0.detail, $0.extra], secondaryColumns: [2, 3]) },
+            selection: $selection
+        )
         .overlay {
             if loaded && shown.isEmpty {
                 Text(search.isEmpty ? "No \(category.rawValue.lowercased())" : "No matches").foregroundStyle(.tertiary)

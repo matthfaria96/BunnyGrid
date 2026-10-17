@@ -24,19 +24,24 @@ extension SQLDialect {
             ["DELETE FROM \(qualifiedName(object))",
              "DELETE FROM sqlite_sequence WHERE name = \(quoteLiteral(object.name))"]
         case .postgresql: ["TRUNCATE TABLE \(qualifiedName(object)) RESTART IDENTITY"]
-        case .mysql, .mariadb: ["TRUNCATE TABLE \(qualifiedName(object))"]
+        case .mysql, .mariadb, .sqlserver, .mongodb: ["TRUNCATE TABLE \(qualifiedName(object))"]
+        case .redis: []
         }
     }
 
     public func renameObject(_ object: DatabaseObject, to newName: String) -> String {
         switch kind {
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             "RENAME TABLE \(qualifiedName(object)) TO \(qualifiedName(table: newName, schema: object.schema))"
         case .postgresql:
             // PostgreSQL keeps the schema; the new name is unqualified.
             "ALTER \(object.kind == .view ? "VIEW" : object.kind == .materializedView ? "MATERIALIZED VIEW" : "TABLE") \(qualifiedName(object)) RENAME TO \(quoteIdentifier(newName))"
         case .sqlite:
             "ALTER TABLE \(qualifiedName(object)) RENAME TO \(quoteIdentifier(newName))"
+        case .sqlserver:
+            // sp_rename takes the new name bare: it stays in the object's schema.
+            "EXEC sp_rename \(quoteLiteral(qualifiedName(object))), \(quoteLiteral(newName))"
+        case .redis: "RENAME \(object.name) \(newName)"
         }
     }
 
@@ -61,10 +66,36 @@ extension DatabaseDriver {
         let d = dialect
         var statements: [String]
         switch config.kind {
+        case .redis: throw DatabaseError.unsupported("Duplicating tables")
         case .postgresql:
             statements = ["CREATE TABLE \(d.qualifiedName(table: newName, schema: source.schema)) (LIKE \(d.qualifiedName(source)) INCLUDING ALL)"]
-        case .mysql, .mariadb:
+        case .mysql, .mariadb, .mongodb:
             statements = ["CREATE TABLE \(d.qualifiedName(table: newName, schema: source.schema)) LIKE \(d.qualifiedName(source))"]
+        case .sqlserver:
+            // SELECT INTO copies the columns (with IDENTITY); the key and indexes are rebuilt from the catalog.
+            let target = d.qualifiedName(table: newName, schema: source.schema)
+            statements = ["SELECT * INTO \(target) FROM \(d.qualifiedName(source)) WHERE 1 = 0"]
+            let keys = try await listColumns(table: source.name, schema: source.schema).filter(\.isPrimaryKey).map { d.quoteIdentifier($0.name) }
+            if !keys.isEmpty {
+                statements.append("ALTER TABLE \(target) ADD CONSTRAINT \(d.quoteIdentifier("PK_" + newName)) PRIMARY KEY (\(keys.joined(separator: ", ")))")
+            }
+            for index in try await listIndexes(table: source.name, schema: source.schema) where !index.primary {
+                var design = IndexDesign(index)
+                design.name = newName + "_" + index.name
+                statements.append(try d.createIndex(design, table: newName, schema: source.schema))
+            }
+            if withData {
+                let columns = try await listColumns(table: source.name, schema: source.schema)
+                let names = columns.map { d.quoteIdentifier($0.name) }.joined(separator: ", ")
+                let identity = try await executeStatement(
+                    "SELECT COUNT(*) FROM sys.identity_columns WHERE object_id = OBJECT_ID(\(d.quoteLiteral(d.qualifiedName(source))))")
+                let hasIdentity = identity.rows.first?.first.map { $0 != .integer(0) } ?? false
+                if hasIdentity { statements.append("SET IDENTITY_INSERT \(target) ON") }
+                statements.append("INSERT INTO \(target) (\(names)) SELECT \(names) FROM \(d.qualifiedName(source))")
+                if hasIdentity { statements.append("SET IDENTITY_INSERT \(target) OFF") }
+            }
+            for statement in statements { _ = try await executeStatement(statement) }
+            return
         case .sqlite:
             // Rebuilt from the catalog; SQLite index names are global, so they get the new table's prefix.
             let columns = try await listColumns(table: source.name, schema: source.schema).map(ColumnDesign.init)
@@ -174,7 +205,7 @@ public enum SQLDumper {
             if options.includeStructure {
                 if options.includeDrop { out.append(d.dropIfExists(object)) }
                 var ddl = try await driver.objectDDL(name: object.name, kind: object.kind, schema: object.schema)
-                if d.kind == .postgresql, object.kind == .table {
+                if d.kind == .postgresql || d.kind == .sqlserver, object.kind == .table {
                     let statements = SQLSplitter.split(ddl)
                     let isKey = { (sql: String) in sql.hasPrefix("ALTER TABLE ") && sql.contains(" FOREIGN KEY ") }
                     deferredKeys += statements.filter(isKey).map { $0.hasSuffix(";") ? $0 : $0 + ";" }
@@ -190,7 +221,14 @@ public enum SQLDumper {
             }
             guard options.includeData, object.kind == .table else { continue }
             let page = try await driver.fetchAllRows(table: object.name, schema: object.schema, batchSize: batchSize)
-            let inserts = d.insertStatements(into: d.dumpName(object), columns: page.columns, rows: page.rows, rowsPerInsert: options.rowsPerInsert)
+            var inserts = d.insertStatements(into: d.dumpName(object), columns: page.columns, rows: page.rows, rowsPerInsert: options.rowsPerInsert)
+            // SQL Server refuses explicit values in an IDENTITY column unless IDENTITY_INSERT is on.
+            if d.kind == .sqlserver, !inserts.isEmpty,
+               let identity = try? await driver.executeStatement(
+                   "SELECT COUNT(*) FROM sys.identity_columns WHERE object_id = OBJECT_ID(\(d.quoteLiteral(d.qualifiedName(object))))"),
+               let count = identity.rows.first?.first, count != .integer(0) {
+                inserts = ["SET IDENTITY_INSERT \(d.dumpName(object)) ON;"] + inserts + ["SET IDENTITY_INSERT \(d.dumpName(object)) OFF;"]
+            }
             if !inserts.isEmpty { out.append((inserts + resetSequences).joined(separator: "\n")) }
         }
         if !deferredKeys.isEmpty { out.append("-- Foreign keys"); out += deferredKeys }

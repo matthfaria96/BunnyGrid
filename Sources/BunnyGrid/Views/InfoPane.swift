@@ -15,6 +15,8 @@ struct RightPane: View {
         case .query: panes += [.snippets, .identifiers]
         case .design: panes += [.ddl]
         case .model: break
+        case .redis: break
+        case .model, .document: break
         case nil: break
         }
         if showAIFeatures { panes.append(.ai) }
@@ -31,9 +33,6 @@ struct RightPane: View {
                         tab(pane)
                     }
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .glassBackground(in: Capsule(), interactive: true)
                 HStack {
                     Spacer()
                     IconButton(systemImage: app.assistant.isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
@@ -43,7 +42,7 @@ struct RightPane: View {
                     .padding(.trailing, 8)
                 }
             }
-            .frame(height: 38)
+            .frame(height: 30)
             Divider()
             content
         }
@@ -324,9 +323,10 @@ private struct ObjectInfo: View {
     private var driverSchema: String? {
         guard let context else { return nil }
         switch context.kind {
-        case .postgresql: return object.schema
-        case .mysql, .mariadb: return context.name
+        case .postgresql, .sqlserver: return object.schema
+        case .mysql, .mariadb, .mongodb: return context.name
         case .sqlite: return nil
+        case .redis: return nil
         }
     }
 

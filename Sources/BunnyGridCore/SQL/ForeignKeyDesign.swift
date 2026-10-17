@@ -35,8 +35,10 @@ extension SQLDialect {
             ? ""
             : " (" + key.referencedColumns.map(quoteIdentifier).joined(separator: ", ") + ")"
         var sql = "\(constraint)FOREIGN KEY (\(columns)) REFERENCES \(parent)\(referenced)"
-        if key.onDelete.uppercased() != "NO ACTION" { sql += " ON DELETE \(key.onDelete.uppercased())" }
-        if key.onUpdate.uppercased() != "NO ACTION" { sql += " ON UPDATE \(key.onUpdate.uppercased())" }
+        // SQL Server has no RESTRICT; NO ACTION checks the same thing.
+        func action(_ text: String) -> String { kind == .sqlserver && text.uppercased() == "RESTRICT" ? "NO ACTION" : text.uppercased() }
+        if action(key.onDelete) != "NO ACTION" { sql += " ON DELETE \(action(key.onDelete))" }
+        if action(key.onUpdate) != "NO ACTION" { sql += " ON UPDATE \(action(key.onUpdate))" }
         return sql
     }
 
@@ -96,10 +98,13 @@ public struct SQLiteTableRebuild: Sendable {
     public var triggers: [String]
     /// Run `PRAGMA foreign_key_check` before committing, when the keys changed.
     public var checkForeignKeys: Bool
+    /// The table options to rebuild with; nil keeps the ones in `originalSQL`.
+    public var options: SQLiteTableOptions?
 
     public init(table: String, originalSQL: String?, originalColumns: [TableColumn], columns: [ColumnDesign],
                 originalIndexes: [TableIndex], indexes: [IndexDesign], foreignKeys: [TableForeignKey],
-                triggers: [String], checkForeignKeys: Bool) {
+                triggers: [String], checkForeignKeys: Bool, options: SQLiteTableOptions? = nil) {
+        self.options = options
         self.table = table
         self.originalSQL = originalSQL
         self.originalColumns = originalColumns
@@ -136,12 +141,11 @@ public struct SQLiteTableRebuild: Sendable {
     /// Constructs CREATE TABLE can hold that the designer would lose; the rebuild refuses them instead.
     static func unsupportedFeatures(in sql: String) -> [String] {
         // Blank out string literals and quoted names so a column called "check" doesn't count.
-        let bare = sql.replacing(/'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]/, with: "''").uppercased()
+        let bare = SQLiteTableOptions.removingPrimaryKeyConflict(sql).replacing(/'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]/, with: "''").uppercased()
         let checks: [(String, Regex<Substring>)] = [
             ("CHECK constraints", /\bCHECK\s*\(/),
             ("COLLATE", /\bCOLLATE\b/),
             ("generated columns", /\bGENERATED\b|\bAS\s*\(/),
-            ("WITHOUT ROWID", /\bWITHOUT\s+ROWID\b/),
             ("STRICT", /\)\s*STRICT\b|,\s*STRICT\b/),
             ("ON CONFLICT clauses", /\bON\s+CONFLICT\b/),
             ("DEFERRABLE keys", /\bDEFERRABLE\b/),
@@ -185,18 +189,11 @@ public struct SQLiteTableRebuild: Sendable {
         let quotedTable = d.quoteIdentifier(table)
         let temporary = d.quoteIdentifier(temporaryName)
 
-        // Columns, keeping AUTOINCREMENT on a single INTEGER primary key.
-        let keys = columns.filter(\.isPrimaryKey)
-        let autoincrement = (originalSQL?.uppercased().contains("AUTOINCREMENT") ?? false)
-            && keys.count == 1 && keys[0].type.trimmingCharacters(in: .whitespaces).uppercased() == "INTEGER"
-        var parts = columns.map { column in
-            autoincrement && column.isPrimaryKey
-                ? "  " + d.columnDefinition(column).replacingOccurrences(of: " NOT NULL", with: "") + " PRIMARY KEY AUTOINCREMENT"
-                : "  " + d.columnDefinition(column)
-        }
-        if !keys.isEmpty && !autoincrement {
-            parts.append("  PRIMARY KEY (\(keys.map { d.quoteIdentifier($0.name) }.joined(separator: ", ")))")
-        }
+        // Columns and key with the table options (AUTOINCREMENT, ON CONFLICT, WITHOUT ROWID), kept from the stored SQL by default.
+        let tableOptions = options ?? originalSQL.map(SQLiteTableOptions.init(sql:)) ?? SQLiteTableOptions()
+        try tableOptions.validate(columns)
+        let layout = tableOptions.tableParts(columns: columns, dialect: d)
+        var parts = layout.columns + (layout.primaryKey.map { [$0] } ?? [])
         // UNIQUE constraints come back as sqlite_autoindex_* indexes; they can't be created by name, so they stay constraints.
         let liveIndexes = indexes.compactMap { index -> IndexDesign? in
             guard !isPrimary(index) else { return nil }
@@ -218,7 +215,7 @@ public struct SQLiteTableRebuild: Sendable {
             Self.disableForeignKeys,
             // Keeps the RENAME below from rewriting other tables' REFERENCES, views and triggers: they name the old table, which is what we want.
             "PRAGMA legacy_alter_table = ON",
-            "CREATE TABLE \(temporary) (\n\(parts.joined(separator: ",\n"))\n)",
+            "CREATE TABLE \(temporary) (\n\(parts.joined(separator: ",\n"))\n)\(layout.suffix)",
         ]
         let copied = columns.filter { column in column.originalName.map { name in originalColumns.contains { $0.name == name } } ?? false }
         if !copied.isEmpty {

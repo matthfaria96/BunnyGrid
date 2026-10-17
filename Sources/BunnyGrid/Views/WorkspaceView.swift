@@ -14,7 +14,9 @@ struct WorkspaceView: View {
             }
             // Every tab stays alive so switching back keeps its scroll position, selection and editor state.
             // Hidden tabs are disabled so their keyboard shortcuts (⌘↩, ⌘R…) don't fire.
-            ZStack {
+            // In an overlay so a hidden tab's minimum width never widens the pane (the split view would otherwise
+            // take the space from the navigator and clip the visible tab).
+            Color.clear.overlay(alignment: .topLeading) { ZStack {
                 ObjectsView()
                     .opacity(app.selectedTabID == nil ? 1 : 0)
                     .allowsHitTesting(app.selectedTabID == nil)
@@ -27,8 +29,9 @@ struct WorkspaceView: View {
                         .disabled(!isActive)
                         .accessibilityHidden(!isActive)
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } }
+            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .clipped()
         }
     }
 }
@@ -42,6 +45,8 @@ private struct TabContent: View {
         case .query(let model): QueryTabView(model: model)
         case .design(let model): DesignTableView(model: model)
         case .model(let model): ModelTabView(model: model)
+        case .redis(let model): RedisTabView(model: model)
+        case .document(let tab): DocumentTabView(tab: tab)
         }
     }
 }
@@ -67,7 +72,7 @@ private struct TabBar: View {
                 }
             }
         }
-        .frame(height: 30)
+        .frame(height: 29)
         .background(Color.primary.opacity(0.07))
         .confirmationDialog(
             "Close “\(app.tabPendingClose?.title ?? "")” and discard its unsaved changes?",
@@ -93,13 +98,15 @@ private struct TabItem: View {
 
     var body: some View {
         HStack(spacing: 5) {
+            if !closable { Spacer(minLength: 0) }
             if let systemImage {
                 AppIcon(name: systemImage, size: 15)
             }
             Text(title)
                 .lineLimit(1)
-                .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(isSelected ? .primary : .secondary)
+            Spacer(minLength: 0)
             if closable {
                 Button(action: close) {
                     if hasUnsavedChanges && !isHovering {
@@ -111,12 +118,13 @@ private struct TabItem: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .frame(width: 12)
-                .opacity(isSelected || isHovering || hasUnsavedChanges ? 1 : 0)
+                .opacity(isHovering || hasUnsavedChanges ? 1 : 0)
+                .animation(.easeOut(duration: 0.12), value: isHovering)
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: 30)
-        .frame(maxWidth: 320)
+        .frame(height: 29)
+        .frame(width: closable ? 220 : 92)
         .background(isSelected ? Color(nsColor: .windowBackgroundColor) : (isHovering ? Color.primary.opacity(0.05) : .clear))
         .overlay(alignment: .trailing) { Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1) }
         .contentShape(Rectangle())

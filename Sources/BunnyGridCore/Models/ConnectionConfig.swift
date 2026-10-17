@@ -6,6 +6,9 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
     case postgresql
     case mysql
     case mariadb
+    case sqlserver
+    case redis
+    case mongodb
 
     public var id: String { rawValue }
 
@@ -15,6 +18,9 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .postgresql: "PostgreSQL"
         case .mysql: "MySQL"
         case .mariadb: "MariaDB"
+        case .sqlserver: "SQL Server"
+        case .redis: "Redis"
+        case .mongodb: "MongoDB"
         }
     }
 
@@ -23,14 +29,44 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .sqlite: nil
         case .postgresql: 5432
         case .mysql, .mariadb: 3306
+        case .sqlserver: 1433
+        case .redis: 6379
+        case .mongodb: 27017
         }
     }
 
     public var isFileBased: Bool { self == .sqlite }
 
-    /// Whether the engine exposes schemas inside a database (PostgreSQL)
+    /// Whether the engine exposes schemas inside a database (PostgreSQL, SQL Server)
     /// or treats databases as the namespace level (MySQL/MariaDB, SQLite).
-    public var hasSchemas: Bool { self == .postgresql }
+    public var hasSchemas: Bool { self == .postgresql || self == .sqlserver }
+
+    /// The schema unqualified names resolve to: `public` on PostgreSQL, `dbo` on SQL Server.
+    public var defaultSchema: String? {
+        switch self {
+        case .postgresql: "public"
+        case .sqlserver: "dbo"
+        default: nil
+        }
+    }
+
+    /// Engines that open one connection per database (the navigator's database nodes each get a driver).
+    public var connectsPerDatabase: Bool { self == .postgresql || self == .sqlserver }
+
+    /// The database a server-level connection attaches to when none is configured.
+    public var serverDatabase: String? {
+        switch self {
+        case .postgresql: "postgres"
+        case .sqlserver: "master"
+        default: nil
+        }
+    }
+
+    /// Key-value engines browse keys instead of tables (`KeyValueDatabaseDriver`).
+    public var isKeyValue: Bool { self == .redis }
+    /// Document stores (MongoDB): collections of documents instead of SQL tables; the driver also
+    /// implements `DocumentDatabaseDriver`.
+    public var isDocumentStore: Bool { self == .mongodb }
 }
 
 /// SSL modes, named after libpq's `sslmode` (MySQL's `ssl-mode` maps onto the same five).
@@ -186,6 +222,8 @@ public struct ConnectionConfig: Codable, Hashable, Identifiable, Sendable {
     public var ssh: SSHTunnelConfig?
     /// Unix domain socket (Advanced tab, "Use socket file"). When set, `host` and `port` are ignored.
     public var socketPath: String?
+    /// MongoDB: SRV, auth source and mechanism, replica set (nil for other engines).
+    public var mongo: MongoOptions?
 
     public init(
         id: UUID = UUID(),

@@ -38,6 +38,11 @@ struct FlowLayout: Layout {
     }
 }
 
+extension EnvironmentValues {
+    /// Tab toolbars drop their labels when they don't fit on one line, as Navicat's do; the title moves to the tooltip.
+    @Entry var toolbarIconsOnly = false
+}
+
 /// Small icon + label button used in tab toolbars ("Begin Transaction", "Filter & Sort").
 struct ToolbarChip: View {
     let title: String
@@ -54,6 +59,7 @@ struct ToolbarChip: View {
     var action: () -> Void = {}
     @State private var isHovering = false
     @State private var showingSoon = false
+    @Environment(\.toolbarIconsOnly) private var iconsOnly
 
     var body: some View {
         Button {
@@ -68,15 +74,17 @@ struct ToolbarChip: View {
                         .foregroundStyle(isEnabled ? tint : .secondary)
                         .frame(width: 16)
                 }
-                Text(title)
-                    .foregroundStyle(isEnabled ? .primary : .secondary)
+                if !iconsOnly {
+                    Text(title)
+                        .foregroundStyle(isEnabled ? .primary : .secondary)
+                }
                 if showsMenuIndicator {
                     Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
                 }
             }
             .font(.system(size: 12.5))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 3)
+            .padding(.horizontal, iconsOnly ? 6 : 5)
+            .padding(.vertical, iconsOnly ? 5 : 3)
             .background(RoundedRectangle(cornerRadius: 5).fill(
                 isOn ? Color.accentColor.opacity(0.16) : (isHovering && isEnabled ? Color.primary.opacity(0.07) : .clear)))
             .contentShape(Rectangle())
@@ -86,6 +94,16 @@ struct ToolbarChip: View {
         .onHover { isHovering = $0 }
         .help(help ?? title)
         .popover(isPresented: $showingSoon, arrowEdge: .bottom) { ComingSoonNote(title: title, detail: comingSoon ?? "") }
+    }
+}
+
+/// Thin vertical rule between groups of a tab toolbar, as in Navicat.
+struct ToolbarGroupSeparator: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.15))
+            .frame(width: 1, height: 18)
+            .padding(.horizontal, 3)
     }
 }
 

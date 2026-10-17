@@ -15,7 +15,7 @@ public enum ConnectionURI {
         public var errorDescription: String? {
             switch self {
             case .invalid: "That doesn't look like a connection URI."
-            case .unsupportedScheme(let scheme): "“\(scheme)” connections aren't supported yet. Use postgresql://, mysql://, mariadb:// or sqlite://."
+            case .unsupportedScheme(let scheme): "“\(scheme)” connections aren't supported yet. Use postgresql://, mysql://, mariadb://, sqlserver://, mongodb:// or sqlite://."
             }
         }
     }
@@ -24,6 +24,7 @@ public enum ConnectionURI {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let schemeEnd = trimmed.range(of: "://") else { throw ParseError.invalid }
         let scheme = trimmed[..<schemeEnd.lowerBound].lowercased()
+        if scheme == "mongodb" || scheme == "mongodb+srv" { return try MongoConnectionString.parse(trimmed) }
 
         let kind: DatabaseKind
         switch scheme {
@@ -31,6 +32,8 @@ public enum ConnectionURI {
         case "mysql", "mysqlx": kind = .mysql
         case "mariadb": kind = .mariadb
         case "sqlite", "file": kind = .sqlite
+        case "sqlserver", "mssql": kind = .sqlserver
+        case "redis", "rediss": kind = .redis
         default: throw ParseError.unsupportedScheme(scheme)
         }
 
@@ -63,7 +66,7 @@ public enum ConnectionURI {
             port: components.port,
             username: components.user?.removingPercentEncoding ?? "",
             database: database.removingPercentEncoding ?? database,
-            tls: tlsMode(query["sslmode"] ?? query["ssl-mode"] ?? query["ssl"] ?? "")
+            tls: tlsMode(query["sslmode"] ?? query["ssl-mode"] ?? query["ssl"] ?? query["encrypt"] ?? "")
         )
         let files = SSLFiles(
             caCertificatePath: query["sslrootcert"] ?? query["ssl-ca"] ?? query["sslca"] ?? "",
@@ -72,14 +75,20 @@ public enum ConnectionURI {
         )
         if !files.isEmpty { config.ssl = files }
         config.socketPath = socketPath
+        if kind == .redis {
+            // rediss:// is Redis over TLS; the path is the database index.
+            config.tls = scheme == "rediss" ? .require : (query["ssl"].map(tlsMode) ?? .disable)
+            if let db = query["db"], !db.isEmpty { config.database = db }
+        }
         return Parsed(config: config, password: components.password?.removingPercentEncoding)
     }
 
     /// libpq `sslmode` and MySQL `ssl-mode` values (and the `ssl=true/false` shorthand).
     static func tlsMode(_ value: String) -> TLSMode {
         switch value.lowercased() {
-        case "disable", "disabled", "false", "0": .disable
-        case "require", "required", "true", "1": .require
+        case "disable", "disabled", "false", "0", "no": .disable
+        case "require", "required", "true", "1", "yes", "mandatory": .require
+        case "strict": .verifyFull
         case "verify-ca", "verify_ca": .verifyCA
         case "verify-full", "verify_full", "verify_identity", "verify-identity": .verifyFull
         default: .prefer
@@ -89,12 +98,22 @@ public enum ConnectionURI {
     /// The connection as a URI (without the password unless one is given), for the URI button.
     /// SSH settings have no URI form and are left out.
     public static func string(for config: ConnectionConfig, password: String? = nil) -> String {
+        if config.kind == .mongodb { return MongoConnectionString.string(for: config, password: password) }
         if config.kind == .sqlite {
             return "sqlite://" + (config.filePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? config.filePath)
         }
         let postgres = config.kind == .postgresql
         var components = URLComponents()
         components.scheme = postgres ? "postgresql" : config.kind.rawValue
+        if config.kind == .redis {
+            components.scheme = config.tls.isEnforced ? "rediss" : "redis"
+            components.host = config.host
+            components.port = config.port
+            if !config.username.isEmpty { components.user = config.username }
+            if let password, !password.isEmpty { components.password = password }
+            components.path = config.database.isEmpty ? "" : "/" + config.database
+            return components.string ?? ""
+        }
         components.host = config.host
         components.port = config.port
         if !config.username.isEmpty { components.user = config.username }

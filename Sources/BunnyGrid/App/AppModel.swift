@@ -64,8 +64,13 @@ final class AppModel {
     var exportTarget: ExportTarget?
     /// Database the Execute SQL File sheet runs against.
     var sqlFileTarget: SQLFileTarget?
+    /// Data Transfer / Data Synchronization / Structure Synchronization sheet.
+    var syncWizard: SyncWizardRequest?
     /// Server whose User manager sheet is open.
     var usersSession: Session?
+    /// Redis New Key sheet and key deletion waiting for confirmation (Redis/RedisNavigator.swift).
+    var redisNewKey: RedisNewKeyTarget?
+    var redisPendingDelete: RedisPendingDelete?
 
     // Navigator
     var navSelection: NavNode?
@@ -91,6 +96,8 @@ final class AppModel {
 
     let assistant: AssistantModel
     let profile = ProfileModel(directory: AppModel.dataDirectory)
+    /// Batch jobs, schedules and backups (AutomationCenter.swift).
+    let automation = AutomationCenter(dataDirectory: AppModel.dataDirectory)
 
     @ObservationIgnored private let store: ConnectionStore
     @ObservationIgnored private let historyStore: QueryHistoryStore
@@ -127,6 +134,7 @@ final class AppModel {
         Benchmarks.app = self
         #endif
         openLaunchArguments()
+        runRedisLaunchFlags()
         // Plain launches restore the last session (Options › Tabs / Auto Recovery); launches with files or flags don't.
         if CommandLine.arguments.dropFirst().allSatisfy({ $0.hasPrefix("-NS") || $0.hasPrefix("-Apple") }) {
             restoreWorkspaceIfNeeded()
@@ -338,7 +346,7 @@ final class AppModel {
             if config.kind == .sqlite || !config.database.isEmpty {
                 let db = config.kind == .sqlite ? "main" : config.database
                 expanded.insert(.database(id, db))
-                if config.kind == .postgresql { expanded.insert(.schema(id, db, "public")) }
+                if let schema = config.kind.defaultSchema { expanded.insert(.schema(id, db, schema)) }
             }
         }
         return session
@@ -358,6 +366,8 @@ final class AppModel {
         switch node {
         case .connection(let id):
             connect(id)
+        case .database(let id, let db) where sessions[id]?.redis != nil:
+            if let index = RedisBrowserModel.index(of: db) { sessions[id]?.redis?.open(index) }
         case .database(let id, let db):
             sessions[id]?.openDatabase(db)
         case .schema(let id, let db, let schema):
@@ -380,6 +390,8 @@ final class AppModel {
         case .object(let id, let db, let object):
             guard object.kind != .routine, let context = sessions[id]?.context(db) else { return }
             openTable(object, in: context)
+        case .redisFolder, .redisKey, .redisMore:
+            activateRedis(node)
         case .savedQuery(let id, let db, let queryID):
             guard let context = sessions[id]?.context(db), let saved = savedQueries.first(where: { $0.id == queryID }) else { return }
             openSavedQuery(saved, in: context)
@@ -436,6 +448,7 @@ final class AppModel {
     // MARK: - Tabs
 
     func openTable(_ object: DatabaseObject, in context: DatabaseContext) {
+        if context.kind.isDocumentStore { return openCollection(object, in: context) }
         // Options › Tabs › "Allow opening multiple forms for same object".
         if !AppOptions.shared.values.allowMultipleForms, let existing = tabs.first(where: {
             if case .table(let model) = $0 {
@@ -457,6 +470,7 @@ final class AppModel {
             alertMessage = "Open a connection and a database first."
             return
         }
+        if context.kind.isDocumentStore { return openMongoShell(text: text, in: context) }
         queryCounter += 1
         let tab = WorkspaceTab.query(QueryTabModel(title: "Query \(queryCounter)", text: text, context: context))
         tabs.append(tab)
@@ -511,6 +525,12 @@ final class AppModel {
         selectedTabID = tab.id
     }
 
+    /// Adds and selects a tab (for tab kinds opened from extensions, e.g. MongoDB's).
+    func appendTab(_ tab: WorkspaceTab) {
+        tabs.append(tab)
+        selectedTabID = tab.id
+    }
+
     // MARK: - Save (⌘S)
 
     /// Saves whatever the selected tab holds: grid edits, the query, or the table design.
@@ -529,6 +549,10 @@ final class AppModel {
             }
         case .model(let model):
             model.savePositions()
+        case .redis(let model):
+            if case .key(let key) = model.content, key.hasUnsavedText { Task { await key.saveText() } }
+        case .document(let tab):
+            tab.save()
         case nil:
             break
         }
@@ -540,6 +564,8 @@ final class AppModel {
         case .query(let model): !model.isEmpty
         case .design(let model): model.hasChanges
         case .model: false
+        case .redis(let model): model.hasUnsavedChanges
+        case .document(let tab): tab.canSave
         case nil: false
         }
     }
@@ -761,7 +787,7 @@ final class AppModel {
             case "--open-table" where !arguments.isEmpty: tableName = arguments.removeFirst()
             case "--query" where !arguments.isEmpty: query = arguments.removeFirst()
             // Their file arguments are not databases to open (handled after connecting / by the Import Wizard).
-            case "--execute-sql" where !arguments.isEmpty: arguments.removeFirst()
+            case "--execute-sql" where !arguments.isEmpty, "--sync-target" where !arguments.isEmpty: arguments.removeFirst()
             // Benchmark options (Benchmarks.swift) take values that may be file paths.
             case "--bench", "--bench-script", "--bench-table", "--bench-rows":
                 if !arguments.isEmpty { arguments.removeFirst() }
@@ -825,6 +851,9 @@ final class AppModel {
             }
         }
         #endif
+        #if DEBUG
+        runSyncDebugFlags(opened: opened)
+        #endif
         if CommandLine.arguments.contains("--open-model"), let id = opened {
             Task {
                 while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
@@ -841,6 +870,14 @@ final class AppModel {
                    let category = ObjectCategory.allCases.first(where: { $0.rawValue.lowercased() == CommandLine.arguments[index + 1] }) {
                     showCategory(category)
                 }
+            }
+        }
+        #endif
+        #if DEBUG
+        if let id = opened, CommandLine.arguments.contains(where: { $0 == "--open-collection" || $0 == "--mongo-shell" }) {
+            Task {
+                while sessions[id]?.contexts.values.first(where: \.isOpen) == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                if let context = sessions[id]?.contexts.values.first(where: \.isOpen) { openMongoLaunchArguments(context: context) }
             }
         }
         #endif

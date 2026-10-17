@@ -251,7 +251,8 @@ private final class ClosureMenuItem: NSMenuItem, NSMenuItemValidation {
 
 @MainActor
 enum SQLHighlighter {
-    static let defaultFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    /// Navicat's default editor font (Options › Editor shows it as "Menlo-Regular 11.0").
+    static let defaultFont = NSFont(name: "Menlo-Regular", size: 11) ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
 
     static var font: NSFont { AppOptions.shared.values.editorFont?.nsFont ?? defaultFont }
 
@@ -288,13 +289,18 @@ enum SQLHighlighter {
         let limit = max(options.disableHighlightAboveMB, 1) * 1_000_000
         guard options.useSyntaxHighlighting, storage.length * 2 <= limit, range.length > 0 else { return }
         let palette: [SQLTokenKind: NSColor] = [
-            .keyword: NSColor(hex: colors.keyword) ?? .systemPink,
+            .keyword: NSColor(hex: colors.keyword) ?? .navicatKeyword,
             .number: NSColor(hex: colors.number) ?? .systemBlue,
-            .string: NSColor(hex: colors.string) ?? .systemRed,
+            .string: NSColor(hex: colors.string) ?? .navicatString,
             .comment: NSColor(hex: colors.comment) ?? .secondaryLabelColor,
         ]
+        // Keywords are bold, as in Navicat; everything else uses the plain editor font.
+        let font = options.editorFont?.nsFont ?? defaultFont
+        let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        storage.addAttribute(.font, value: font, range: range)
         for token in highlighter.tokens(in: range, of: storage.string as NSString) {
             storage.addAttribute(.foregroundColor, value: palette[token.kind]!, range: token.range)
+            if token.kind == .keyword { storage.addAttribute(.font, value: bold, range: token.range) }
         }
     }
 }
