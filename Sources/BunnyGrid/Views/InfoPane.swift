@@ -31,9 +31,6 @@ struct RightPane: View {
                         tab(pane)
                     }
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .glassBackground(in: Capsule(), interactive: true)
                 HStack {
                     Spacer()
                     IconButton(systemImage: app.assistant.isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
@@ -43,7 +40,7 @@ struct RightPane: View {
                     .padding(.trailing, 8)
                 }
             }
-            .frame(height: 38)
+            .frame(height: 30)
             Divider()
             content
         }

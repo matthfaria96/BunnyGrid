@@ -200,9 +200,9 @@ enum SQLSyntax {
         var result = AttributedString(sql)
         let ns = sql as NSString
         let rules: [(String, NSRegularExpression.Options, Color)] = [
-            ("\\b(" + SQLKeywords.all.joined(separator: "|") + ")\\b", .caseInsensitive, Color(nsColor: .systemPink)),
+            ("\\b(" + SQLKeywords.all.joined(separator: "|") + ")\\b", .caseInsensitive, Color(nsColor: .navicatKeyword)),
             ("\\b\\d+(\\.\\d+)?\\b", [], Color(nsColor: .systemBlue)),
-            ("'(?:[^']|'')*'?", [], Color(nsColor: .systemRed)),
+            ("'(?:[^']|'')*'?", [], Color(nsColor: .navicatString)),
             ("--[^\\n]*", [], .secondary),
         ]
         for (pattern, options, color) in rules {
