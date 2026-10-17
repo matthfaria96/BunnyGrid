@@ -69,9 +69,29 @@ struct TableTabView: View {
 
     // MARK: Toolbar
 
+    /// One line, like Navicat: labelled buttons when they fit, otherwise icons only (titles in the tooltips).
     private var toolbar: some View {
-        HStack(alignment: .top, spacing: 8) {
-            FlowLayout(spacing: 12, lineSpacing: 4) {
+        HStack(alignment: .center, spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { toolbarItems }
+                    .fixedSize()
+                HStack(spacing: 4) { toolbarItems }
+                    .environment(\.toolbarIconsOnly, true)
+                    .fixedSize()
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) { toolbarItems }
+                        .environment(\.toolbarIconsOnly, true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            moreButtons
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 36)
+    }
+
+    @ViewBuilder
+    private var toolbarItems: some View {
                 TableProfileMenu(model: model, namingProfile: $namingProfile)
                 if model.isInTransaction {
                     ToolbarChip(title: "Commit", systemImage: "checkmark.seal.fill", tint: .green, help: "Apply pending edits and commit the transaction", icon: "tb-commit") {
@@ -129,9 +149,9 @@ struct TableTabView: View {
                 .popover(isPresented: $showingMasking, arrowEdge: .bottom) { DataMaskingPopover(model: model) }
                 ToolbarChip(title: "Create BI Workspace", systemImage: "chart.pie", tint: .pink,
                             comingSoon: "Turn this table into charts and dashboards.", icon: "tb-bi-workspace")
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
+    private var moreButtons: some View {
             HStack(spacing: 2) {
                 Menu {
                     Button("Refresh") { model.requestReload() }.disabled(model.hasChanges)
@@ -159,13 +179,12 @@ struct TableTabView: View {
                 IconButton(systemImage: "arrow.up.left.and.arrow.down.right", help: "Focus on this tab (hide side panes)",
                            isOn: !app.showNavigator && !app.showAssistant) {
                     let focused = !app.showNavigator && !app.showAssistant
-                    app.showNavigator = focused
-                    app.showAssistant = focused
+                    withAnimation(.smooth(duration: 0.25)) {
+                        app.showNavigator = focused
+                        app.showAssistant = focused
+                    }
                 }
             }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
     }
 
     // MARK: Data
@@ -224,6 +243,7 @@ private struct TableProfileMenu: View {
     let model: TableTabModel
     @Binding var namingProfile: Bool
     @State private var isHovering = false
+    @Environment(\.toolbarIconsOnly) private var iconsOnly
 
     var body: some View {
         let profiles = app.profiles(for: model)
@@ -256,7 +276,7 @@ private struct TableProfileMenu: View {
         } label: {
             HStack(spacing: 4) {
                 AppIcon(name: "tb-table-profile", size: 17)
-                Text("Table Profile")
+                if !iconsOnly { Text("Table Profile") }
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
             }
             .font(.system(size: 12.5))
@@ -290,6 +310,7 @@ private struct GridFooter: View {
     @State private var pageText = "1"
     @State private var showingPageSize = false
     @State private var showingFind = false
+    @State private var showingSQL = false
 
     var body: some View {
         HStack(spacing: 2) {
@@ -297,14 +318,12 @@ private struct GridFooter: View {
             IconButton(systemImage: "minus", help: "Delete Selected Records (⌫)", isEnabled: model.isEditable && !model.selectedRows.isEmpty) {
                 model.toggleDelete(model.selectedRows)
             }
-            IconButton(systemImage: "plus.square.on.square", help: "Duplicate Selected Records (generated keys are left to the database)",
-                       isEnabled: model.isEditable && !model.selectedRows.isEmpty) {
-                model.duplicateRows(model.selectedRows)
-            }
+            Spacer().frame(width: 8)
             IconButton(systemImage: "checkmark", help: "Apply Changes (⌘S)", tint: .green, isEnabled: model.hasChanges && !model.isSaving) {
                 Task { await model.applyChanges() }
             }
             IconButton(systemImage: "xmark", help: "Discard Changes", tint: .red, isEnabled: model.hasChanges) { model.discardChanges() }
+            Spacer().frame(width: 8)
             IconButton(systemImage: "arrow.clockwise", help: "Refresh (⌘R)", isEnabled: !model.hasChanges) { model.requestReload() }
             IconButton(systemImage: "stop.fill", help: "Stop", isEnabled: model.isLoading) { model.stopLoading() }
 
@@ -328,32 +347,53 @@ private struct GridFooter: View {
                 Label(reason, systemImage: "lock.fill").font(.system(size: 11)).foregroundStyle(.secondary)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
+            // The statement that loaded this page, truncated in the middle like Navicat's footer; click for all of it.
+            if !model.hasChanges, !model.lastSQL.isEmpty {
+                Button { showingSQL = true } label: {
+                    Text(model.lastSQL)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 260)
+                }
+                .buttonStyle(.plain)
+                .help(model.lastSQL)
+                .popover(isPresented: $showingSQL, arrowEdge: .top) { SQLPreview(sql: model.lastSQL) }
+                .layoutPriority(-1)
+            }
+            Spacer(minLength: 8)
 
-            IconButton(systemImage: "backward.end.fill", help: "First Page", isEnabled: model.canGoBack) { Task { await model.goToPage(1) } }
-            IconButton(systemImage: "arrowtriangle.left.fill", help: "Previous Page", isEnabled: model.canGoBack) { Task { await model.previousPage() } }
+            IconButton(systemImage: "arrow.left.to.line", help: "First Page", isEnabled: model.canGoBack) { Task { await model.goToPage(1) } }
+            IconButton(systemImage: "arrow.left", help: "Previous Page", isEnabled: model.canGoBack) { Task { await model.previousPage() } }
             TextField("", text: $pageText)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11))
-                .multilineTextAlignment(.center)
-                .frame(width: 38)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .padding(.horizontal, 6)
+                .frame(width: 46, height: 20)
+                .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
                 .onSubmit { Task { await model.goToPage(Int(pageText) ?? 1) } }
                 .disabled(model.hasChanges)
                 .help("Page")
-            IconButton(systemImage: "arrowtriangle.right.fill", help: "Next Page", isEnabled: model.canGoForward) { Task { await model.nextPage() } }
-            IconButton(systemImage: "forward.end.fill", help: "Last Page", isEnabled: model.canGoForward && model.totalRows != nil) {
+            IconButton(systemImage: "arrow.right", help: "Next Page", isEnabled: model.canGoForward) { Task { await model.nextPage() } }
+            IconButton(systemImage: "arrow.right.to.line", help: "Last Page", isEnabled: model.canGoForward && model.totalRows != nil) {
                 if let total = model.totalRows { Task { await model.goToPage((total + model.pageSize - 1) / model.pageSize) } }
             }
             IconButton(systemImage: "gearshape", help: "Records per page") { showingPageSize = true }
                 .popover(isPresented: $showingPageSize, arrowEdge: .top) { PageSizePopover(model: model) }
-            Divider().frame(height: 14).padding(.horizontal, 4)
-            IconButton(systemImage: "plus.magnifyingglass", help: "Find in Grid") { showingFind = true }
+            // Find in Grid has no footer button in Navicat; ⌘F opens it here.
+            Button("") { showingFind = true }
+                .keyboardShortcut("f")
+                .frame(width: 0, height: 0)
+                .opacity(0)
                 .popover(isPresented: $showingFind, arrowEdge: .top) { FindPopover(model: model) }
+                .accessibilityHidden(true)
+            Spacer().frame(width: 8)
             IconButton(systemImage: "tablecells", help: "Grid View", isOn: model.viewMode == .grid) { model.viewMode = .grid }
             IconButton(systemImage: "list.bullet.rectangle", help: "Form View", isOn: model.viewMode == .form) { model.viewMode = .form }
         }
-        .padding(.horizontal, 6)
-        .frame(height: 28)
+        .padding(.horizontal, 8)
+        .frame(height: 30)
         .onChange(of: model.pageNumber, initial: true) { _, page in pageText = String(page) }
     }
 }

@@ -88,6 +88,8 @@ final class QueryTabModel: Identifiable {
     private(set) var executions: [StatementExecution] = []
     private(set) var runStarted: Date?
     private(set) var runEnded: Date?
+    /// Result tabs kept across runs.
+    var pinnedResultIDs: Set<UUID> = []
     var resultPane: QueryResultPane = .message
     var showResultPanel = false
     /// Navicat's "Show Result Below Editor" / "Show Result Next to Editor".
@@ -217,7 +219,8 @@ final class QueryTabModel: Identifiable {
             }
             let clock = ContinuousClock()
             let start = clock.now
-            results = []
+            // Pinned results stay as tabs when the editor runs again (Navicat's Pin Result).
+            results = results.filter { pinnedResultIDs.contains($0.id) }
             plans = [:]
             var driver: (any DatabaseDriver)?
             do {

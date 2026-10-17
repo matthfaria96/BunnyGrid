@@ -74,11 +74,13 @@ struct QueryTabView: View {
 
     private var toolRow: some View {
         HStack(spacing: 2) {
-            ToolIconButton(systemImage: "square.and.arrow.down", help: "Save (⌘S)") { app.saveQuery(model) }
+            ToolIconButton(systemImage: "square.and.arrow.down", help: "Save (⌘S)", tint: .secondary) { app.saveQuery(model) }
             Divider().frame(height: 16).padding(.horizontal, 6)
-            ToolIconButton(systemImage: "text.alignleft", help: "Beautify SQL (⌘⇧B)") { model.beautify() }
+            ToolIconButton(systemImage: "hammer", help: "Query Builder (coming soon)") {}
+                .disabled(true)
+            ToolIconButton(systemImage: "wand.and.stars", help: "Beautify SQL (⌘⇧B)") { model.beautify() }
                 .disabled(model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            ToolIconButton(systemImage: "curlybraces", help: "Code Snippet") {
+            ToolIconButton(systemImage: "parentheses", help: "Code Snippet") {
                 app.showAssistant = true
                 app.rightPane = .snippets
             }
@@ -87,21 +89,21 @@ struct QueryTabView: View {
                     .padding(.leading, 4)
             }
             Spacer()
-            ToolIconButton(systemImage: "rectangle.split.1x2", help: "Show Result Below Editor", isOn: model.showResultPanel && !model.resultsBesideEditor) {
+            ToolIconButton(systemImage: "rectangle.split.1x2", help: "Show Result Below Editor", isToggle: true, isOn: model.showResultPanel && !model.resultsBesideEditor) {
                 model.resultsBesideEditor = false
                 model.showResultPanel = true
             }
-            ToolIconButton(systemImage: "rectangle.split.2x1", help: "Show Result Next to Editor", isOn: model.showResultPanel && model.resultsBesideEditor) {
+            ToolIconButton(systemImage: "rectangle.split.2x1", help: "Show Result Next to Editor", isToggle: true, isOn: model.showResultPanel && model.resultsBesideEditor) {
                 model.resultsBesideEditor = true
                 model.showResultPanel = true
             }
             Divider().frame(height: 16).padding(.horizontal, 6)
-            ToolIconButton(systemImage: "arrow.up.left.and.arrow.down.right", help: "Enter Focus Mode", isOn: app.isFocusMode) {
+            ToolIconButton(systemImage: "viewfinder", help: "Enter Focus Mode", isOn: app.isFocusMode) {
                 app.toggleFocusMode()
             }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 34)
+        .padding(.horizontal, 12)
+        .frame(height: 38)
     }
 
     private var runRow: some View {
@@ -135,13 +137,13 @@ struct QueryTabView: View {
                     }
                 }
             }
-            ToolIconButton(systemImage: "stop.fill", help: "Stop (⌘.): cancels the statement on the server", tint: .red) { model.cancel() }
+            ToolIconButton(systemImage: "stop", help: "Stop (⌘.): cancels the statement on the server", tint: .red) { model.cancel() }
                 .disabled(!model.isRunning)
-            ToolIconButton(systemImage: "list.bullet.indent", help: "Explain: the plan of the selected statement, or of the one under the cursor") { model.explain() }
+            ToolIconButton(systemImage: "flowchart", help: "Explain: the plan of the selected statement, or of the one under the cursor") { model.explain() }
                 .disabled(model.isRunning || model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 12)
+        .frame(height: 38)
         .keyboardShortcut("y", modifiers: [.command, .shift])
         .background { hiddenShortcuts }
     }
@@ -152,6 +154,8 @@ struct ToolIconButton: View {
     let systemImage: String
     let help: String
     var tint: Color = .accentColor
+    /// Layout toggles are tinted only while on, like Navicat's result-position buttons.
+    var isToggle = false
     var isOn = false
     let action: () -> Void
     @Environment(\.isEnabled) private var isEnabled
@@ -161,9 +165,9 @@ struct ToolIconButton: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(isEnabled ? (isOn ? tint : tint.opacity(0.9)) : Color.secondary.opacity(0.5))
-                .frame(width: 28, height: 24)
-                .background(RoundedRectangle(cornerRadius: 6).fill(isOn ? tint.opacity(0.16) : (isHovering ? Color.primary.opacity(0.07) : .clear)))
+                .foregroundStyle(isEnabled ? (isOn || !isToggle ? tint : Color.primary.opacity(0.8)) : Color.secondary.opacity(0.5))
+                .frame(width: 30, height: 24)
+                .background(RoundedRectangle(cornerRadius: 6).fill(isHovering && isEnabled ? Color.primary.opacity(0.07) : .clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -201,9 +205,11 @@ private struct ConnectionPicker: View {
                 if let current, let icon = IconLibrary.image(current.kind.iconName, size: 14) { Image(nsImage: icon) }
             }
             .labelStyle(.titleAndIcon)
-            .frame(width: 150, alignment: .leading)
+            .popupFieldLabel()
         }
         .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
         .disabled(model.isRunning)
     }
@@ -231,9 +237,11 @@ private struct DatabasePicker: View {
                 if let icon = IconLibrary.image("database-open", size: 14) { Image(nsImage: icon) }
             }
             .labelStyle(.titleAndIcon)
-            .frame(width: 150, alignment: .leading)
+            .popupFieldLabel()
         }
         .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
         .disabled(model.isRunning || session == nil)
     }
@@ -253,13 +261,13 @@ private struct QueryResultPanel: View {
                     tab("Message", .message)
                     tab("Summary", .summary)
                     ForEach(Array(model.resultSets.enumerated()), id: \.element.id) { index, result in
-                        tab(model.plan(for: result) != nil ? "Explain" : "Result \(index + 1)", .result(result.id))
+                        tab((model.pinnedResultIDs.contains(result.id) ? "📌 " : "") + (model.plan(for: result) != nil ? "Explain" : "Result \(index + 1)"), .result(result.id))
                             .help(result.statement)
                     }
                 }
                 HStack {
                     Spacer()
-                    ToolIconButton(systemImage: "chevron.up", help: "Maximize Panel") {
+                    ToolIconButton(systemImage: "chevron.up", help: "Maximize Panel", tint: .secondary) {
                         model.resultsBesideEditor = false
                         app.toggleFocusMode()
                     }
@@ -425,9 +433,11 @@ private struct SummaryPane: View {
 private struct ResultSetPane: View {
     private enum SubTab { case plan, data, info }
 
-    let model: QueryTabModel
+    @Bindable var model: QueryTabModel
     let result: QueryResult
     @State private var chosenTab: SubTab?
+    @State private var formView = false
+    @State private var focusedRow = 0
 
     private var plan: [QueryPlanNode]? { model.plan(for: result) }
     private var subTab: SubTab { chosenTab ?? (plan != nil ? .plan : .data) }
@@ -439,12 +449,26 @@ private struct ResultSetPane: View {
                 subTabButton("Data", .data)
                 subTabButton("Info", .info)
                 Spacer()
-                ExportMenu(columns: result.columns, rows: result.rows, suggestedName: model.title)
-                    .buttonStyle(.borderless)
-                    .help(result.isTruncated ? "Export the rows fetched so far" : "Export Result")
+                if subTab == .data {
+                    ToolIconButton(systemImage: "square.and.pencil", help: "Edit Result: query results are read-only; open the table to edit") {}
+                        .disabled(true)
+                    Divider().frame(height: 16).padding(.horizontal, 4)
+                    ToolIconButton(systemImage: "chart.bar.xaxis", help: "Data Profiling: available on table tabs") {}
+                        .disabled(true)
+                    ExportMenu(columns: result.columns, rows: result.rows, suggestedName: model.title)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.orange)
+                        .frame(width: 30)
+                        .help(result.isTruncated ? "Export the rows fetched so far" : "Export Result")
+                    Divider().frame(height: 16).padding(.horizontal, 4)
+                }
+                let pinned = model.pinnedResultIDs.contains(result.id)
+                ToolIconButton(systemImage: pinned ? "pin.fill" : "pin", help: pinned ? "Unpin Result" : "Pin Result: keep this tab when the query runs again") {
+                    if pinned { model.pinnedResultIDs.remove(result.id) } else { model.pinnedResultIDs.insert(result.id) }
+                }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 30)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
             Divider()
             switch subTab {
             case .info:
@@ -452,7 +476,13 @@ private struct ResultSetPane: View {
             case .plan:
                 QueryPlanView(nodes: plan ?? [])
             case .data:
-                ResultGridView(columns: result.columns, rows: result.rows)
+                if formView {
+                    QueryResultForm(result: result, row: $focusedRow)
+                } else {
+                    ResultGridView(columns: result.columns, rows: result.rows, onFocusChange: { cell in
+                        if let cell { focusedRow = cell.row }
+                    })
+                }
                 Divider()
                 footer
             }
@@ -462,6 +492,14 @@ private struct ResultSetPane: View {
     /// The statement, and for a result cut at the row limit: how many rows came, Load More and Fetch All.
     private var footer: some View {
         HStack(spacing: 10) {
+            // Record buttons as in Navicat; a query result is read-only, so they stay disabled.
+            HStack(spacing: 4) {
+                ForEach(["plus", "minus", "checkmark", "xmark"], id: \.self) { symbol in
+                    Image(systemName: symbol).font(.system(size: 12, weight: .medium)).frame(width: 22)
+                }
+            }
+            .foregroundStyle(.tertiary)
+            .help("Query results are read-only")
             if result.isTruncated {
                 Text("First \(result.rows.count.formatted()) rows")
                     .foregroundStyle(.secondary)
@@ -476,14 +514,19 @@ private struct ResultSetPane: View {
             Text(result.statement.replacingOccurrences(of: "\n", with: " "))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .foregroundStyle(.secondary)
+                .frame(maxWidth: 160, alignment: .leading)
                 .frame(maxWidth: .infinity)
+            HStack(spacing: 2) {
+                ToolIconButton(systemImage: "tablecells", help: "Grid View", isToggle: true, isOn: !formView) { formView = false }
+                ToolIconButton(systemImage: "list.bullet.rectangle", help: "Form View", isToggle: true, isOn: formView) { formView = true }
+            }
+            .buttonStyle(.plain)
         }
         .buttonStyle(.link)
         .disabled(model.isRunning)
         .font(.system(size: 11.5))
         .padding(.horizontal, 10)
-        .frame(height: 26)
+        .frame(height: 28)
     }
 
     private func subTabButton(_ title: String, _ tab: SubTab) -> some View {
@@ -673,6 +716,68 @@ private struct HistoryRow: View {
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)
+        .contentShape(Rectangle())
+    }
+}
+
+/// Form View of a query result: one record, field by field, read-only.
+private struct QueryResultForm: View {
+    let result: QueryResult
+    @Binding var row: Int
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if result.rows.indices.contains(row) {
+                ScrollView {
+                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 8) {
+                        ForEach(Array(result.columns.enumerated()), id: \.offset) { index, column in
+                            GridRow {
+                                Text(column).font(.system(size: 12, weight: .semibold)).gridColumnAlignment(.trailing)
+                                let value = result.rows[row][index]
+                                Text(value.isNull ? "(Null)" : value.displayString)
+                                    .foregroundStyle(value.isNull ? .secondary : .primary)
+                                    .textSelection(.enabled)
+                                    .lineLimit(4)
+                                    .frame(maxWidth: 420, alignment: .leading)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.06)))
+                            }
+                        }
+                    }
+                    .font(.system(size: 12))
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Text("No record").foregroundStyle(.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            Divider()
+            HStack {
+                Button { row = max(0, row - 1) } label: { Image(systemName: "chevron.up") }.disabled(row <= 0)
+                Button { row = min(result.rows.count - 1, row + 1) } label: { Image(systemName: "chevron.down") }.disabled(row >= result.rows.count - 1)
+                Text("Record \(min(row + 1, result.rows.count)) of \(result.rows.count)").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .buttonStyle(.borderless)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+        }
+    }
+}
+
+extension View {
+    /// Navicat's connection / database popups: a filled rounded field, 160 wide, with ⇕ at the end.
+    func popupFieldLabel(width: CGFloat = 160) -> some View {
+        HStack(spacing: 4) {
+            self.frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+        }
+        .font(.system(size: 13))
+        .padding(.leading, 6)
+        .padding(.trailing, 8)
+        .frame(width: width, height: 24)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)))
         .contentShape(Rectangle())
     }
 }

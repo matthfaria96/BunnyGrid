@@ -222,7 +222,8 @@ private final class ClosureMenuItem: NSMenuItem, NSMenuItemValidation {
 
 @MainActor
 enum SQLHighlighter {
-    static let defaultFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    /// Navicat's default editor font (Options › Editor shows it as "Menlo-Regular 11.0").
+    static let defaultFont = NSFont(name: "Menlo-Regular", size: 11) ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
 
     static var font: NSFont { AppOptions.shared.values.editorFont?.nsFont ?? defaultFont }
 
@@ -254,15 +255,19 @@ enum SQLHighlighter {
         let limit = max(options.disableHighlightAboveMB, 1) * 1_000_000
         if options.useSyntaxHighlighting, storage.length * 2 <= limit {
             let rules: [(NSRegularExpression, NSColor)] = [
-                (keywordRule, NSColor(hex: colors.keyword) ?? .systemPink),
+                (keywordRule, NSColor(hex: colors.keyword) ?? .navicatKeyword),
                 (numberRule, NSColor(hex: colors.number) ?? .systemBlue),
-                (stringRule, NSColor(hex: colors.string) ?? .systemRed),
+                (stringRule, NSColor(hex: colors.string) ?? .navicatString),
                 (commentRule, NSColor(hex: colors.comment) ?? .secondaryLabelColor),
             ]
             // Later rules win, so strings and comments override keywords inside them.
             for (regex, color) in rules {
+                let bold = regex === keywordRule ? NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) : nil
                 regex.enumerateMatches(in: storage.string, range: full) { match, _, _ in
-                    if let range = match?.range { storage.addAttribute(.foregroundColor, value: color, range: range) }
+                    guard let range = match?.range else { return }
+                    storage.addAttribute(.foregroundColor, value: color, range: range)
+                    // Keywords are bold, as in Navicat; strings and comments later reset the font.
+                    if let bold { storage.addAttribute(.font, value: bold, range: range) } else if regex !== numberRule { storage.addAttribute(.font, value: font, range: range) }
                 }
             }
         }
