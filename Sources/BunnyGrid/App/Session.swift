@@ -384,7 +384,13 @@ final class DatabaseContext: Identifiable {
     /// Loads, in the background, the columns of tables referenced in `sql`.
     func prefetchColumns(for sql: String) {
         guard AppOptions.shared.values.autoUpdateCompletionInfo else { return }
-        for reference in SQLCompletion.tableReferences(in: sql) {
+        prefetchColumns(for: SQLCompletion.tableReferences(in: sql))
+    }
+
+    /// Same, for references already found (the query editor finds them off the main thread).
+    func prefetchColumns(for references: [SQLCompletion.TableReference]) {
+        guard AppOptions.shared.values.autoUpdateCompletionInfo else { return }
+        for reference in references {
             let key = reference.table.lowercased()
             guard columnCache[key] == nil, !columnLoads.contains(key) else { continue }
             let schema = reference.schema

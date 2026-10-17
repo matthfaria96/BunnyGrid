@@ -30,7 +30,9 @@ struct ContentView: View {
         }
         // The chrome draws its own title row beside the traffic lights.
         .ignoresSafeArea(.container, edges: .top)
-        .navigationTitle(app.windowTitle)
+        // Set on the NSWindow by a leaf view: `.navigationTitle` here made every tab switch re-evaluate
+        // this whole body and the scene.
+        .background { WindowTitleSetter() }
         .sheet(item: $app.draft) { draft in
             ConnectionEditorView(draft: draft)
         }
@@ -241,5 +243,19 @@ struct StatusBar: View {
         if minutes < 1 { return "Last Refresh: <1m" }
         if minutes < 60 { return "Last Refresh: \(minutes)m" }
         return "Last Refresh: \(minutes / 60)h"
+    }
+}
+
+/// Keeps the NSWindow's title at `AppModel.windowTitle`; only this view depends on it.
+private struct WindowTitleSetter: NSViewRepresentable {
+    @Environment(AppModel.self) private var app
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let title = app.windowTitle
+        DispatchQueue.main.async {
+            if let window = view.window, window.title != title { window.title = title }
+        }
     }
 }

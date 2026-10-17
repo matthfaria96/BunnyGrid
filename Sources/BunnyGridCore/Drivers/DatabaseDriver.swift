@@ -52,6 +52,9 @@ public protocol DatabaseDriver: AnyObject, Sendable {
 
     /// Row estimates, sizes and comments for the Objects tab, keyed by table name.
     func tableStatistics(schema: String?) async throws -> [String: TableStatistics]
+    /// The statistics of one table (the Info pane, the designer). Defaults to filtering `tableStatistics(schema:)`;
+    /// engines where that means scanning every table answer for just this one.
+    func tableStatistics(schema: String?, table: String) async throws -> TableStatistics?
     func objectDDL(name: String, kind: DatabaseObjectKind, schema: String?) async throws -> String
     func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey]
     func listTriggers(table: String, schema: String?) async throws -> [TableTrigger]
@@ -61,6 +64,10 @@ extension DatabaseDriver {
     public var dialect: SQLDialect { SQLDialect(kind: config.kind) }
 
     public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] { [:] }
+
+    public func tableStatistics(schema: String?, table: String) async throws -> TableStatistics? {
+        try await tableStatistics(schema: schema)[table]
+    }
 
     /// Fallback for engines that can't stop reading early: runs the statement and drops the extra rows.
     public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {

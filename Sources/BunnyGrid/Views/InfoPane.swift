@@ -335,6 +335,6 @@ private struct ObjectInfo: View {
         columns = []
         guard let context, object.kind != .routine else { return }
         columns = (try? await context.driver.listColumns(table: object.name, schema: driverSchema)) ?? []
-        stats = (try? await context.driver.tableStatistics(schema: driverSchema))?[object.name]
+        stats = try? await context.driver.tableStatistics(schema: driverSchema, table: object.name)
     }
 }

@@ -133,7 +133,7 @@ final class TableDesignModel: Identifiable {
         triggers = (try? await driver.listTriggers(table: originalName, schema: driverSchema)) ?? []
         droppedTriggers = []
         newTriggers = []
-        let stats = (try? await driver.tableStatistics(schema: driverSchema))?[originalName]
+        let stats = try? await driver.tableStatistics(schema: driverSchema, table: originalName)
         originalComment = stats?.comment ?? ""
         comment = originalComment
         originalEngine = stats?.engine ?? ""

@@ -57,7 +57,10 @@ final class RunLoopMonitor {
 
 /// `--bench SCENARIO`: scripted actions that time what the user feels, written to `BUNNYGRID_PERF_LOG`
 /// (and stderr), then quit. Scenarios: launch, connect, expand, objects, open-table, scroll, resize,
-/// tabs, typing, autocomplete, query100k, er. See docs/PERFORMANCE.md for the datasets.
+/// tabs, typing, autocomplete, query100k, er. Datasets: a SQLite file with a 1M-row, 20-column `events`
+/// table (open-table, scroll, resize, typing, query100k), one with 2,000 tables (expand, objects, tabs),
+/// one with 200 related tables (er); `--bench-script FILE` is the 20,000-line script for the editor.
+/// Built into release with `swift build -c release -Xswiftc -DBUNNYGRID_BENCH`.
 @MainActor
 enum Benchmarks {
     static var scenario: String? {
@@ -244,6 +247,12 @@ enum Benchmarks {
             app.expanded.insert(.database(id, "main"))
             let node = NavNode.category(id, "main", nil, .tables)
             _ = await timeToIdle("navigator.expand", detail: "\(context.objects(in: nil)?.count ?? 0) tables") { app.setExpanded(node, true) }
+            if CommandLine.arguments.contains("--bench-hot"), let objects = context.objects(in: nil) {
+                for index in 0..<300 {
+                    app.navSelection = .object(id, "main", objects[index % 20])
+                    _ = await RunLoopMonitor.shared.nextIdle()
+                }
+            }
             if let object = context.objects(in: nil)?[10] {
                 _ = await timeToIdle("navigator.selectRow") { app.navSelection = .object(id, "main", object) }
             }
@@ -305,6 +314,12 @@ enum Benchmarks {
             _ = await RunLoopMonitor.shared.settle(pause: .milliseconds(500))
             let ids = app.tabs.map(\.id) + [nil]
             var samples: [Double] = []
+            if CommandLine.arguments.contains("--bench-hot") {
+                for index in 0..<200 {
+                    app.selectedTabID = ids[index % ids.count]
+                    _ = await RunLoopMonitor.shared.nextIdle()
+                }
+            }
             for round in 0..<3 {
                 for id in ids {
                     samples.append(await timeToIdle("tabs.switch", detail: "round \(round)") { app.selectedTabID = id })
@@ -316,7 +331,12 @@ enum Benchmarks {
             guard let context = await openContext() else { return }
             let script = (try? String(contentsOfFile: argument("--bench-script") ?? "", encoding: .utf8)) ?? "SELECT 1;"
             let lines = script.split(separator: "\n", omittingEmptySubsequences: false).count
+            let openStart = PerfTrace.now()
             _ = await timeToIdle("editor.open", detail: "\(lines) lines") { app.openQuery(text: script, in: context) }
+            if let editor = views(SQLTextView.self).last {
+                await waitFor { editor.colouredUpTo >= (editor.string as NSString).length || editor.colouredUpTo == 0 }
+                report("editor.colouredAll", PerfTrace.milliseconds(since: openStart), "chunked colouring finished")
+            }
             try? await Task.sleep(for: .milliseconds(500))
             guard let editor = views(SQLTextView.self).last, let window = editor.window else { return }
             window.makeFirstResponder(editor)
@@ -327,6 +347,13 @@ enum Benchmarks {
             editor.setSelectedRange(NSRange(location: location, length: 0))
             editor.scrollRangeToVisible(editor.selectedRange())
             _ = await RunLoopMonitor.shared.settle(pause: .milliseconds(300))
+            if CommandLine.arguments.contains("--bench-hot") {
+                // Back-to-back keystrokes for a profiler to sample.
+                for index in 0..<400 {
+                    type(index % 2 == 1 ? "\n" : "x", in: window)
+                    _ = await RunLoopMonitor.shared.nextIdle()
+                }
+            }
             if scenario == "typing" {
                 var samples: [Double] = []
                 for character in "select name, email from events where id = 42 and status = 'paid';\n" {
@@ -350,12 +377,31 @@ enum Benchmarks {
                 _ = await RunLoopMonitor.shared.settle()
                 var samples: [Double] = []
                 for _ in 0..<5 {
-                    // "." opens the completion popup (SQLTextView.insertText), Escape closes it.
-                    samples.append(await timeToIdle("editor.completionPopup") { type(".", in: window) })
-                    _ = await RunLoopMonitor.shared.settle(pause: .milliseconds(150))
-                    let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
-                                                  context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)
-                    if let escape { NSApp.sendEvent(escape) }
+                    // "." opens the completion popup, which runs its own event loop until dismissed: a common-mode
+                    // timer notes when the popup window is on screen, then queues an Escape to close it.
+                    let start = PerfTrace.now()
+                    var shown: Double?
+                    let before = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+                    let watcher = Timer(timeInterval: 0.001, repeats: true) { timer in
+                        nonisolated(unsafe) let timer = timer
+                        MainActor.assumeIsolated {
+                            guard NSApp.windows.contains(where: { $0.isVisible && !before.contains(ObjectIdentifier($0)) }) else {
+                                if PerfTrace.milliseconds(since: start) > 3_000 { timer.invalidate() }
+                                return
+                            }
+                            shown = PerfTrace.milliseconds(since: start)
+                            timer.invalidate()
+                            if let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                             windowNumber: window.windowNumber, context: nil, characters: "\u{1b}",
+                                                             charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) {
+                                NSApp.postEvent(escape, atStart: false)
+                            }
+                        }
+                    }
+                    RunLoop.main.add(watcher, forMode: .common)
+                    type(".", in: window)
+                    watcher.invalidate()
+                    if let shown { samples.append(shown); report("editor.completionPopup", shown) }
                     editor.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
                     _ = await RunLoopMonitor.shared.settle(pause: .milliseconds(150))
                 }

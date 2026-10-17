@@ -58,8 +58,10 @@ struct SQLEditorView: NSViewRepresentable {
         // Lay out only what is shown: large scripts would otherwise be laid out in full on every change.
         textView.layoutManager?.allowsNonContiguousLayout = true
         textView.highlighter = context.coordinator.highlighter
-        textView.textStorage?.delegate = context.coordinator
+        textView.flushText = { [weak coordinator = context.coordinator] in coordinator?.flush() }
         textView.string = text
+        // After the text: `highlight` below colours it in chunks; the delegate colours later edits.
+        textView.textStorage?.delegate = context.coordinator
         context.coordinator.lastText = text
         textView.menuItems = menuItems
         PerfTrace.measure("editor.fullHighlight") { SQLHighlighter.highlight(textView) }
@@ -74,13 +76,21 @@ struct SQLEditorView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
+        // Reading `text` below must not push pending typing into the model in the middle of a view update.
+        context.coordinator.isUpdating = true
+        defer { context.coordinator.isUpdating = false }
         (scrollView.documentView as? SQLTextView)?.menuItems = menuItems
         // The text this editor last pushed comes back unchanged on every SwiftUI update: comparing it with
         // the same string is O(1) (shared storage), unlike comparing against the text view's string.
         guard text != context.coordinator.lastText, let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.lastText = text
         guard textView.string != text else { return }
+        // Replaced wholesale: `highlight` rebuilds the line table and colours in chunks, so the per-edit
+        // colouring is skipped for this one.
+        let delegate = textView.textStorage?.delegate
+        textView.textStorage?.delegate = nil
         textView.string = text
+        textView.textStorage?.delegate = delegate
         SQLHighlighter.highlight(textView)
     }
 
@@ -109,11 +119,43 @@ struct SQLEditorView: NSViewRepresentable {
             }
         }
 
+        /// Typed text not yet sent to the binding.
+        private var hasPendingText = false
+        var isUpdating = false
+        private weak var pendingTextView: NSTextView?
+
+        /// Copying a large script into the binding on every keystroke costs more than the keystroke itself,
+        /// so the text goes out shortly after typing pauses, or as soon as someone asks for it
+        /// (`SQLTextView.flushText`, which `QueryTabModel.text` calls before reading).
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            let text = textView.string
-            lastText = text
-            parent.text = text
+            pendingTextView = textView
+            guard !hasPendingText else { return }
+            hasPendingText = true
+            let length = (textView.string as NSString).length
+            // Small documents sync at once (cheap); large ones are coalesced.
+            if length < 20_000 { flush(); return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.flush() }
+        }
+
+        func flush() {
+            guard !isUpdating, hasPendingText, let textView = pendingTextView else { return }
+            hasPendingText = false
+            PerfTrace.measure("editor.flushText") {
+                let text = Self.nativeString(textView.string as NSString)
+                lastText = text
+                parent.text = text
+            }
+        }
+
+        /// A native Swift copy of the text (one optimized transcode), so later comparisons and
+        /// reads don't go through the bridged NSString character by character.
+        static func nativeString(_ string: NSString) -> String {
+            let length = string.length
+            guard length > 0 else { return "" }
+            var units = [UInt16](repeating: 0, count: length)
+            units.withUnsafeMutableBufferPointer { string.getCharacters($0.baseAddress!, range: NSRange(location: 0, length: length)) }
+            return String(decoding: units, as: UTF16.self)
         }
 
         /// Colours the edited lines (and any after them whose state changed) as part of the same edit.
@@ -124,6 +166,10 @@ struct SQLEditorView: NSViewRepresentable {
             nonisolated(unsafe) let storage = textStorage
             MainActor.assumeIsolated {
                 let dirty = highlighter.edit(storage.string as NSString, editedRange: editedRange, changeInLength: delta)
+                // Keep the chunked colouring of a just-loaded text in step with the edit.
+                if let textView = storage.layoutManagers.first?.firstTextView as? SQLTextView, editedRange.location < textView.colouredUpTo {
+                    textView.colouredUpTo = max(textView.colouredUpTo + delta, editedRange.location)
+                }
                 SQLHighlighter.colour(storage, range: dirty, highlighter: highlighter, options: AppOptions.shared.values)
             }
         }
@@ -162,6 +208,11 @@ final class SQLTextView: NSTextView {
     var menuItems: [SQLEditorView.MenuItem] = []
     /// The editor's line table (kept current by the coordinator); also answers line numbers.
     var highlighter: SQLIncrementalHighlighter?
+    /// Sends typed text that is still pending to the binding (see `Coordinator.textDidChange`).
+    var flushText: (() -> Void)?
+    /// Progress of the chunked colouring of a newly loaded text (`SQLHighlighter.highlight`).
+    var colouredUpTo = 0
+    var colourGeneration = 0
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
@@ -272,12 +323,40 @@ enum SQLHighlighter {
         let highlighter = (textView as? SQLTextView)?.highlighter ?? SQLIncrementalHighlighter()
         highlighter.reset(storage.string as NSString)
         let full = NSRange(location: 0, length: storage.length)
+        let sqlTextView = textView as? SQLTextView
+        sqlTextView?.colourGeneration += 1
+        // A long script is coloured a chunk per run-loop turn, so opening it doesn't freeze the window.
+        let first = sqlTextView == nil ? full.length : min(full.length, colourChunk)
+        // Font and colours go on chunk by chunk (`colour` resets each range first): one attribute over a whole
+        // text that already has thousands of colour runs costs seconds.
         storage.beginEditing()
-        storage.addAttribute(.font, value: font, range: full)
-        colour(storage, range: full, highlighter: highlighter, options: options)
+        colour(storage, range: NSRange(location: 0, length: first), highlighter: highlighter, options: options)
         storage.endEditing()
         textView.typingAttributes[.font] = font
         textView.typingAttributes[.foregroundColor] = common
+        if let sqlTextView, first < full.length {
+            sqlTextView.colouredUpTo = first
+            continueColouring(sqlTextView, generation: sqlTextView.colourGeneration, options: options)
+        }
+    }
+
+    /// Characters coloured per run-loop turn when a large text is loaded.
+    static let colourChunk = 24_000
+
+    private static func continueColouring(_ textView: SQLTextView, generation: Int, options: OptionsValues) {
+        // After a delay, not `async`: the run loop must sleep in between so each frame is committed.
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1)) { [weak textView] in
+            guard let textView, textView.colourGeneration == generation, let storage = textView.textStorage,
+                  let highlighter = textView.highlighter else { return }
+            let start = min(textView.colouredUpTo, storage.length)
+            guard start < storage.length else { return }
+            let range = highlighter.lineRange(for: NSRange(location: start, length: min(colourChunk, storage.length - start)))
+            storage.beginEditing()
+            colour(storage, range: range, highlighter: highlighter, options: options)
+            storage.endEditing()
+            textView.colouredUpTo = NSMaxRange(range)
+            continueColouring(textView, generation: generation, options: options)
+        }
     }
 
     /// Re-colours the whole lines in `range` from the highlighter's tokens.
@@ -285,6 +364,8 @@ enum SQLHighlighter {
         let range = NSIntersectionRange(range, NSRange(location: 0, length: storage.length))
         let colors = options.syntaxColors
         let common = NSColor(hex: colors.common) ?? .labelColor
+        let font = options.editorFont?.nsFont ?? defaultFont
+        storage.addAttribute(.font, value: font, range: range)
         storage.addAttribute(.foregroundColor, value: common, range: range)
         let limit = max(options.disableHighlightAboveMB, 1) * 1_000_000
         guard options.useSyntaxHighlighting, storage.length * 2 <= limit, range.length > 0 else { return }
@@ -295,9 +376,7 @@ enum SQLHighlighter {
             .comment: NSColor(hex: colors.comment) ?? .secondaryLabelColor,
         ]
         // Keywords are bold, as in Navicat; everything else uses the plain editor font.
-        let font = options.editorFont?.nsFont ?? defaultFont
         let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-        storage.addAttribute(.font, value: font, range: range)
         for token in highlighter.tokens(in: range, of: storage.string as NSString) {
             storage.addAttribute(.foregroundColor, value: palette[token.kind]!, range: token.range)
             if token.kind == .keyword { storage.addAttribute(.font, value: bold, range: token.range) }

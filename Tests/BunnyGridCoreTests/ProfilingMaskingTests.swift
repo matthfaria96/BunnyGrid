@@ -32,6 +32,25 @@ import Testing
         let stats = try await driver.tableStatistics(schema: nil)
         #expect(stats["a"]?.rows == 2)
         #expect(stats["b"]?.rows == 0)
+        // One table's statistics match the full listing's entry.
+        let single = try await driver.tableStatistics(schema: nil, table: "a")
+        #expect(single?.rows == 2 && single?.rootPage == stats["a"]?.rootPage && single?.hasIndexes == false)
+        #expect(try await driver.tableStatistics(schema: nil, table: "missing") == nil)
+    }
+
+    /// File databases count rows on a second connection (so the driver stays free); same numbers.
+    @Test func sqliteFileStatisticsCountOnTheSide() async throws {
+        let url = FileManager.default.temporaryDirectory.appending(path: "bg-stats-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let driver = SQLiteDriver(config: ConnectionConfig(kind: .sqlite, filePath: url.path))
+        try await driver.connect()
+        _ = try await driver.execute("CREATE TABLE a (x); INSERT INTO a VALUES (1), (2), (3); CREATE TABLE b (y); CREATE VIEW v AS SELECT * FROM a")
+        let stats = try await driver.tableStatistics(schema: nil)
+        #expect(stats["a"]?.rows == 3)
+        #expect(stats["b"]?.rows == 0)
+        #expect(stats["v"]?.rows == nil)
+        #expect(try await driver.tableStatistics(schema: nil, table: "a")?.rows == 3)
+        await driver.disconnect()
     }
 }
 

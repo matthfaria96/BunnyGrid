@@ -137,11 +137,67 @@ public actor SQLiteDriver: DatabaseDriver {
             entry.hasTriggers = (int(row[3]) ?? 0) > 0
             stats[row[0].displayString] = entry
         }
-        for object in try await listObjects(schema: schema) where object.kind == .table {
+        let tables = try await listObjects(schema: schema).filter { $0.kind == .table }
+        if let counts = await countRowsElsewhere(tables.map(\.name), schema: schema) {
+            for (name, count) in counts { stats[name, default: TableStatistics()].rows = count }
+            return stats
+        }
+        for object in tables {
             let count = try? await executeStatement("SELECT COUNT(*) FROM \(dialect.qualifiedName(table: object.name, schema: object.schema))").rows.first?.first
             if case .integer(let n) = count { stats[object.name, default: TableStatistics()].rows = Int(n) }
         }
         return stats
+    }
+
+    /// Exact row counts read on a second, read-only connection away from the actor. Counting a large table
+    /// (or thousands of small ones) takes a while; while it is awaited the actor is free, so opening a table
+    /// or running a query doesn't wait behind it. nil for in-memory databases and attached schemas.
+    private func countRowsElsewhere(_ tables: [String], schema: String?) async -> [String: Int]? {
+        guard !config.filePath.isEmpty, attachedSchema(schema) == nil, db != nil else { return nil }
+        let path = (config.filePath as NSString).expandingTildeInPath
+        let statements = tables.map { ($0, "SELECT COUNT(*) FROM \(dialect.quoteIdentifier($0))") }
+        return await Task.detached(priority: .utility) { () -> [String: Int]? in
+            var handle: OpaquePointer?
+            guard sqlite3_open_v2(path, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK, let handle else {
+                sqlite3_close(handle)
+                return nil
+            }
+            defer { sqlite3_close_v2(handle) }
+            sqlite3_busy_timeout(handle, 2_000)
+            var counts: [String: Int] = [:]
+            for (table, sql) in statements {
+                var statement: OpaquePointer?
+                guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK, let statement else { continue }
+                if sqlite3_step(statement) == SQLITE_ROW { counts[table] = Int(sqlite3_column_int64(statement, 0)) }
+                sqlite3_finalize(statement)
+            }
+            return counts
+        }.value
+    }
+
+    /// One table's entry without counting the rows of every other table (the full version runs a
+    /// COUNT(*) per table: thousands of statements on a large schema, holding the connection meanwhile).
+    public func tableStatistics(schema: String?, table: String) async throws -> TableStatistics? {
+        let name = dialect.quoteLiteral(table)
+        let result = try await executeStatement("""
+            SELECT o.type, o.rootpage,
+                   (SELECT COUNT(*) FROM \(master(schema)) i WHERE i.type = 'index' AND i.tbl_name = o.name),
+                   (SELECT COUNT(*) FROM \(master(schema)) t WHERE t.type = 'trigger' AND t.tbl_name = o.name)
+              FROM \(master(schema)) o WHERE o.type IN ('table', 'view') AND o.name = \(name)
+            """)
+        guard let row = result.rows.first, row.count == 4 else { return nil }
+        func int(_ value: CellValue) -> Int? { if case .integer(let v) = value { Int(v) } else { nil } }
+        var entry = TableStatistics()
+        entry.rootPage = int(row[1]).flatMap { $0 > 0 ? $0 : nil }
+        entry.hasIndexes = (int(row[2]) ?? 0) > 0
+        entry.hasTriggers = (int(row[3]) ?? 0) > 0
+        guard row[0].displayString == "table" else { return entry }
+        if let counts = await countRowsElsewhere([table], schema: schema) {
+            entry.rows = counts[table]
+        } else if case .integer(let n) = try? await executeStatement("SELECT COUNT(*) FROM \(dialect.qualifiedName(table: table, schema: schema))").rows.first?.first {
+            entry.rows = Int(n)
+        }
+        return entry
     }
 
     public func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey] {

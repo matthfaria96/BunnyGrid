@@ -73,13 +73,23 @@ enum QueryResultPane: Hashable {
 final class QueryTabModel: Identifiable {
     let id = UUID()
     var title: String
+    /// Tracked by hand: the macro's setter compares the old and new value first, which for a long
+    /// script is a full string comparison on every keystroke.
+    @ObservationIgnored private var storedText: String
     var text: String {
-        didSet {
+        get {
+            // Text typed in a large script reaches the binding after a short pause; take it now.
+            (textView as? SQLTextView)?.flushText?()
+            access(keyPath: \.text)
+            return storedText
+        }
+        set {
+            withMutation(keyPath: \.text) { storedText = newValue }
             // Views read these flags instead of the text, so they don't re-render (and re-scan a long
             // script) on every keystroke. Each is only written when it actually changes.
-            let blank = !text.contains { !$0.isWhitespace }
+            let blank = !newValue.contains { !$0.isWhitespace }
             if blank != isBlank { isBlank = blank }
-            if text.isEmpty != isEmpty { isEmpty = text.isEmpty }
+            if newValue.isEmpty != isEmpty { isEmpty = newValue.isEmpty }
             if !isEdited { isEdited = true }
             scheduleColumnPrefetch()
         }
@@ -144,7 +154,7 @@ final class QueryTabModel: Identifiable {
 
     init(title: String, text: String, context: DatabaseContext) {
         self.title = title
-        self.text = text
+        self.storedText = text
         self.isBlank = !text.contains { !$0.isWhitespace }
         self.isEmpty = text.isEmpty
         self.context = context
@@ -494,7 +504,11 @@ final class QueryTabModel: Identifiable {
         prefetchTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled, let self else { return }
-            self.context?.prefetchColumns(for: self.text)
+            // Finding the tables a long script mentions takes a while; do it off the main thread.
+            let sql = self.text
+            let references = await Task.detached(priority: .utility) { SQLCompletion.tableReferences(in: sql) }.value
+            guard !Task.isCancelled else { return }
+            self.context?.prefetchColumns(for: references)
         }
     }
 }

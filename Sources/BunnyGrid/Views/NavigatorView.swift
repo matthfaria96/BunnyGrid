@@ -468,17 +468,32 @@ private struct NavContextMenu: View {
 /// Search field and the filter / favorites / locate / collapse buttons under the tree.
 private struct NavigatorSearchBar: View {
     @Environment(AppModel.self) private var app
+    /// What the field shows; the tree filters a moment after typing stops, not on every keystroke.
+    @State private var query = ""
+    @State private var debounce: Task<Void, Never>?
 
     var body: some View {
         @Bindable var app = app
         HStack(spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.system(size: 12))
-                TextField("Search", text: $app.navigatorFilter)
+                TextField("Search", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
-                if !app.navigatorFilter.isEmpty {
-                    Button { app.navigatorFilter = "" } label: {
+                    .onChange(of: query) { _, value in
+                        debounce?.cancel()
+                        guard value != app.navigatorFilter else { return }
+                        // Clearing applies at once; typing waits for a pause.
+                        if value.isEmpty { app.navigatorFilter = value; return }
+                        debounce = Task {
+                            try? await Task.sleep(for: .milliseconds(150))
+                            guard !Task.isCancelled else { return }
+                            app.navigatorFilter = value
+                        }
+                    }
+                    .onChange(of: app.navigatorFilter, initial: true) { _, value in if value != query { query = value } }
+                if !query.isEmpty {
+                    Button { query = ""; app.navigatorFilter = "" } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)

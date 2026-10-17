@@ -75,7 +75,10 @@ struct ResultGridView: NSViewRepresentable {
         context.coordinator.tableView = tableView
         // Grid font and row shading come from Options › Records.
         context.coordinator.optionsObserver = NotificationCenter.default.addObserver(forName: .optionsDidChange, object: nil, queue: .main) { [weak tableView] _ in
-            MainActor.assumeIsolated { tableView?.reloadData() }
+            MainActor.assumeIsolated {
+                Coordinator.cachedFont = nil
+                tableView?.reloadData()
+            }
         }
         return scrollView
     }
@@ -105,7 +108,24 @@ struct ResultGridView: NSViewRepresentable {
         private var popover: NSPopover?
 
         /// Options › Records › Grid Font, or the default grid font.
-        static var font: NSFont { AppOptions.shared.values.gridFont?.nsFont ?? NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular) }
+        static var font: NSFont {
+            if let cachedFont { return cachedFont }
+            let font = AppOptions.shared.values.gridFont?.nsFont ?? NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+            cachedFont = font
+            return font
+        }
+        /// Resolved once per Options change instead of for every cell.
+        static var cachedFont: NSFont?
+        private static let leftParagraph = paragraph(.left)
+        private static let rightParagraph = paragraph(.right)
+        private static let rowID = NSUserInterfaceItemIdentifier("GridRow")
+
+        private static func paragraph(_ alignment: NSTextAlignment) -> NSParagraphStyle {
+            let style = NSMutableParagraphStyle()
+            style.alignment = alignment
+            style.lineBreakMode = .byTruncatingTail
+            return style
+        }
         private static let cellID = NSUserInterfaceItemIdentifier("GridCell")
         private static let markerID = NSUserInterfaceItemIdentifier("__marker")
 
@@ -345,7 +365,9 @@ struct ResultGridView: NSViewRepresentable {
         func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-            let view = GridRowView()
+            // Reused like the cells, instead of a new row view per row scrolled in.
+            let view = tableView.makeView(withIdentifier: Self.rowID, owner: nil) as? GridRowView ?? GridRowView()
+            view.identifier = Self.rowID
             view.isShaded = GridRowView.isShaded(row: row)
             return view
         }
@@ -394,10 +416,7 @@ struct ResultGridView: NSViewRepresentable {
             }
             var attributes: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: color]
             if state == .deleted { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = value.isNumeric || numericColumns.contains(column) ? .right : .left
-            paragraph.lineBreakMode = .byTruncatingTail
-            attributes[.paragraphStyle] = paragraph
+            attributes[.paragraphStyle] = value.isNumeric || numericColumns.contains(column) ? Self.rightParagraph : Self.leftParagraph
             field.attributedStringValue = Self.singleLine(text, attributes: attributes, markerColor: color.withAlphaComponent(0.5))
             field.drawsBackground = isFocused
             field.backgroundColor = isFocused ? .controlAccentColor : .clear
@@ -448,7 +467,7 @@ struct ResultGridView: NSViewRepresentable {
             switch state(row: row, column: 0) {
             case .deleted: rowView.backgroundColor = NSColor.systemRed.withAlphaComponent(0.12)
             case .inserted, .defaultValue: rowView.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.10)
-            default: break
+            default: rowView.backgroundColor = tableView.backgroundColor // a reused row may carry a tint
             }
         }
 
@@ -798,16 +817,35 @@ final class GridRowView: NSTableRowView {
 
 /// Label with horizontal padding inside the grid cell.
 final class PaddedTextField: NSTextField {
+    private static var lineHeights: [NSFont: CGFloat] = [:]
+
+    static func lineHeight(for font: NSFont?) -> CGFloat {
+        let font = font ?? .systemFont(ofSize: 13)
+        if let height = lineHeights[font] { return height }
+        let height = NSAttributedString(string: "Xg", attributes: [.font: font]).size().height
+        lineHeights[font] = height
+        return height
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         if drawsBackground {
             backgroundColor?.setFill()
             bounds.fill()
         }
         let inset = bounds.insetBy(dx: 6, dy: 0)
-        let size = attributedStringValue.size()
-        let rect = NSRect(x: inset.minX, y: (bounds.height - size.height) / 2, width: inset.width, height: size.height)
+        var string = attributedStringValue
+        // One line of the cell font: no need to measure the string on every draw.
+        let height = Self.lineHeight(for: string.length > 0 ? string.attribute(.font, at: 0, effectiveRange: nil) as? NSFont : font)
+        let rect = NSRect(x: inset.minX, y: (bounds.height - height) / 2, width: inset.width, height: height)
         if currentEditor() == nil {
-            attributedStringValue.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+            // Truncating lays out the whole string; hand it only what can fit (no glyph is narrower than
+            // ~3 pt), so a long value costs the same as a short one. The visible part and the ellipsis are unchanged.
+            let fits = Int(inset.width / 3) + 8
+            if string.length > fits {
+                let cut = (string.string as NSString).rangeOfComposedCharacterSequence(at: fits).location
+                string = string.attributedSubstring(from: NSRange(location: 0, length: cut))
+            }
+            string.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         } else {
             super.draw(dirtyRect)
         }

@@ -6,6 +6,9 @@ import SwiftUI
 struct ObjectsView: View {
     @Environment(AppModel.self) private var app
     @State private var search = ""
+    /// The search the list uses: applied a moment after typing stops.
+    @State private var appliedSearch = ""
+    @State private var searchDebounce: Task<Void, Never>?
     @State private var selection: Set<String> = []
     @State private var querySelection: Set<UUID> = []
     @State private var statistics: [String: TableStatistics] = [:]
@@ -25,7 +28,7 @@ struct ObjectsView: View {
     private var objects: [DatabaseObject] {
         guard let context else { return [] }
         let all = context.objects(in: schema, category: category) ?? []
-        return search.isEmpty ? all : all.filter { $0.name.localizedCaseInsensitiveContains(search) }
+        return appliedSearch.isEmpty ? all : all.filter { $0.name.localizedCaseInsensitiveContains(appliedSearch) }
     }
 
     var body: some View {
@@ -62,27 +65,29 @@ struct ObjectsView: View {
                 }
             } else {
                 let noun = category.noun
-                let canOpen = selectedObject != nil && category.objectKind != .routine && category.objectKind != nil
+                // Read once: each `selectedObject` filters the folder (thousands of objects on a large schema).
+                let selected = selectedObject
+                let canOpen = selected != nil && category.objectKind != .routine && category.objectKind != nil
                 let isTables = category == .tables
                 let writable = context?.driver.config.readOnly == false
                 ToolIcon("folder", .blue, "Open \(noun)", isEnabled: canOpen) {
-                    if let object = selectedObject { open(object) }
+                    if let object = selected { open(object) }
                 }
-                ToolIcon("pencil", .blue, "Design \(noun)", isEnabled: isTables && selectedObject != nil) {
-                    if let object = selectedObject, let context { app.openDesign(table: object, in: context) }
+                ToolIcon("pencil", .blue, "Design \(noun)", isEnabled: isTables && selected != nil) {
+                    if let object = selected, let context { app.openDesign(table: object, in: context) }
                 }
                 ToolIcon("plus.circle", .green, "New \(noun)", isEnabled: isTables && writable && context != nil) {
                     if let context { app.openDesign(table: nil, in: context) }
                 }
                 ToolIcon("minus.circle", .red, "Delete \(noun)",
-                         isEnabled: selectedObject != nil && [.tables, .views, .materializedViews].contains(category) && writable) {
-                    if let object = selectedObject, let context {
+                         isEnabled: selected != nil && [.tables, .views, .materializedViews].contains(category) && writable) {
+                    if let object = selected, let context {
                         app.pendingObjectAction = PendingObjectAction(kind: .drop, object: object, context: context)
                     }
                 }
                 Divider().frame(height: 18).padding(.horizontal, 6)
-                ToolIcon("square.and.arrow.down", .green, "Import Wizard", isEnabled: isTables && writable && selectedObject != nil) {
-                    if let object = selectedObject, let context { app.importTarget = ImportTarget(context: context, object: object) }
+                ToolIcon("square.and.arrow.down", .green, "Import Wizard", isEnabled: isTables && writable && selected != nil) {
+                    if let object = selected, let context { app.importTarget = ImportTarget(context: context, object: object) }
                 }
                 ToolIcon("square.and.arrow.up", .orange, "Export Wizard", isEnabled: context != nil && [.tables, .views, .materializedViews].contains(category)) {
                     if let context {
@@ -106,6 +111,14 @@ struct ObjectsView: View {
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search", text: $search).textFieldStyle(.plain)
+                    .onChange(of: search) { _, value in
+                        searchDebounce?.cancel()
+                        if value.isEmpty { appliedSearch = value; return }
+                        searchDebounce = Task {
+                            try? await Task.sleep(for: .milliseconds(150))
+                            if !Task.isCancelled { appliedSearch = value }
+                        }
+                    }
             }
             .font(.system(size: 13))
             .padding(.horizontal, 10)
