@@ -37,6 +37,16 @@ public protocol DatabaseDriver: AnyObject, Sendable {
     /// Runs exactly one statement.
     func executeStatement(_ sql: String) async throws -> QueryResult
 
+    /// Runs exactly one statement, reading at most `maxRows` rows of its result (all of them when nil).
+    /// When more rows exist the result is marked `isTruncated`, and the driver stops reading instead of
+    /// keeping the whole result in memory.
+    func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult
+
+    /// Asks the server to stop the statement running on this driver's connection, from outside it:
+    /// `pg_cancel_backend` / `KILL QUERY` on a second connection, `sqlite3_interrupt` on SQLite.
+    /// The running statement then fails with the engine's "cancelled" error. A no-op when nothing runs.
+    func cancelCurrentQuery() async throws
+
     /// Row estimates, sizes and comments for the Objects tab, keyed by table name.
     func tableStatistics(schema: String?) async throws -> [String: TableStatistics]
     func objectDDL(name: String, kind: DatabaseObjectKind, schema: String?) async throws -> String
@@ -48,6 +58,15 @@ extension DatabaseDriver {
     public var dialect: SQLDialect { SQLDialect(kind: config.kind) }
 
     public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] { [:] }
+
+    /// Fallback for engines that can't stop reading early: runs the statement and drops the extra rows.
+    public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {
+        QueryResult.capped(try await executeStatement(sql), maxRows: maxRows)
+    }
+
+    public func cancelCurrentQuery() async throws {
+        throw DatabaseError.unsupported("Cancelling a running query")
+    }
     public func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey] { [] }
     public func listTriggers(table: String, schema: String?) async throws -> [TableTrigger] { [] }
 
@@ -79,11 +98,12 @@ extension DatabaseDriver {
         return results
     }
 
-    public func executeTimed(_ sql: String) async throws -> QueryResult {
+    /// Runs one statement and records how long it took. `maxRows` caps the rows read (`executeStatement(_:maxRows:)`).
+    public func executeTimed(_ sql: String, maxRows: Int? = nil) async throws -> QueryResult {
         if config.readOnly && !Self.isReadOnlyStatement(sql) { throw DatabaseError.readOnly }
         let clock = ContinuousClock()
         let start = clock.now
-        var result = try await executeStatement(sql)
+        var result = try await executeStatement(sql, maxRows: maxRows)
         result.duration = clock.now - start
         return result
     }
@@ -131,10 +151,7 @@ extension DatabaseDriver {
     }
 
     static func isReadOnlyStatement(_ sql: String) -> Bool {
-        let first = sql.trimmingCharacters(in: .whitespacesAndNewlines)
-            .prefix { !$0.isWhitespace && $0 != "(" }
-            .uppercased()
-        return ["SELECT", "WITH", "SHOW", "EXPLAIN", "DESCRIBE", "DESC", "PRAGMA", "VALUES"].contains(first)
+        SQLSplitter.isReadOnly(sql)
     }
 }
 

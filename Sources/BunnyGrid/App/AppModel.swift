@@ -809,7 +809,8 @@ final class AppModel {
             guard let context = sessions[id]?.context(database) else { return }
             if let query {
                 openQuery(text: query, in: context)
-                selectedQueryTab?.run()
+                // `--explain` opens the query's plan instead of its result.
+                if CommandLine.arguments.contains("--explain") { selectedQueryTab?.explain() } else { selectedQueryTab?.run() }
                 #if DEBUG
                 if let index = CommandLine.arguments.firstIndex(of: "--ask-ai"), CommandLine.arguments.indices.contains(index + 1),
                    let tab = selectedQueryTab {

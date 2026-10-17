@@ -323,4 +323,65 @@ struct PostgresIntegrationTests {
         #expect(try await driver.execute("SELECT 2").first?.rows == [[.integer(2)]])
         await driver.disconnect()
     }
+
+    // MARK: - Query editor
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancelStopsRunningStatementOnServer() async throws {
+        let driver = try await PG.driver()
+        let pid = try #require(await driver.backendPID)
+        let running = Task { try await driver.executeStatement("SELECT pg_sleep(30)") }
+        // Wait until the server shows the sleep as active on this backend, then cancel from a second connection.
+        let observer = try await PG.driver()
+        var active = false
+        for _ in 0..<100 where !active {
+            try await Task.sleep(for: .milliseconds(50))
+            let state = try await observer.executeStatement("SELECT state FROM pg_stat_activity WHERE pid = \(pid)").rows.first?.first
+            active = state == .text("active")
+        }
+        #expect(active)
+        let clock = ContinuousClock()
+        let start = clock.now
+        try await driver.cancelCurrentQuery()
+        let outcome = await running.result
+        #expect(clock.now - start < .seconds(10))
+        guard case .failure(let error) = outcome else {
+            Issue.record("pg_sleep finished instead of being cancelled")
+            return
+        }
+        #expect(error.localizedDescription.contains("cancel"))
+        // Same backend, still usable.
+        #expect(try await driver.executeStatement("SELECT pg_backend_pid()").rows == [[.integer(Int64(pid))]])
+        await observer.disconnect()
+        await driver.disconnect()
+    }
+
+    @Test func rowCapStopsReadingAndConnectionStaysUsable() async throws {
+        let driver = try await PG.driver()
+        let capped = try await driver.executeTimed("SELECT generate_series(1, 50000) AS n", maxRows: 1_000)
+        #expect(capped.rows.count == 1_000)
+        #expect(capped.isTruncated)
+        #expect(capped.columns == ["n"])
+        #expect(try await driver.executeStatement("SELECT 7").rows == [[.integer(7)]])
+        let exact = try await driver.executeTimed("SELECT generate_series(1, 10)", maxRows: 10)
+        #expect(!exact.isTruncated)
+        await driver.disconnect()
+    }
+
+    @Test func explainJSONBecomesPlanTree() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.execute("""
+                CREATE TABLE \(schema).customers (id int PRIMARY KEY, name text);
+                CREATE TABLE \(schema).orders (id int PRIMARY KEY, customer_id int REFERENCES \(schema).customers(id), total numeric)
+                """)
+            let sql = driver.dialect.explain("SELECT * FROM \(schema).orders o JOIN \(schema).customers c ON c.id = o.customer_id ORDER BY o.total")
+            let result = try await driver.executeTimed(sql)
+            let plan = try #require(QueryPlan.parse(result, kind: .postgresql))
+            let titles = plan.flatMap { $0.flattened() }.map(\.node.title)
+            #expect(titles.contains { $0.hasPrefix("Sort") })
+            // Without VERBOSE the JSON names the relation but not its schema.
+            #expect(titles.contains { $0.contains("on orders o") })
+            #expect(plan.first?.details.first?.key == "cost")
+        }
+    }
 }

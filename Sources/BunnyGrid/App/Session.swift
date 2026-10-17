@@ -191,10 +191,14 @@ final class Session: Identifiable {
     func context(_ name: String) -> DatabaseContext? { contexts[name] }
 
     /// A new, unconnected driver for `database`, for work that needs its own connection
-    /// (a table tab's manual transaction).
+    /// (a table tab's manual transaction, a query editor). On MySQL it connects with `database` as the
+    /// default database, so unqualified names in the editor resolve there.
     func makeDedicatedDriver(database: String) -> any DatabaseDriver {
         var databaseConfig = config
-        if config.kind == .postgresql { databaseConfig.database = database }
+        switch config.kind {
+        case .postgresql, .mysql, .mariadb: databaseConfig.database = database
+        case .sqlite: break
+        }
         return DriverFactory.make(config: databaseConfig, password: password)
     }
 
@@ -425,7 +429,7 @@ enum WorkspaceTab: Identifiable {
 
     @MainActor func cancel() {
         switch self {
-        case .query(let model): model.cancel()
+        case .query(let model): model.close()
         case .table(let model): model.abandonTransaction()
         case .design, .model: break
         }

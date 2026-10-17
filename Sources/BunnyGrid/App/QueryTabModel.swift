@@ -50,6 +50,16 @@ struct StatementExecution: Identifiable {
     var succeeded: Bool { error == nil }
 }
 
+/// What a Run executes: Navicat's Run, Run Selected and Run Current Statement.
+enum QueryRunScope {
+    /// The selection when there is one, otherwise the whole editor (⌘↩).
+    case automatic
+    case all
+    case selection
+    /// The statement under the cursor (⌘⇧↩).
+    case currentStatement
+}
+
 /// Which part of the result panel is showing.
 enum QueryResultPane: Hashable {
     case message
@@ -87,6 +97,10 @@ final class QueryTabModel: Identifiable {
     /// Cursor position for the status bar ("Line: 1 Col: 1").
     var cursorLine = 1
     var cursorColumn = 1
+    /// The cursor as a UTF-16 offset into `text`, for Run Current Statement.
+    @ObservationIgnored var cursorOffset = 0
+    /// Plans of the Explain results, by result id.
+    private(set) var plans: [UUID: [QueryPlanNode]] = [:]
     @ObservationIgnored private(set) weak var context: DatabaseContext?
     /// The editor's text view, registered by `SQLEditorView`, so AI code can be inserted with undo.
     @ObservationIgnored weak var textView: NSTextView?
@@ -96,7 +110,15 @@ final class QueryTabModel: Identifiable {
     var showingAskAICustom = false
     /// The last custom question, so Back and reopening restore it.
     var lastCustomAction: AIAction?
-    @ObservationIgnored private var driver: any DatabaseDriver
+    /// The database's shared driver (navigator, table tabs).
+    @ObservationIgnored private var contextDriver: any DatabaseDriver
+    /// The editor's own connection, opened on the first run, so a transaction begun here doesn't take in
+    /// edits applied from table tabs (and theirs don't land in this one). Not used for in-memory SQLite,
+    /// where a second connection would be a different, empty database.
+    @ObservationIgnored private var ownDriver: (any DatabaseDriver)?
+    /// The driver running the current statement, for Stop.
+    @ObservationIgnored private var activeDriver: (any DatabaseDriver)?
+    @ObservationIgnored private var isClosed = false
     private(set) var location: String
     private(set) var connectionID: UUID?
     private(set) var databaseName: String
@@ -110,7 +132,7 @@ final class QueryTabModel: Identifiable {
         self.title = title
         self.text = text
         self.context = context
-        self.driver = context.driver
+        self.contextDriver = context.driver
         self.location = context.location(schema: context.defaultSchema)
         self.connectionID = context.session?.id
         self.databaseName = context.name
@@ -143,10 +165,42 @@ final class QueryTabModel: Identifiable {
         !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Runs the selection if there is one, otherwise the whole editor.
-    func run() {
-        let script = hasSelection ? selectedText : text
-        guard !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isRunning else { return }
+    /// Runs the selection if there is one, otherwise the whole editor (⌘↩).
+    func run() { run(.automatic) }
+
+    func runSelected() { run(.selection) }
+
+    func runAll() { run(.all) }
+
+    /// Runs only the statement under the cursor (⌘⇧↩).
+    func runCurrentStatement() { run(.currentStatement) }
+
+    /// The statement Run Current Statement and Explain use: the one around the cursor.
+    var currentStatement: SQLSplitter.Statement? {
+        SQLSplitter.statement(at: textView?.selectedRange().location ?? cursorOffset, in: text)
+    }
+
+    func run(_ scope: QueryRunScope) {
+        let script: String
+        switch scope {
+        case .automatic: script = hasSelection ? selectedText : text
+        case .all: script = text
+        case .selection: script = hasSelection ? selectedText : ""
+        case .currentStatement: script = currentStatement?.sql ?? ""
+        }
+        execute(SQLSplitter.split(script), history: script)
+    }
+
+    /// Rows read per result set: Options › Records › Limit records (the rest via Load More / Fetch All).
+    var rowLimit: Int? {
+        let options = AppOptions.shared.values
+        return options.limitRecords ? max(options.recordsPerPage, 1) : nil
+    }
+
+    /// Runs `statements` one by one, so results before a failing statement stay visible.
+    /// With `explaining`, results that are plans get a tree in the result panel.
+    private func execute(_ statements: [String], history script: String, explaining: Bool = false) {
+        guard !statements.isEmpty, !isRunning else { return }
         isRunning = true
         error = nil
         failedStatement = nil
@@ -155,25 +209,42 @@ final class QueryTabModel: Identifiable {
         runStarted = Date()
         runEnded = nil
         showResultPanel = true
+        let limit = rowLimit
         task = Task {
-            defer { isRunning = false }
+            defer {
+                isRunning = false
+                activeDriver = nil
+            }
             let clock = ContinuousClock()
             let start = clock.now
-            // Statement by statement, so results before a failing statement stay visible.
-            let statements = SQLSplitter.split(script)
             results = []
+            plans = [:]
+            var driver: (any DatabaseDriver)?
+            do {
+                driver = try await queryDriver()
+            } catch {
+                self.error = "Could not open the editor's connection: \(error.localizedDescription)"
+                failureMessage = error.localizedDescription
+            }
+            activeDriver = driver
             for (index, statement) in statements.enumerated() {
+                guard let driver else { break }
                 let began = Date()
                 let statementStart = clock.now
                 do {
                     try Task.checkCancellation()
-                    let result = try await driver.executeTimed(statement)
+                    let result = try await driver.executeTimed(statement, maxRows: limit)
                     results.append(result)
+                    if explaining, let plan = QueryPlan.parse(result, kind: driver.config.kind) { plans[result.id] = plan }
                     executions.append(StatementExecution(statement: statement, start: began, duration: result.duration, result: result, error: nil))
-                } catch is CancellationError {
-                    error = "Cancelled."
-                    break
                 } catch {
+                    // Stop makes the server fail the statement ("canceling statement due to user request"…).
+                    if error is CancellationError || Task.isCancelled {
+                        self.error = "Cancelled."
+                        executions.append(StatementExecution(statement: statement, start: began, duration: clock.now - statementStart, result: nil,
+                                                             error: error is CancellationError ? "Cancelled" : "Cancelled: \(error.localizedDescription)"))
+                        break
+                    }
                     let prefix = statements.count > 1 ? "Statement \(index + 1) of \(statements.count) failed: " : ""
                     self.error = prefix + error.localizedDescription
                     failedStatement = statement
@@ -196,20 +267,106 @@ final class QueryTabModel: Identifiable {
         }
     }
 
+    /// Stop: cancels the run and asks the server to stop the running statement
+    /// (`pg_cancel_backend`, `KILL QUERY`, `sqlite3_interrupt`).
     func cancel() {
-        task?.cancel()
-        task = nil
+        guard let task else { return }
+        task.cancel()
+        if let driver = activeDriver {
+            Task { try? await driver.cancelCurrentQuery() }
+        }
+    }
+
+    /// The tab is closing: stop what runs and close the editor's connection.
+    func close() {
+        isClosed = true
+        cancel()
+        releaseConnection()
+    }
+
+    /// The editor's own connection, opened (with the connection's Initial Queries) on first use.
+    private func queryDriver() async throws -> any DatabaseDriver {
+        if let ownDriver { return ownDriver }
+        let config = contextDriver.config
+        guard let context, let session = context.session, !(config.kind == .sqlite && config.filePath.isEmpty) else { return contextDriver }
+        let dedicated = session.makeDedicatedDriver(database: context.name)
+        try await dedicated.connect()
+        do {
+            try await Session.runInitialQueries(session.config, on: dedicated)
+        } catch {
+            await dedicated.disconnect()
+            throw error
+        }
+        // Closed or pointed elsewhere while connecting.
+        guard !isClosed, self.context === context else {
+            await dedicated.disconnect()
+            throw CancellationError()
+        }
+        ownDriver = dedicated
+        return dedicated
+    }
+
+    private func releaseConnection() {
+        guard let dedicated = ownDriver else { return }
+        ownDriver = nil
+        Task { await dedicated.disconnect() }
     }
 
     /// Points the editor at another connection or database (the toolbar's pickers).
     func use(_ newContext: DatabaseContext) {
         guard !isRunning else { return }
+        releaseConnection()
         context = newContext
-        driver = newContext.driver
+        contextDriver = newContext.driver
         location = newContext.location(schema: newContext.defaultSchema)
         connectionID = newContext.session?.id
         databaseName = newContext.name
         scheduleColumnPrefetch()
+    }
+
+    // MARK: - Capped results
+
+    /// A result cut at the row limit whose statement only reads, so it can run again for more rows.
+    func canLoadMore(_ result: QueryResult) -> Bool {
+        result.isTruncated && SQLSplitter.isReadOnly(result.statement)
+    }
+
+    /// Runs the statement again reading one more page of rows.
+    func loadMore(_ result: QueryResult) {
+        reload(result, maxRows: result.rows.count + (rowLimit ?? 1_000))
+    }
+
+    /// Runs the statement again reading every row.
+    func fetchAll(_ result: QueryResult) {
+        reload(result, maxRows: nil)
+    }
+
+    private func reload(_ result: QueryResult, maxRows: Int?) {
+        guard !isRunning, canLoadMore(result), results.contains(where: { $0.id == result.id }) else { return }
+        isRunning = true
+        error = nil
+        task = Task {
+            defer {
+                isRunning = false
+                activeDriver = nil
+            }
+            do {
+                let driver = try await queryDriver()
+                activeDriver = driver
+                let began = Date()
+                let fresh = try await driver.executeTimed(result.statement, maxRows: maxRows)
+                guard let index = results.firstIndex(where: { $0.id == result.id }) else { return }
+                results[index] = fresh
+                if let plan = plans.removeValue(forKey: result.id) { plans[fresh.id] = plan }
+                if let position = executions.firstIndex(where: { $0.result?.id == result.id }) {
+                    executions[position] = StatementExecution(statement: executions[position].statement, start: began, duration: fresh.duration, result: fresh, error: nil)
+                }
+                if selectedResultID == result.id { selectedResultID = fresh.id }
+                if resultPane == .result(result.id) { resultPane = .result(fresh.id) }
+            } catch {
+                self.error = Task.isCancelled ? "Cancelled." : error.localizedDescription
+            }
+        }
     }
 
     /// Result sets of the last run, numbered "Result 1", "Result 2"… in the result panel.
@@ -220,16 +377,16 @@ final class QueryTabModel: Identifiable {
         return .milliseconds(runEnded.timeIntervalSince(runStarted) * 1_000)
     }
 
-    /// Runs EXPLAIN (EXPLAIN QUERY PLAN on SQLite) for the selection or the whole editor.
+    /// Explain: the plan of the selected statement, or of the one under the cursor, without running it
+    /// (`SQLDialect.explain`). The plan opens as a tree in an "Explain" result tab.
     func explain() {
-        let script = (hasSelection ? selectedText : text).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let first = SQLSplitter.split(script).first else { return }
-        let prefix = context?.kind == .sqlite ? "EXPLAIN QUERY PLAN " : "EXPLAIN "
-        let previousSelection = selectedText
-        selectedText = prefix + first
-        run()
-        selectedText = previousSelection
+        let statement = hasSelection ? SQLSplitter.split(selectedText).first : currentStatement?.sql
+        guard let statement else { return }
+        let sql = contextDriver.dialect.explain(statement)
+        execute([sql], history: sql, explaining: true)
     }
+
+    func plan(for result: QueryResult) -> [QueryPlanNode]? { plans[result.id] }
 
     /// Navicat's Beautify SQL: keywords uppercased and one clause per line (done locally, no AI).
     func beautify() {
@@ -241,6 +398,7 @@ final class QueryTabModel: Identifiable {
     func updateCursor(in textView: NSTextView) {
         let string = textView.string as NSString
         let location = min(textView.selectedRange().location, string.length)
+        cursorOffset = location
         let before = string.substring(to: location)
         let lines = before.components(separatedBy: "\n")
         cursorLine = lines.count
