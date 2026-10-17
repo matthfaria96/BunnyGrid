@@ -460,4 +460,64 @@ public actor PostgresDriver: DatabaseDriver {
         }
         return error.localizedDescription
     }
+
+    // MARK: - Bound parameters
+
+    /// `$n` placeholders in the extended protocol: int8, float8, bool and bytea go in binary; dates,
+    /// times and uuids as text with their type OID; other text with an unspecified type, which the
+    /// server resolves from the column as it would a quoted literal (so `char(n)` keys, citext,
+    /// enums and domains compare exactly as before).
+    public func executeStatement(_ sql: String, parameters: [SQLParameter]) async throws -> QueryResult {
+        guard !parameters.isEmpty else { return try await executeStatement(sql) }
+        guard let connection else { throw DatabaseError.notConnected }
+        var binds = PostgresBindings(capacity: parameters.count)
+        for parameter in parameters {
+            switch parameter {
+            case .null: binds.appendNull()
+            case .integer(let v): binds.append(v)
+            case .double(let v): binds.append(v)
+            case .bool(let v): binds.append(v)
+            case .blob(let data): binds.append(ByteBuffer(bytes: data))
+            case .typed(let v, let category): binds.append(TextParameter(v, type: Self.textType(for: category)))
+            case .text(let v), .untyped(let v): binds.append(TextParameter(v, type: .null))
+            }
+        }
+        do {
+            let future: EventLoopFuture<PostgresQueryResult> = connection.query(PostgresQuery(unsafeSQL: sql, binds: binds), logger: logger)
+            let result = try await future.get()
+            let columns = result.rows.first.map { $0.map(\.columnName) } ?? []
+            return QueryResult(statement: sql, columns: columns, rows: result.rows.map { $0.map(Self.value) },
+                               affectedRows: columns.isEmpty ? result.metadata.rows : nil)
+        } catch {
+            throw DatabaseError.queryFailed(Self.message(for: error))
+        }
+    }
+
+    private static func textType(for category: ColumnTypeCategory) -> PostgresDataType {
+        switch category {
+        case .date: .date
+        case .time: .time
+        case .timeWithTimeZone: .timetz
+        case .dateTime: .timestamp
+        case .dateTimeWithTimeZone: .timestamptz
+        case .uuid: .uuid
+        default: .null
+        }
+    }
+}
+
+/// A parameter sent in text format with a declared type; type 0 leaves it to the server to infer.
+private struct TextParameter: PostgresDynamicTypeEncodable {
+    let text: String
+    let psqlType: PostgresDataType
+    var psqlFormat: PostgresFormat { .text }
+
+    init(_ text: String, type: PostgresDataType) {
+        self.text = text
+        self.psqlType = type
+    }
+
+    func encode<JSONEncoder: PostgresJSONEncoder>(into byteBuffer: inout ByteBuffer, context: PostgresEncodingContext<JSONEncoder>) {
+        byteBuffer.writeString(text)
+    }
 }

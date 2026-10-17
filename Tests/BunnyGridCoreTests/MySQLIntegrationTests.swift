@@ -225,6 +225,31 @@ struct MySQLIntegrationTests {
         }
     }
 
+    @Test func editedValuesRoundTripAsTypedParameters() async throws {
+        try await withDatabase { driver, db in
+            _ = try await driver.executeStatement("""
+                CREATE TABLE t (id int AUTO_INCREMENT PRIMARY KEY, n int, big bigint, f double, b tinyint(1), d date, ts datetime,
+                                raw varbinary(16), amount decimal(8,3), note text, qty int DEFAULT 7) ENGINE=InnoDB
+                """)
+            let columns = try await driver.listColumns(table: "t", schema: db)
+            let bytes = Data([0x00, 0x27, 0x5c, 0xff])
+            try await driver.applyChanges([.insert(values: [
+                ColumnValue("n", .text("42")), ColumnValue("big", .text("9007199254740993")), ColumnValue("f", .text("2.5")),
+                ColumnValue("b", .text("1")), ColumnValue("d", .text("2024-02-29")), ColumnValue("ts", .text("2024-02-29 13:45:00")),
+                ColumnValue("raw", .blob(bytes)), ColumnValue("amount", .text("12.345")), ColumnValue("note", .text("O'Hara \\ x")),
+            ])], table: "t", schema: db, columns: columns)
+            let row = try #require(try await driver.executeStatement(
+                "SELECT id, n, big, f, b, CAST(d AS CHAR), CAST(ts AS CHAR), raw, CAST(amount AS CHAR), note, qty FROM t").rows.first)
+            #expect(Array(row.dropFirst()) == [.integer(42), .integer(9_007_199_254_740_993), .double(2.5), .integer(1), .text("2024-02-29"),
+                                               .text("2024-02-29 13:45:00"), .blob(bytes), .text("12.345"), .text("O'Hara \\ x"), .integer(7)])
+
+            try await driver.applyChanges([
+                .update(key: [ColumnValue("id", row[0])], values: [ColumnValue("n", .text("-5")), ColumnValue("raw", .blob(Data())), .defaultValue("qty")]),
+            ], table: "t", schema: db, columns: columns)
+            #expect(try await driver.executeStatement("SELECT n, raw, qty FROM t").rows == [[.integer(-5), .blob(Data()), .integer(7)]])
+        }
+    }
+
     @Test func designerAltersRealTable() async throws {
         try await withDatabase { driver, db in
             let dialect = driver.dialect
@@ -378,6 +403,71 @@ struct MySQLIntegrationTests {
         let driver = try await MySQL.driver(readOnly: true)
         await #expect(throws: DatabaseError.self) { try await driver.execute("CREATE DATABASE should_not_exist") }
         #expect(try await driver.execute("SELECT 2").first?.rows == [[.integer(2)]])
+        await driver.disconnect()
+    }
+}
+
+/// SSL, socket file and SSH tunnel against MySQL/MariaDB. Each case is skipped unless its variables are set:
+/// `BUNNYGRID_MYSQL_SSL_CA` (CA of a server with SSL on), `BUNNYGRID_MYSQL_SSL_CERT` / `_KEY` / `_USER` (client
+/// certificate for a user created `REQUIRE X509`), `BUNNYGRID_MYSQL_SOCKET` (the server's socket file), and
+/// `BUNNYGRID_SSH_PORT` / `BUNNYGRID_SSH_USER` / `BUNNYGRID_SSH_KEYS` (an sshd that reaches the server; key `user_ecdsa`).
+@Suite(.enabled(if: MySQL.enabled, "set BUNNYGRID_MYSQL_PORT to run against MySQL/MariaDB"), .serialized)
+struct MySQLConnectivityIntegrationTests {
+    private static let env = ProcessInfo.processInfo.environment
+
+    private func ping(_ config: ConnectionConfig, secrets: ConnectionSecrets = ConnectionSecrets(password: MySQL.password)) async throws -> MySQLDriver {
+        let driver = MySQLDriver(config: config, secrets: secrets)
+        try await driver.connect()
+        #expect(try await driver.execute("SELECT 1").first?.rows.first?.first?.displayString == "1")
+        return driver
+    }
+
+    @Test(.enabled(if: env["BUNNYGRID_MYSQL_SSL_CA"] != nil, "set BUNNYGRID_MYSQL_SSL_CA"))
+    func verifiedSSL() async throws {
+        var config = MySQL.config(tls: .verifyCA)
+        config.ssl = SSLFiles(caCertificatePath: Self.env["BUNNYGRID_MYSQL_SSL_CA"] ?? "")
+        let driver = try await ping(config)
+        let cipher = try await driver.execute("SHOW SESSION STATUS LIKE 'Ssl_cipher'").first?.rows.first?.last?.displayString ?? ""
+        #expect(!cipher.isEmpty)
+        await driver.disconnect()
+        config.ssl = SSLFiles(caCertificatePath: "/nonexistent/ca.pem")
+        let failing = MySQLDriver(config: config, secrets: ConnectionSecrets(password: MySQL.password))
+        await #expect(throws: DatabaseError.self) { try await failing.connect() }
+    }
+
+    @Test(.enabled(if: env["BUNNYGRID_MYSQL_SSL_CERT"] != nil && env["BUNNYGRID_MYSQL_SSL_USER"] != nil, "set BUNNYGRID_MYSQL_SSL_CERT, _KEY and _USER"))
+    func clientCertificate() async throws {
+        var config = MySQL.config(tls: .require)
+        config.username = Self.env["BUNNYGRID_MYSQL_SSL_USER"] ?? ""
+        config.ssl = SSLFiles(clientCertificatePath: Self.env["BUNNYGRID_MYSQL_SSL_CERT"] ?? "", clientKeyPath: Self.env["BUNNYGRID_MYSQL_SSL_KEY"] ?? "")
+        let driver = try await ping(config, secrets: ConnectionSecrets())
+        await driver.disconnect()
+    }
+
+    @Test(.enabled(if: env["BUNNYGRID_MYSQL_SOCKET"] != nil, "set BUNNYGRID_MYSQL_SOCKET"))
+    func socketFile() async throws {
+        var config = MySQL.config()
+        config.host = "no-such-host.invalid"
+        config.socketPath = Self.env["BUNNYGRID_MYSQL_SOCKET"]
+        let driver = try await ping(config)
+        await driver.disconnect()
+    }
+
+    @Test(.enabled(if: env["BUNNYGRID_SSH_PORT"] != nil && env["BUNNYGRID_SSH_KEYS"] != nil, "set BUNNYGRID_SSH_PORT and BUNNYGRID_SSH_KEYS"))
+    func sshTunnelAndCancel() async throws {
+        var config = MySQL.config()
+        config.ssh = SSHTunnelConfig(
+            enabled: true, host: "127.0.0.1", port: Int(Self.env["BUNNYGRID_SSH_PORT"] ?? "") ?? 22,
+            username: Self.env["BUNNYGRID_SSH_USER"] ?? NSUserName(), authMethod: .publicKey,
+            privateKeyPath: ((Self.env["BUNNYGRID_SSH_KEYS"] ?? "") as NSString).appendingPathComponent("user_ecdsa"))
+        let driver = try await ping(config)
+        // KILL QUERY goes over a second connection through the same tunnel.
+        let sleeper = Task { try await driver.executeStatement("SELECT SLEEP(20)") }
+        try await Task.sleep(for: .milliseconds(500))
+        try await driver.cancelCurrentQuery()
+        let started = ContinuousClock.now
+        _ = try? await sleeper.value
+        #expect(ContinuousClock.now - started < .seconds(10))
         await driver.disconnect()
     }
 }

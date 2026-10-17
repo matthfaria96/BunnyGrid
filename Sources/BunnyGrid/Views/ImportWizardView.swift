@@ -299,7 +299,7 @@ struct ImportWizardView: View {
             })
         }
         do {
-            try await target.context.driver.applyChanges(changes, table: target.object.name, schema: driverSchema)
+            try await target.context.driver.applyChanges(changes, table: target.object.name, schema: driverSchema, columns: targetColumns)
             result = "Imported \(changes.count.formatted()) records into \(target.object.name)."
             reloadTabs(showing: target.object)
         } catch {

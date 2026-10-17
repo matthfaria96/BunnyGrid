@@ -360,6 +360,53 @@ public actor MySQLDriver: DatabaseDriver {
         }
     }
 
+    // MARK: - Bound parameters
+
+    /// `?` placeholders through a prepared statement: integers, doubles, booleans and blobs in binary,
+    /// DATE / DATETIME / TIMESTAMP as MySQL time values, everything else as strings.
+    public func executeStatement(_ sql: String, parameters: [SQLParameter]) async throws -> QueryResult {
+        guard !parameters.isEmpty else { return try await executeStatement(sql) }
+        guard let connection else { throw DatabaseError.notConnected }
+        let binds = parameters.map(Self.data)
+        let box = MetadataBox()
+        let rows: [MySQLRow]
+        do {
+            rows = try await connection.query(sql, binds, onMetadata: { box.affected = Int($0.affectedRows) }).get()
+        } catch {
+            throw DatabaseError.queryFailed(String(describing: error))
+        }
+        let columns = rows.first?.columnDefinitions.map(\.name) ?? []
+        let values = rows.map { row in
+            zip(row.columnDefinitions, row.values).map { definition, buffer in
+                Self.value(definition: definition, buffer: buffer, format: row.format)
+            }
+        }
+        return QueryResult(statement: sql, columns: columns, rows: values, affectedRows: columns.isEmpty ? box.affected : nil)
+    }
+
+    private static func data(_ parameter: SQLParameter) -> MySQLData {
+        switch parameter {
+        case .null: return .null
+        case .integer(let v): return MySQLData(int: Int(v))
+        case .double(let v): return MySQLData(double: v)
+        case .bool(let v): return MySQLData(bool: v)
+        case .text(let v), .untyped(let v): return MySQLData(string: v)
+        case .blob(let data):
+            return MySQLData(type: .blob, format: .binary, buffer: ByteBuffer(bytes: data), isUnsigned: false)
+        case .typed(let v, let category):
+            switch category {
+            case .date:
+                let parts = v.split(separator: "-").compactMap { UInt16($0) }
+                if parts.count == 3 { return MySQLData(time: MySQLTime(year: parts[0], month: parts[1], day: parts[2])) }
+            case .dateTime, .dateTimeWithTimeZone:
+                if let time = MySQLTime(v) { return MySQLData(time: time) }
+            default:
+                break
+            }
+            return MySQLData(string: v)
+        }
+    }
+
     /// Binary TIME: sign, days, hours, minutes, seconds and optional microseconds, so `-838:59:59` and
     /// durations over a day survive (MySQLNIO's MySQLTime drops the days and the sign).
     static func binaryTime(_ buffer: inout ByteBuffer, decimals: UInt8 = 0) -> String {

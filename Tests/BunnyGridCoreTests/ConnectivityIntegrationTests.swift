@@ -200,6 +200,26 @@ struct SSHTunnelIntegrationTests {
         await endpoint.close(tunnels: manager)
     }
 
+    /// A real driver (shared tunnel manager) with verify-full SSL: Stop cancels through a second tunneled connection.
+    @Test(.enabled(if: Env.tlsEnabled, "needs the SSL server")) func cancelGoesThroughTheTunnel() async throws {
+        var config = Env.pg(.verifyFull, ssl: SSLFiles(caCertificatePath: Env.cert("ca.crt")))
+        config.ssh = Env.ssh(key: "user_ecdsa")
+        let driver = PostgresDriver(config: config, password: nil)
+        try await driver.connect()
+        #expect(await driver.backendPID != nil)
+        let sleeper = Task { try await driver.executeStatement("SELECT pg_sleep(20)") }
+        try await Task.sleep(for: .milliseconds(500))
+        let started = ContinuousClock.now
+        try await driver.cancelCurrentQuery()
+        let result = await sleeper.result
+        #expect(ContinuousClock.now - started < .seconds(10))
+        if case .success = result { Issue.record("the query should have been cancelled") }
+        #expect(try await probe(driver).ssl == "true")
+        #expect(await SSHTunnelManager.shared.openTunnelCount == 1)
+        await driver.disconnect()
+        #expect(await SSHTunnelManager.shared.openTunnelCount == 0)
+    }
+
     @Test func explainsSSHFailures() async throws {
         let knownHosts = Env.temporaryKnownHosts()
         let manager = SSHTunnelManager(knownHosts: knownHosts)

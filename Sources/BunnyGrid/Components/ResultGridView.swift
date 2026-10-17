@@ -9,7 +9,14 @@ struct GridEditing {
     var cellState: (Int, Int) -> GridCellState
     var onEdit: (Int, Int, CellValue) -> Void
     var onToggleDelete: (IndexSet) -> Void
+    /// Cells the one-line inline editor shouldn't take (multi-line text, blobs); they open the value editor.
+    var prefersEditor: ((Int, Int) -> Bool)?
+    var onSetDefault: ((Int, Int) -> Void)?
+    var onDuplicate: ((IndexSet) -> Void)?
 }
+
+/// The value editor shown in a popover over a cell; `close` dismisses it.
+typealias GridEditorContent = (GridCell, _ close: @escaping () -> Void) -> AnyView
 
 /// Spreadsheet-style grid backed by `NSTableView`, laid out like Navicat's: a row-marker column,
 /// two-line headers (name and type), a focused cell and light row selection.
@@ -27,6 +34,11 @@ struct ResultGridView: NSViewRepresentable {
     var onFocusChange: ((GridCell?) -> Void)?
     var onSelectionChange: ((IndexSet) -> Void)?
     var scrollRequest: GridScrollRequest?
+    /// Enables "Copy As › Insert / Update Statements" for this table.
+    var copyTarget: GridCopyTarget?
+    /// The value editor (⌥↩, double-click on long values); without it the grid only edits inline.
+    var editorContent: GridEditorContent?
+    var editorRequest: GridEditorRequest?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -87,6 +99,10 @@ struct ResultGridView: NSViewRepresentable {
         private var onSelectionChange: ((IndexSet) -> Void)?
         private var lastScrollRequest: GridScrollRequest?
         private var lockedColumns: Set<Int> = []
+        private var copyTarget: GridCopyTarget?
+        private var editorContent: GridEditorContent?
+        private var lastEditorRequest: GridEditorRequest?
+        private var popover: NSPopover?
 
         /// Options › Records › Grid Font, or the default grid font.
         static var font: NSFont { AppOptions.shared.values.gridFont?.nsFont ?? NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular) }
@@ -104,6 +120,8 @@ struct ResultGridView: NSViewRepresentable {
             onFocusChange = view.onFocusChange
             onSelectionChange = view.onSelectionChange
             editing = view.editing
+            copyTarget = view.copyTarget
+            editorContent = view.editorContent
             let lockedChanged = view.lockedColumns != lockedColumns
             lockedColumns = view.lockedColumns
             let typesChanged = view.columnTypes != columnTypes
@@ -129,6 +147,43 @@ struct ResultGridView: NSViewRepresentable {
                 tableView.scrollRowToVisible(request.row)
                 tableView.selectRowIndexes(IndexSet(integer: request.row), byExtendingSelection: false)
             }
+            if let request = view.editorRequest, request != lastEditorRequest {
+                lastEditorRequest = request
+                // Wait for the reload and scroll above to lay out the cell the popover points at.
+                DispatchQueue.main.async { [weak self] in self?.showEditor(for: request.cell) }
+            }
+        }
+
+        // MARK: Value editor
+
+        var hasEditor: Bool { editorContent != nil }
+
+        /// Opens the value editor in a popover pointing at the cell.
+        func showEditor(for cell: GridCell) {
+            guard let tableView, let editorContent, cell.row < rows.count,
+                  let position = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == String(cell.column) }) else { return }
+            if tableView.currentEditor() != nil { tableView.window?.makeFirstResponder(tableView) }
+            popover?.close()
+            setFocus(cell, notify: true)
+            tableView.scrollRowToVisible(cell.row)
+            tableView.scrollColumnToVisible(position)
+            let popover = NSPopover()
+            popover.behavior = .semitransient
+            popover.animates = false
+            let host = NSHostingController(rootView: editorContent(cell) { [weak popover, weak tableView] in
+                popover?.close()
+                if let tableView { tableView.window?.makeFirstResponder(tableView) }
+            })
+            host.sizingOptions = .preferredContentSize
+            popover.contentViewController = host
+            popover.show(relativeTo: tableView.frameOfCell(atColumn: position, row: cell.row), of: tableView, preferredEdge: .maxY)
+            self.popover = popover
+        }
+
+        /// ⌥↩ opens the value editor on the focused cell.
+        func showEditorForFocused() {
+            guard let cell = focusedCell else { return }
+            showEditor(for: cell)
         }
 
         private func rebuildColumns(_ tableView: NSTableView) {
@@ -208,6 +263,12 @@ struct ResultGridView: NSViewRepresentable {
         /// Return edits the focused cell; typing a character starts editing with that character.
         @discardableResult
         func beginEditingFocused(with text: String? = nil) -> Bool {
+            if text == nil, let cell = focusedCell, hasEditor, cell.row < rows.count, !canEdit(row: cell.row, column: cell.column),
+               isEditable, editing?.prefersEditor?(cell.row, cell.column) == true {
+                // Return on a long or binary value opens the full editor instead.
+                showEditor(for: cell)
+                return true
+            }
             guard let tableView, let cell = focusedCell, canEdit(row: cell.row, column: cell.column),
                   let position = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == String(cell.column) }) else { return false }
             tableView.editColumn(position, row: cell.row, with: nil, select: true)
@@ -242,12 +303,13 @@ struct ResultGridView: NSViewRepresentable {
             return Int(tableView.tableColumns[position].identifier.rawValue)
         }
 
-        /// Inline editing handles single-line text; long values go through the Cell Editor.
+        /// Inline editing handles single-line text; long values, blobs and binary columns go through the value editor.
         private func canEdit(row: Int, column: Int) -> Bool {
             guard isEditable, !lockedColumns.contains(column), state(row: row, column: column) != .deleted else { return false }
+            if editing?.prefersEditor?(row, column) == true { return false }
             let value = value(row: row, column: column)
             if case .blob = value { return false }
-            return !value.displayString.contains("\n")
+            return !value.displayString.contains(where: \.isNewline)
         }
 
         // MARK: Focus
@@ -309,19 +371,25 @@ struct ResultGridView: NSViewRepresentable {
             let state = state(row: row, column: column)
             let isFocused = focusedCell == GridCell(row: row, column: column)
             // Navicat draws NULL as "(Null)" and unset cells of a new record as "(Default)".
-            let text = state == .defaultValue ? "(Default)"
-                : value.isNull ? "(Null)"
-                : value.displayString.replacingOccurrences(of: "\n", with: "⏎")
+            let text: String = if state == .defaultValue || state == .editedDefault {
+                "(Default)"
+            } else if value.isNull {
+                "(Null)"
+            } else if case .blob(let data) = value {
+                Self.blobLabel(data)
+            } else {
+                value.displayString
+            }
 
             let color: NSColor = if isFocused {
                 .white
             } else {
                 switch state {
-                case .edited: .systemOrange
+                case .edited, .editedDefault: .systemOrange
                 case .inserted: .systemGreen
                 case .defaultValue: .tertiaryLabelColor
                 case .deleted: .secondaryLabelColor
-                case .normal: value.isNull ? .tertiaryLabelColor : .labelColor
+                case .normal: value.isNull || value.isBlob ? .tertiaryLabelColor : .labelColor
                 }
             }
             var attributes: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: color]
@@ -330,11 +398,39 @@ struct ResultGridView: NSViewRepresentable {
             paragraph.alignment = value.isNumeric || numericColumns.contains(column) ? .right : .left
             paragraph.lineBreakMode = .byTruncatingTail
             attributes[.paragraphStyle] = paragraph
-            field.attributedStringValue = NSAttributedString(string: text, attributes: attributes)
+            field.attributedStringValue = Self.singleLine(text, attributes: attributes, markerColor: color.withAlphaComponent(0.5))
             field.drawsBackground = isFocused
             field.backgroundColor = isFocused ? .controlAccentColor : .clear
             field.isEditable = canEdit(row: row, column: column)
             return field
+        }
+
+        /// Multi-line text on one line: each line break becomes a dimmed ⏎ marker. Only the start of
+        /// very long values is laid out; the cell truncates it anyway.
+        static func singleLine(_ text: String, attributes: [NSAttributedString.Key: Any], markerColor: NSColor) -> NSAttributedString {
+            let visible = text.utf16.count > 600 ? String(text.prefix(600)) : text
+            guard visible.contains(where: \.isNewline) else { return NSAttributedString(string: visible, attributes: attributes) }
+            var marker = attributes
+            marker[.foregroundColor] = markerColor
+            let result = NSMutableAttributedString()
+            var first = true
+            for line in visible.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+                if !first { result.append(NSAttributedString(string: " ⏎ ", attributes: marker)) }
+                result.append(NSAttributedString(string: String(line), attributes: attributes))
+                first = false
+            }
+            return result
+        }
+
+        /// "(PNG) 12.3 KB", "(Binary) 16 bytes": what a blob is, instead of its bytes.
+        static func blobLabel(_ data: Data) -> String {
+            let kind = BlobKind.detect(data)
+            let name = switch kind {
+            case .binary: "Binary"
+            case .utf8Text: "Text"
+            default: kind.rawValue.uppercased()
+            }
+            return "(\(name)) " + ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
         }
 
         private func makeField() -> NSTextField {
@@ -381,8 +477,13 @@ struct ResultGridView: NSViewRepresentable {
             guard let tableView else { return }
             let row = tableView.clickedRow
             let position = tableView.clickedColumn
-            guard row >= 0, let column = dataColumn(at: position), canEdit(row: row, column: column) else { return }
-            tableView.editColumn(position, row: row, with: nil, select: true)
+            guard row >= 0, let column = dataColumn(at: position) else { return }
+            if canEdit(row: row, column: column) {
+                tableView.editColumn(position, row: row, with: nil, select: true)
+            } else if hasEditor {
+                // Long text, blobs and read-only grids open the full value editor.
+                showEditor(for: GridCell(row: row, column: column))
+            }
         }
 
         func controlTextDidBeginEditing(_ notification: Notification) {
@@ -405,6 +506,15 @@ struct ResultGridView: NSViewRepresentable {
             } else {
                 editing?.onEdit(row, column, .text(newText))
             }
+        }
+
+        /// ⌥↩ while typing in a cell keeps what was typed and continues in the value editor.
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            guard selector == #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), hasEditor,
+                  let field = control as? NSTextField, let (row, column) = position(of: field), let tableView else { return false }
+            tableView.window?.makeFirstResponder(tableView)
+            showEditor(for: GridCell(row: row, column: column))
+            return true
         }
 
         private func position(of field: NSTextField) -> (Int, Int)? {
@@ -434,22 +544,84 @@ struct ResultGridView: NSViewRepresentable {
             guard let tableView, tableView.clickedRow >= 0 else { return }
             let rows = targetRows()
             let column = dataColumn(at: tableView.clickedColumn)
-            menu.addItem(item(rows.count > 1 ? "Copy \(rows.count) Rows" : "Copy Row", #selector(copyRows)))
+            let plural = rows.count > 1 ? "s" : ""
+            if column != nil, hasEditor {
+                let open = item("Open in Value Editor", #selector(openEditor), image: "square.and.pencil")
+                open.keyEquivalent = "\r"
+                open.keyEquivalentModifierMask = .option
+                menu.addItem(open)
+                menu.addItem(.separator())
+            }
+            menu.addItem(item(rows.count > 1 ? "Copy \(rows.count) Rows" : "Copy Row", #selector(copyRows), image: "doc.on.doc"))
             if column != nil { menu.addItem(item("Copy Cell Value", #selector(copyCell))) }
+            menu.addItem(copyAsItem())
             guard isEditable else { return }
             menu.addItem(.separator())
-            if let column, state(row: tableView.clickedRow, column: column) != .deleted {
+            if let column, state(row: tableView.clickedRow, column: column) != .deleted, !lockedColumns.contains(column) {
                 menu.addItem(item("Set to NULL", #selector(setNull)))
+                menu.addItem(item("Set to Empty String", #selector(setEmpty)))
+                if editing?.onSetDefault != nil { menu.addItem(item("Set to DEFAULT", #selector(setDefault))) }
+                menu.addItem(.separator())
+            }
+            if editing?.onDuplicate != nil {
+                menu.addItem(item("Duplicate Record\(plural)", #selector(duplicateRows), image: "plus.square.on.square"))
             }
             let allDeleted = rows.allSatisfy { state(row: $0, column: 0) == .deleted }
-            let plural = rows.count > 1 ? "s" : ""
-            menu.addItem(item(allDeleted ? "Restore Record\(plural)" : "Delete Record\(plural)", #selector(toggleDelete)))
+            menu.addItem(item(allDeleted ? "Restore Record\(plural)" : "Delete Record\(plural)", #selector(toggleDelete),
+                              image: allDeleted ? "arrow.uturn.backward" : "trash"))
         }
 
-        private func item(_ title: String, _ action: Selector) -> NSMenuItem {
+        private func item(_ title: String, _ action: Selector, image: String? = nil) -> NSMenuItem {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
+            if let image { item.image = NSImage(systemSymbolName: image, accessibilityDescription: nil) }
             return item
+        }
+
+        /// "Copy As ▸": statements (with a table), TSV, CSV, JSON and Markdown of the target rows.
+        private func copyAsItem() -> NSMenuItem {
+            let submenu = NSMenu()
+            for format in RowCopyFormat.allCases {
+                if format.needsTable && copyTarget == nil { continue }
+                if format == .updateStatements && (copyTarget?.keyColumns.isEmpty ?? true) { continue }
+                if format == .tsv { submenu.addItem(.separator()) }
+                let entry = item(format.displayName, #selector(copyAs(_:)))
+                entry.representedObject = format.rawValue
+                submenu.addItem(entry)
+            }
+            let parent = NSMenuItem(title: "Copy As", action: nil, keyEquivalent: "")
+            parent.submenu = submenu
+            return parent
+        }
+
+        @objc private func copyAs(_ sender: NSMenuItem) {
+            guard let raw = sender.representedObject as? String, let format = RowCopyFormat(rawValue: raw), let tableView else { return }
+            let order = tableView.tableColumns.filter { !$0.isHidden }.compactMap { Int($0.identifier.rawValue) }
+            let selected = targetRows().filter { $0 < rows.count }
+            let text = RowCopier.text(format, columns: order.map { columns[$0] },
+                                      rows: selected.map { row in order.map { value(row: row, column: $0) } },
+                                      table: copyTarget?.table, schema: copyTarget?.schema, kind: copyTarget?.kind ?? .postgresql,
+                                      keyColumns: copyTarget?.keyColumns ?? [])
+            if let text { copyToPasteboard(text) } else { NSSound.beep() }
+        }
+
+        @objc private func openEditor() {
+            guard let tableView, let column = dataColumn(at: tableView.clickedColumn) else { return }
+            showEditor(for: GridCell(row: tableView.clickedRow, column: column))
+        }
+
+        @objc private func setEmpty() {
+            guard let tableView, let column = dataColumn(at: tableView.clickedColumn) else { return }
+            for row in targetRows() { editing?.onEdit(row, column, .text("")) }
+        }
+
+        @objc private func setDefault() {
+            guard let tableView, let column = dataColumn(at: tableView.clickedColumn) else { return }
+            for row in targetRows() { editing?.onSetDefault?(row, column) }
+        }
+
+        @objc private func duplicateRows() {
+            editing?.onDuplicate?(targetRows())
         }
 
         @objc private func copyRows() {
@@ -509,6 +681,9 @@ final class GridTableView: NSTableView {
             coordinator.moveFocus(by: 1)
         case 36 where modifiers.isEmpty, 76 where modifiers.isEmpty:
             if !coordinator.beginEditingFocused() { super.keyDown(with: event) }
+        case 36 where modifiers == .option, 76 where modifiers == .option:
+            // ⌥↩ opens the full value editor (multi-line text, JSON, blobs, dates).
+            if coordinator.hasEditor { coordinator.showEditorForFocused() } else { super.keyDown(with: event) }
         default:
             // Typing a printable character starts editing the focused cell, as in a spreadsheet.
             if modifiers.isEmpty, let characters = event.characters, characters.count == 1,

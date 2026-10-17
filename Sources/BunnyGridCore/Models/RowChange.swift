@@ -4,10 +4,18 @@ import Foundation
 public struct ColumnValue: Hashable, Sendable {
     public var column: String
     public var value: CellValue
+    /// Assign the column's DEFAULT instead of `value` (UPDATE … SET col = DEFAULT; left out of INSERTs).
+    public var useDefault: Bool
 
-    public init(_ column: String, _ value: CellValue) {
+    public init(_ column: String, _ value: CellValue, useDefault: Bool = false) {
         self.column = column
         self.value = value
+        self.useDefault = useDefault
+    }
+
+    /// The column set back to its DEFAULT.
+    public static func defaultValue(_ column: String) -> ColumnValue {
+        ColumnValue(column, .null, useDefault: true)
     }
 }
 

@@ -38,6 +38,7 @@ BUNNYGRID_DATA_DIR=/tmp/bg build/BunnyGrid.app/Contents/MacOS/BunnyGrid \
 ```
 
 Com `--query`, `--explain` abre o plano da consulta em vez do resultado. No build de debug: `--demo-edits` (com `--open-table`) cria alterações pendentes de exemplo, `--focus-cell` foca uma célula, `--show-objects` abre a aba Objects com a pasta Tables selecionada, `--design TABELA` abre o Design Table (com `--design-section "Foreign Keys"` ou outra aba já selecionada e `--demo-fk` para uma chave alterada pendente), `--new-table` abre o New Table, `--connect-first` abre a primeira conexão salva, `--begin-transaction` e `--generate` (com `--open-table`) abrem o modo de transação e a Data Generation. Com `--open-table`, `--export-wizard`, `--import-wizard csv|json|sql [ARQUIVO]` e `--execute-sql ARQUIVO [--run-script]` abrem o Export Wizard, o Import Wizard e o Execute SQL File (`-export.format sql|xlsx|json|csv` escolhe o formato).
+Também com `--open-table`: `--value-editor [COLUNA] [--row N]` abre o editor de valor sobre a célula, `--cell-editor [COLUNA]` abre o painel Cell Editor e `--demo-duplicate` duplica as duas primeiras linhas.
 
 ### Testes de integração com PostgreSQL
 
@@ -128,6 +129,10 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
 - **Table Profile ▾**: salva e reaplica filtro, ordenação, colunas ocultas e máscaras de uma tabela; atualiza um perfil com a visão atual e marca um perfil para abrir a tabela já com ele.
 - **Data Profiling**: por coluna, registros, nulos (com medidor de preenchimento), distintos, mínimo, máximo, média e os valores mais frequentes em barras.
 - **Data Masking**: mascara colunas no grid e nas exportações (total, parcial, e-mail, últimos 4 dígitos); colunas mascaradas não são editáveis e o banco não é alterado.
+- **Editor de valor** (Cell Editors do Navicat): ⌥↩, duplo clique num valor longo ou "Open in Value Editor" abre um popover sobre a célula; o mesmo editor fica no painel **Cell Editor**. O editor segue o tipo da coluna: texto multilinha (sem aspas inteligentes), **JSON** com Beautify, Minify e validação (a ordem das chaves é mantida), **blobs** em hex ou imagem com Load from File / Save to File, e **calendário e hora** para colunas de data. NULL, vazio e DEFAULT aplicam na hora. No grid, quebras de linha aparecem como ⏎ e blobs como "(PNG) 14 KB".
+- **Duplicar registros** (botão ⧉ no rodapé ou menu de contexto): copia as linhas como inserções pendentes, sem as chaves geradas (serial, identity, auto-increment, chave com default).
+- **Copy As** no menu de contexto do grid: INSERT e UPDATE (aba de tabela), TSV com ou sem nomes, CSV, JSON (colunas na ordem do grid) e tabela Markdown.
+- **Parâmetros tipados**: as edições vão ao banco como parâmetros (`$1` / `?`) com o tipo da coluna (inteiro, double, booleano, bytes, data/hora, NULL), em vez de literais de texto.
 - **Aba Objects** com Rows, Data Length, Engine (MySQL) e Comment.
 - **Fluidez**: abas mantêm rolagem, seleção e texto ao alternar; ← → movem a célula em foco, Return ou digitar começa a editar; duplo clique na divisória do cabeçalho ajusta a coluna; Return / ← / → na árvore abrem, recolhem e expandem com animação; ⌘W fecha a aba, ⌃Tab / ⌃⇧Tab trocam de aba; os painéis lembram se estavam abertos.
 - **Begin Transaction** (aba de tabela): abre uma conexão só da aba e executa `BEGIN`; as edições aplicadas ficam invisíveis para outras conexões até **Commit** (que aplica antes as edições pendentes) ou **Rollback**. Fechar a aba desfaz a transação.

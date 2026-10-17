@@ -225,6 +225,49 @@ public actor SQLiteDriver: DatabaseDriver {
             return .text(String(cString: text))
         }
     }
+
+    // MARK: - Bound parameters
+
+    /// `?` placeholders bound with sqlite3_bind_*: integers, reals and blobs keep their storage class;
+    /// dates and other text go in as TEXT (SQLite has no date type) and column affinity applies as usual.
+    public func executeStatement(_ sql: String, parameters: [SQLParameter]) async throws -> QueryResult {
+        guard !parameters.isEmpty else { return try await executeStatement(sql) }
+        guard let db else { throw DatabaseError.notConnected }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+            throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        for (offset, parameter) in parameters.enumerated() {
+            let index = Int32(offset + 1)
+            let rc: Int32 = switch parameter {
+            case .null: sqlite3_bind_null(stmt, index)
+            case .integer(let v): sqlite3_bind_int64(stmt, index, v)
+            case .double(let v): sqlite3_bind_double(stmt, index, v)
+            case .bool(let v): sqlite3_bind_int64(stmt, index, v ? 1 : 0)
+            case .text(let v), .typed(let v, _), .untyped(let v): sqlite3_bind_text(stmt, index, v, -1, transient)
+            case .blob(let data) where data.isEmpty:
+                // A NULL pointer would bind NULL; an empty blob is a zero-length blob.
+                sqlite3_bind_zeroblob(stmt, index, 0)
+            case .blob(let data):
+                data.withUnsafeBytes { sqlite3_bind_blob(stmt, index, $0.baseAddress, Int32($0.count), transient) }
+            }
+            guard rc == SQLITE_OK else { throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(db))) }
+        }
+
+        let columnCount = Int(sqlite3_column_count(stmt))
+        let columns = (0..<columnCount).map { String(cString: sqlite3_column_name(stmt, Int32($0))) }
+        var rows: [[CellValue]] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            guard rc == SQLITE_ROW else { throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(db))) }
+            rows.append((0..<columnCount).map { Self.value(stmt, Int32($0)) })
+        }
+        let affected = columnCount == 0 ? Int(sqlite3_changes(db)) : nil
+        return QueryResult(statement: sql, columns: columns, rows: rows, affectedRows: affected)
+    }
 }
 
 /// The open handle behind a lock, so `sqlite3_interrupt` from another thread never races `sqlite3_close`.
