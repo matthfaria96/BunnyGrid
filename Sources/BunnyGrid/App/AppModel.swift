@@ -770,6 +770,22 @@ final class AppModel {
 
     // MARK: - Launch arguments
 
+    /// Debug: `--attach FILE` once main is open; returns the database and table names for "alias.table".
+    private func resolveAttachedTable(_ name: String?, connection id: UUID, database: String) async -> (database: String, table: String?) {
+        guard let index = CommandLine.arguments.firstIndex(of: "--attach"), CommandLine.arguments.indices.contains(index + 1),
+              let session = sessions[id] else { return (database, name) }
+        let url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+        let alias = url.deletingPathExtension().lastPathComponent
+        while session.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
+        if !session.databases.contains(alias) {
+            do { try await session.attachSQLiteDatabase(path: url.path, alias: alias) } catch { alertMessage = error.localizedDescription }
+        }
+        expanded.insert(.database(id, alias))
+        session.openDatabase(alias)
+        guard let name, name.hasPrefix(alias + ".") else { return (database, name) }
+        return (alias, String(name.dropFirst(alias.count + 1)))
+    }
+
     /// Opens SQLite files passed on the command line (`BunnyGrid path/to/db.sqlite`).
     /// For development and screenshots, `--open-table NAME` and `--query SQL` open tabs once connected.
     private func openLaunchArguments() {
@@ -782,6 +798,8 @@ final class AppModel {
             arguments.removeFirst()
             switch flag {
             case "--open-table" where !arguments.isEmpty: tableName = arguments.removeFirst()
+            // `--attach FILE` attaches another SQLite file (alias = file name); `--open-table alias.table` / `--design alias.table`.
+            case "--attach" where !arguments.isEmpty: arguments.removeFirst()
             case "--query" where !arguments.isEmpty: query = arguments.removeFirst()
             // Their file arguments are not databases to open (handled after connecting / by the Import Wizard).
             case "--execute-sql" where !arguments.isEmpty, "--sync-target" where !arguments.isEmpty: arguments.removeFirst()
@@ -806,8 +824,9 @@ final class AppModel {
         #if DEBUG
         if let flagIndex = CommandLine.arguments.firstIndex(where: { $0 == "--design" || $0 == "--new-table" }), let id = opened {
             let args = CommandLine.arguments
-            let tableName = args[flagIndex] == "--design" && args.indices.contains(flagIndex + 1) ? args[flagIndex + 1] : nil
+            let requested = args[flagIndex] == "--design" && args.indices.contains(flagIndex + 1) ? args[flagIndex + 1] : nil
             Task {
+                let (database, tableName) = await resolveAttachedTable(requested, connection: id, database: database)
                 while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
                 guard let context = sessions[id]?.context(database) else { return }
                 let object = tableName.flatMap { name in context.objects(in: context.defaultSchema)?.first { $0.name == name } }
@@ -816,6 +835,10 @@ final class AppModel {
                     try? await Task.sleep(for: .milliseconds(300))
                     model.addField()
                     model.columns[1].name = "full_name"
+                    // `--save-design` saves it, to check ALTER paths end to end.
+                    if CommandLine.arguments.contains("--save-design") {
+                        if await model.save() == false { alertMessage = model.saveError ?? "Design not saved" }
+                    }
                 }
             }
         }
@@ -877,6 +900,7 @@ final class AppModel {
         #endif
         guard tableName != nil || query != nil, let id = opened else { return }
         Task {
+            let (database, tableName) = await resolveAttachedTable(tableName, connection: id, database: database)
             while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
             guard let context = sessions[id]?.context(database) else { return }
             if let query {
@@ -919,6 +943,11 @@ final class AppModel {
                         tab.addRow()
                         tab.setValue(.text("New customer"), row: tab.page?.rows.count ?? 0, column: 1)
                         tab.scroll(toRow: 0)
+                        // `--apply-edits` applies them, to check UPDATE / DELETE / INSERT paths end to end.
+                        if CommandLine.arguments.contains("--apply-edits") {
+                            await tab.applyChanges()
+                            if let error = tab.saveError { alertMessage = error }
+                        }
                     }
                     if CommandLine.arguments.contains("--begin-transaction") {
                         await tab.beginTransaction(session: sessions[id])

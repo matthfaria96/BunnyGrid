@@ -137,6 +137,10 @@ extension SQLDialect {
         guard !index.name.trimmingCharacters(in: .whitespaces).isEmpty else { throw TableDesignError.invalid("Every index needs a name.") }
         guard !index.columns.isEmpty else { throw TableDesignError.invalid("Index “\(index.name)” needs at least one field.") }
         let columns = index.columns.map(quoteIdentifier).joined(separator: ", ")
+        // SQLite qualifies the index, not the table ("CREATE INDEX extra.i ON t"), for an attached database.
+        if kind == .sqlite, let schema, !schema.isEmpty, schema != "main" {
+            return "CREATE \(index.unique ? "UNIQUE " : "")INDEX \(qualifiedName(table: index.name, schema: schema)) ON \(quoteIdentifier(table)) (\(columns))"
+        }
         // PostgreSQL and SQLite put indexes in the table's schema; only the table is qualified.
         return "CREATE \(index.unique ? "UNIQUE " : "")INDEX \(quoteIdentifier(index.name)) ON \(qualifiedName(table: table, schema: schema)) (\(columns))"
     }
@@ -145,7 +149,7 @@ extension SQLDialect {
         switch kind {
         case .mysql, .mariadb, .sqlserver, .mongodb: "DROP INDEX \(quoteIdentifier(name)) ON \(qualifiedName(table: table, schema: schema))"
         case .postgresql: "DROP INDEX \(qualifiedName(table: name, schema: schema))"
-        case .sqlite: "DROP INDEX \(quoteIdentifier(name))"
+        case .sqlite: "DROP INDEX \(schema.map { $0 == "main" ? quoteIdentifier(name) : qualifiedName(table: name, schema: $0) } ?? quoteIdentifier(name))"
         case .redis: ""
         }
     }
