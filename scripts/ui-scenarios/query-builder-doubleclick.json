@@ -1,0 +1,16 @@
+{
+  "name": "query-builder-doubleclick",
+  "args": ["{{DB}}", "--query", "", "--query-builder", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "sheet": true, "equals": "true", "note": "Query Builder sheet open"},
+    {"op": "waitFor", "probe": "qb.objects.count", "atLeast": 2},
+    {"op": "doubleClick", "label": "customers", "window": "sheet", "note": "double-click a table in the list adds it"},
+    {"op": "waitFor", "probe": "qb.query.tables.count", "equals": 1},
+    {"op": "doubleClick", "label": "orders", "window": "sheet"},
+    {"op": "waitFor", "probe": "qb.query.tables.count", "equals": 2},
+    {"op": "wait", "ms": 500},
+    {"op": "waitFor", "probe": "qb.sql", "contains": "JOIN", "note": "the foreign key joins them"},
+    {"op": "click", "label": "Cancel", "role": "button", "window": "sheet"},
+    {"op": "waitFor", "sheet": true, "equals": "false"}
+  ]
+}

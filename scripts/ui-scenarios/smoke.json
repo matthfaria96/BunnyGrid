@@ -1,0 +1,9 @@
+{
+  "name": "smoke",
+  "args": ["{{DB}}", "--open-table", "customers", "--window-size", "1280x800"],
+  "steps": [
+    {"op": "waitFor", "probe": "tabKind", "equals": "table"},
+    {"op": "screenshot", "name": "start"},
+    {"op": "dump"}
+  ]
+}

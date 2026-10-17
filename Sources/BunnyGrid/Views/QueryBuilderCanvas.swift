@@ -11,7 +11,10 @@ struct QueryBuilderCanvas: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let canvas = QueryBuilderCanvasView()
         canvas.model = model
-        let scroll = NSScrollView()
+        #if DEBUG
+        UIHarness.register("qb", model)
+        #endif
+        let scroll = QueryBuilderScrollView()
         scroll.documentView = canvas
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
@@ -29,6 +32,16 @@ struct QueryBuilderCanvas: NSViewRepresentable {
         guard let canvas = scroll.documentView as? QueryBuilderCanvasView else { return }
         canvas.fitContent(minimum: scroll.contentSize)
         canvas.needsDisplay = true
+    }
+}
+
+/// Keeps the diagram at least as large as the visible area. The canvas used to be sized only in
+/// updateNSView, which can run before the scroll view has a size: it then stayed 0×0 and the first
+/// table dropped from the list landed on the clip view (refused) until the model changed.
+final class QueryBuilderScrollView: NSScrollView {
+    override func tile() {
+        super.tile()
+        (documentView as? QueryBuilderCanvasView)?.fitContent(minimum: contentSize)
     }
 }
 
@@ -396,3 +409,40 @@ final class QBMenuItem: NSMenuItem {
 
     @objc private func run() { handler() }
 }
+
+#if DEBUG
+/// UI scenarios: "table:NAME" (header), "column:NAME.COLUMN" (row), "check:NAME.COLUMN" (its checkbox), "badge:N" (join N).
+extension QueryBuilderCanvasView: UIHarnessAnchors {
+    func harnessAnchor(_ name: String) -> NSRect? {
+        guard let model else { return nil }
+        let parts = name.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return nil }
+        func table(_ reference: String) -> Int? {
+            model.query.tables.first { $0.reference == reference || $0.name == reference }?.id
+        }
+        switch parts[0] {
+        case "table":
+            guard let id = table(parts[1]) else { return nil }
+            let box = frame(for: id)
+            return NSRect(x: box.minX, y: box.minY, width: box.width, height: headerHeight)
+        case "column", "check":
+            guard let dot = parts[1].firstIndex(of: "."), let id = table(String(parts[1][..<dot])) else { return nil }
+            let column = String(parts[1][parts[1].index(after: dot)...])
+            guard let index = rows(id).firstIndex(of: column), index < maxRows else { return nil }
+            let row = rowRect(id, index)
+            return parts[0] == "check" ? NSRect(x: row.minX + 2, y: row.minY, width: 18, height: row.height)
+                : NSRect(x: row.minX + 40, y: row.minY, width: row.width - 60, height: row.height)
+        case "badge":
+            guard let index = Int(parts[1]), model.query.joins.indices.contains(index) else { return nil }
+            return joinBadge(model.query.joins[index])
+        default:
+            return nil
+        }
+    }
+
+    var harnessValue: String? {
+        guard let model else { return nil }
+        return model.query.tables.map { "\($0.reference)@\(Int(model.positions[$0.id]?.x ?? 0)),\(Int(model.positions[$0.id]?.y ?? 0))" }.joined(separator: " ")
+    }
+}
+#endif

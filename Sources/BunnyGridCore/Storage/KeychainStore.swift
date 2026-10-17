@@ -45,6 +45,9 @@ public struct KeychainStore: Sendable {
     }
 
     public func password(account: String) -> String? {
+        #if DEBUG
+        if let memory = MemoryKeychain.shared { return memory.get(service + "/" + account) }
+        #endif
         var query = baseQuery(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -55,6 +58,9 @@ public struct KeychainStore: Sendable {
     }
 
     public func setPassword(_ password: String?, account: String) {
+        #if DEBUG
+        if let memory = MemoryKeychain.shared { return memory.set(password, service + "/" + account) }
+        #endif
         SecItemDelete(baseQuery(account) as CFDictionary)
         guard let password, !password.isEmpty else { return }
         var query = baseQuery(account)
@@ -71,3 +77,20 @@ public struct KeychainStore: Sendable {
         ]
     }
 }
+
+#if DEBUG
+/// `BUNNYGRID_MEMORY_KEYCHAIN=1` (debug builds, UI scenarios): secrets live in memory for the process, so
+/// scripted runs never read or write the login Keychain.
+final class MemoryKeychain: @unchecked Sendable {
+    static let shared: MemoryKeychain? = ProcessInfo.processInfo.environment["BUNNYGRID_MEMORY_KEYCHAIN"] == "1" ? MemoryKeychain() : nil
+
+    private let lock = NSLock()
+    private var items: [String: String] = [:]
+
+    func get(_ key: String) -> String? { lock.withLock { items[key] } }
+
+    func set(_ value: String?, _ key: String) {
+        lock.withLock { items[key] = (value?.isEmpty ?? true) ? nil : value }
+    }
+}
+#endif

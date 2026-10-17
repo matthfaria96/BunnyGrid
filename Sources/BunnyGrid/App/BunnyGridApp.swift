@@ -184,6 +184,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Benchmarks.start()
         #endif
         #if DEBUG
+        if let app = UIHarness.shared.app { UIHarness.start(app: app) }
+        #endif
+        #if DEBUG
         // `--window-size 1037x695` sizes the main window like a reference capture (visual checks).
         if let index = CommandLine.arguments.firstIndex(of: "--window-size"), CommandLine.arguments.indices.contains(index + 1) {
             let parts = CommandLine.arguments[index + 1].split(separator: "x").compactMap { Double($0) }

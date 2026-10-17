@@ -151,6 +151,9 @@ final class AppModel {
         #if DEBUG || BUNNYGRID_BENCH
         Benchmarks.app = self
         #endif
+        #if DEBUG
+        UIHarness.shared.app = self
+        #endif
         openLaunchArguments()
         runRedisLaunchFlags()
         // Plain launches restore the last session (Options › Tabs / Auto Recovery); launches with files or flags don't.
@@ -826,7 +829,7 @@ final class AppModel {
             case "--execute-sql" where !arguments.isEmpty, "--sync-target" where !arguments.isEmpty: arguments.removeFirst()
             case "--bi-export" where !arguments.isEmpty, "--bi-chart" where !arguments.isEmpty, "--bi-filter" where !arguments.isEmpty: arguments.removeFirst()
             // Benchmark options (Benchmarks.swift) take values that may be file paths.
-            case "--bench", "--bench-script", "--bench-table", "--bench-rows":
+            case "--bench", "--bench-script", "--bench-table", "--bench-rows", "--ui-script", "--ui-results", "--ui-shots":
                 if !arguments.isEmpty { arguments.removeFirst() }
             case "--import-wizard":
                 if let kind = arguments.first, ImportSourceKind(rawValue: kind) != nil {

@@ -354,11 +354,15 @@ struct ConditionGroupEditor: View {
             }
             HStack(spacing: 10) {
                 Button(group.isEmpty && path.isEmpty ? "<Click here to add conditions>" : "+ Condition") {
-                    update { $0.items.append(.predicate(newPredicate)) }
+                    // Built before `update`: reading the model (allColumns) inside the mutation of `model.query`
+                    // was an exclusivity violation, a crash on "<Click here to add conditions>".
+                    let predicate = newPredicate
+                    update { $0.items.append(.predicate(predicate)) }
                 }
                 if !group.isEmpty {
                     Button("+ Group") {
-                        update { $0.items.append(.group(BuilderGroup(conjunction: .or, items: [.predicate(newPredicate)]))) }
+                        let predicate = newPredicate
+                        update { $0.items.append(.group(BuilderGroup(conjunction: .or, items: [.predicate(predicate)]))) }
                     }
                 }
             }
