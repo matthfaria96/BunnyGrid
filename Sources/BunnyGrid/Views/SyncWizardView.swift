@@ -57,23 +57,30 @@ struct SyncWizardView: View {
                     EndpointPicker(title: "Source", endpoint: source)
                     Image(systemName: "arrow.right").font(.title3).foregroundStyle(.secondary).padding(.top, 28)
                     if request.tool == .dataTransfer {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Picker("", selection: $toFile) {
-                                Text("Connection").tag(false)
-                                Text("SQL File").tag(true)
-                            }
-                            .pickerStyle(.segmented).labelsHidden().fixedSize()
+                        // "Target" lines up with "Source"; the Connection / SQL File switch sits on the title row.
+                        Group {
                             if toFile {
-                                Picker("SQL dialect", selection: $fileKind) {
-                                    ForEach([DatabaseKind.postgresql, .mysql, .mariadb, .sqlite], id: \.self) { Text($0.displayName).tag($0) }
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Target").font(.subheadline.weight(.semibold))
+                                    Picker("SQL dialect", selection: $fileKind) {
+                                        ForEach([DatabaseKind.postgresql, .mysql, .mariadb, .sqlite], id: \.self) { Text($0.displayName).tag($0) }
+                                    }
+                                    .fixedSize()
+                                    Spacer(minLength: 0)
                                 }
-                                .fixedSize()
-                                Spacer(minLength: 0)
                             } else {
                                 EndpointPicker(title: "Target", endpoint: target)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .topTrailing) {
+                            Picker("", selection: $toFile) {
+                                Text("Connection").tag(false)
+                                Text("SQL File").tag(true)
+                            }
+                            .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+                            .offset(y: -3)
+                        }
                     } else {
                         EndpointPicker(title: "Target", endpoint: target)
                     }

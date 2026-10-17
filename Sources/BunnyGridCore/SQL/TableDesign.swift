@@ -12,9 +12,15 @@ public struct ColumnDesign: Hashable, Identifiable, Sendable {
     public var isPrimaryKey: Bool
     /// Attributes read from the table and written back unchanged (MySQL `AUTO_INCREMENT`, `ON UPDATE …`, `COMMENT`).
     public var extra: String
+    /// Column comment (PostgreSQL, MySQL); empty for none.
+    public var comment: String
+    /// Column collation (PostgreSQL, MySQL); empty for the default.
+    public var collation: String
 
     public init(originalName: String? = nil, name: String, type: String, nullable: Bool = true, defaultValue: String = "", isPrimaryKey: Bool = false,
-                extra: String = "") {
+                extra: String = "", comment: String = "", collation: String = "") {
+        self.comment = comment
+        self.collation = collation
         self.originalName = originalName
         self.name = name
         self.type = type
@@ -32,7 +38,9 @@ public struct ColumnDesign: Hashable, Identifiable, Sendable {
             nullable: column.nullable,
             defaultValue: column.defaultValue ?? "",
             isPrimaryKey: column.isPrimaryKey,
-            extra: column.extra ?? ""
+            extra: column.extra ?? "",
+            comment: column.comment ?? "",
+            collation: column.collation ?? ""
         )
     }
 }
@@ -44,8 +52,12 @@ public struct IndexDesign: Hashable, Identifiable, Sendable {
     public var name: String
     public var columns: [String]
     public var unique: Bool
+    /// SQLite uniques: the constraint's ON CONFLICT resolution (one of `SQLiteTableOptions.conflictResolutions`), nil for the default.
+    /// Such a unique is a table constraint (`UNIQUE (…) ON CONFLICT …`), since CREATE INDEX has no ON CONFLICT.
+    public var onConflict: String?
 
-    public init(originalName: String? = nil, name: String, columns: [String], unique: Bool = false) {
+    public init(originalName: String? = nil, name: String, columns: [String], unique: Bool = false, onConflict: String? = nil) {
+        self.onConflict = onConflict
         self.originalName = originalName
         self.name = name
         self.columns = columns
@@ -54,6 +66,12 @@ public struct IndexDesign: Hashable, Identifiable, Sendable {
 
     public init(_ index: TableIndex) {
         self.init(originalName: index.name, name: index.name, columns: index.columns, unique: index.unique)
+    }
+
+    /// SQLite: a unique kept as a table constraint rather than CREATE INDEX (an automatic `sqlite_autoindex_*`
+    /// index, or a unique with ON CONFLICT).
+    public var isTableConstraint: Bool {
+        unique && (name.hasPrefix("sqlite_autoindex_") || onConflict != nil)
     }
 }
 
@@ -89,12 +107,39 @@ extension SQLDialect {
 
     public func columnDefinition(_ column: ColumnDesign) -> String {
         var sql = "\(quoteIdentifier(column.name)) \(column.type.trimmingCharacters(in: .whitespaces))"
+        if let collate = collateClause(column.collation) { sql += collate }
         if !column.nullable { sql += " NOT NULL" }
         let defaultValue = column.defaultValue.trimmingCharacters(in: .whitespaces)
         if !defaultValue.isEmpty { sql += " DEFAULT \(defaultValue)" }
+        let isMySQL = kind == .mysql || kind == .mariadb
         let extra = column.extra.trimmingCharacters(in: .whitespaces)
-        if !extra.isEmpty, kind == .mysql || kind == .mariadb { sql += " \(extra)" }
+        if !extra.isEmpty, isMySQL { sql += " \(extra)" }
+        if isMySQL, !column.comment.isEmpty { sql += " COMMENT \(quoteLiteral(column.comment))" }
         return sql
+    }
+
+    /// ` COLLATE x` after a column type (PostgreSQL quotes the name, MySQL takes it bare or as a string); nil for none.
+    func collateClause(_ collation: String) -> String? {
+        let name = collation.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return nil }
+        switch kind {
+        case .postgresql: return " COLLATE \(quoteIdentifier(name))"
+        case .mysql, .mariadb:
+            return " COLLATE " + (name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") } ? name : quoteLiteral(name))
+        default: return nil
+        }
+    }
+
+    /// PostgreSQL: `COMMENT ON COLUMN` for each column whose comment differs from `original` (every non-empty one for a new table).
+    public func columnCommentStatements(table: String, schema: String?, columns: [ColumnDesign], original: [TableColumn] = []) -> [String] {
+        guard kind == .postgresql else { return [] }
+        let before = Dictionary(original.map { ($0.name, $0.comment ?? "") }, uniquingKeysWith: { first, _ in first })
+        return columns.compactMap { column in
+            let old = column.originalName.flatMap { before[$0] } ?? ""
+            guard column.comment != old else { return nil }
+            let value = column.comment.isEmpty ? "NULL" : quoteLiteral(column.comment)
+            return "COMMENT ON COLUMN \(qualifiedName(table: table, schema: schema)).\(quoteIdentifier(column.name)) IS \(value)"
+        }
     }
 
     func validate(_ columns: [ColumnDesign]) throws {
@@ -113,8 +158,9 @@ extension SQLDialect {
     }
 
     /// `sqliteOptions` (SQLite only) adds Primary Key ON CONFLICT, AUTOINCREMENT and WITHOUT ROWID.
+    /// `uniqueConstraints` (SQLite) are written inside the CREATE TABLE as `UNIQUE (…) ON CONFLICT …`.
     public func createTable(name: String, schema: String?, columns: [ColumnDesign], foreignKeys: [TableForeignKey] = [],
-                            sqliteOptions: SQLiteTableOptions? = nil) throws -> String {
+                            sqliteOptions: SQLiteTableOptions? = nil, uniqueConstraints: [IndexDesign] = []) throws -> String {
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { throw TableDesignError.invalid("The table needs a name.") }
         try validate(columns)
         var parts: [String]
@@ -128,6 +174,12 @@ extension SQLDialect {
             parts = columns.map { "  " + columnDefinition($0) }
             let keys = columns.filter(\.isPrimaryKey).map { quoteIdentifier($0.name) }
             if !keys.isEmpty { parts.append("  PRIMARY KEY (\(keys.joined(separator: ", ")))") }
+        }
+        if kind == .sqlite {
+            for unique in uniqueConstraints {
+                guard !unique.columns.isEmpty else { throw TableDesignError.invalid("Unique “\(unique.name)” needs at least one field.") }
+                parts.append("  " + SQLiteTableOptions.uniqueConstraint(unique, dialect: self))
+            }
         }
         for key in foreignKeys { parts.append("  " + (try foreignKeyClause(key, schema: schema))) }
         return "CREATE TABLE \(qualifiedName(table: name, schema: schema)) (\n\(parts.joined(separator: ",\n"))\n)\(suffix)"
@@ -205,12 +257,17 @@ extension SQLDialect {
             let nullChanged = before.nullable != column.nullable
             let newDefault = column.defaultValue.trimmingCharacters(in: .whitespaces)
             let defaultChanged = (before.defaultValue ?? "") != newDefault
-            guard typeChanged || nullChanged || defaultChanged else { continue }
+            let collationChanged = (kind == .postgresql || kind == .mysql || kind == .mariadb)
+                && (before.collation ?? "") != column.collation.trimmingCharacters(in: .whitespaces)
+            let commentChanged = (kind == .mysql || kind == .mariadb) && (before.comment ?? "") != column.comment
+            guard typeChanged || nullChanged || defaultChanged || collationChanged || commentChanged else { continue }
 
             let target = quoteIdentifier(column.name)
             switch kind {
             case .postgresql:
-                if typeChanged { statements.append("ALTER TABLE \(table) ALTER COLUMN \(target) TYPE \(column.type)") }
+                if typeChanged || collationChanged {
+                    statements.append("ALTER TABLE \(table) ALTER COLUMN \(target) TYPE \(column.type)\(collateClause(column.collation) ?? "")")
+                }
                 if nullChanged { statements.append("ALTER TABLE \(table) ALTER COLUMN \(target) \(column.nullable ? "DROP" : "SET") NOT NULL") }
                 if defaultChanged {
                     statements.append(newDefault.isEmpty
@@ -239,6 +296,8 @@ extension SQLDialect {
             }
             statements.append("ALTER TABLE \(table) ADD \(kind == .sqlserver ? "" : "COLUMN ")\(columnDefinition(column))")
         }
+        // PostgreSQL keeps comments apart from the definition; the renames above already ran, so new names apply.
+        statements += columnCommentStatements(table: name, schema: schema, columns: design, original: original)
         return statements
     }
 

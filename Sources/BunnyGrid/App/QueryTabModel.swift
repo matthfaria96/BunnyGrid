@@ -133,6 +133,8 @@ final class QueryTabModel: Identifiable {
     var aiRun: AskAIRun?
     /// The Ask AI card (compose state).
     var showingAskAICustom = false
+    /// The Query Builder sheet (hammer button).
+    var showingQueryBuilder = false
     /// The last custom question, so Back and reopening restore it.
     var lastCustomAction: AIAction?
     /// The database's shared driver (navigator, table tabs).
@@ -246,6 +248,7 @@ final class QueryTabModel: Identifiable {
             let start = clock.now
             // Pinned results stay as tabs when the editor runs again (Navicat's Pin Result).
             results = results.filter { pinnedResultIDs.contains($0.id) }
+            resultEditors = resultEditors.filter { pinnedResultIDs.contains($0.key) }
             plans = [:]
             var driver: (any DatabaseDriver)?
             do {
@@ -344,6 +347,7 @@ final class QueryTabModel: Identifiable {
     func use(_ newContext: DatabaseContext) {
         guard !isRunning else { return }
         releaseConnection()
+        resultEditors = [:]
         context = newContext
         contextDriver = newContext.driver
         location = newContext.location(schema: newContext.defaultSchema)
@@ -369,8 +373,72 @@ final class QueryTabModel: Identifiable {
         reload(result, maxRows: nil)
     }
 
+    // MARK: - Edit Result
+
+    /// The table-tab editing model behind each shown result set (Navicat's Edit Result), made on demand.
+    private(set) var resultEditors: [UUID: TableTabModel] = [:]
+
+    func editor(for result: QueryResult) -> TableTabModel? { resultEditors[result.id] }
+
+    /// Holds the editor a rerun closure belongs to (the closure is made before the editor).
+    private final class EditorBox { weak var editor: TableTabModel? }
+
+    /// Builds the result's editing model once: a statement reading one table (`ResultEditTarget`) with that table's
+    /// primary key in the result can be edited; anything else stays read-only with the reason as tooltip.
+    func prepareEditor(for result: QueryResult) async {
+        guard result.isResultSet, resultEditors[result.id] == nil, let context else { return }
+        let kind = contextDriver.config.kind
+        let detected = ResultEditTarget.detect(result.statement)
+        var target = try? detected.get()
+        var refusal: String?
+        if case .failure(let reason) = detected { refusal = reason.message }
+        if kind.isDocumentStore || kind == .redis { refusal = "Results of this connection can't be edited"; target = nil }
+        let schema: String? = switch kind {
+        case .postgresql, .sqlserver: target?.schema ?? context.defaultSchema
+        case .mysql, .mariadb: target?.schema ?? context.name
+        case .sqlite: target?.schema.flatMap { $0.lowercased() == "main" ? nil : $0 } ?? context.driverSchema(nil)
+        case .mongodb, .redis: nil
+        }
+        let object = DatabaseObject(schema: schema, name: target?.table ?? "Query Result", kind: .table)
+        let box = EditorBox()
+        let editor = TableTabModel(result: result, object: object, context: context, refusal: refusal) { [weak self] in
+            guard let self, let editor = box.editor else { throw CancellationError() }
+            return try await self.rerun(for: editor)
+        }
+        box.editor = editor
+        resultEditors[result.id] = editor
+        await editor.loadResultCatalog(target: target)
+    }
+
+    /// Runs an edited result's statement again (after Apply or Refresh) and puts the fresh rows in its tab.
+    private func rerun(for editor: TableTabModel) async throws -> QueryResult {
+        guard let oldID = resultEditors.first(where: { $0.value === editor })?.key,
+              let old = results.first(where: { $0.id == oldID }) else { throw DatabaseError.queryFailed("The result is no longer open.") }
+        let driver = try await queryDriver()
+        let began = Date()
+        let fresh = try await driver.executeTimed(old.statement, maxRows: old.isTruncated ? old.rows.count : rowLimit.map { max($0, old.rows.count) })
+        replaceResult(oldID, with: fresh, began: began, editor: editor)
+        return fresh
+    }
+
+    /// Puts a rerun's result in place of the old one: same tab, pin, plan and editor (when given; a stale editor is dropped).
+    private func replaceResult(_ oldID: UUID, with fresh: QueryResult, began: Date, editor: TableTabModel? = nil) {
+        guard let index = results.firstIndex(where: { $0.id == oldID }) else { return }
+        resultEditors[oldID] = nil
+        if let editor { resultEditors[fresh.id] = editor }
+        results[index] = fresh
+        if let plan = plans.removeValue(forKey: oldID) { plans[fresh.id] = plan }
+        if let position = executions.firstIndex(where: { $0.result?.id == oldID }) {
+            executions[position] = StatementExecution(statement: executions[position].statement, start: began, duration: fresh.duration, result: fresh, error: nil)
+        }
+        if pinnedResultIDs.remove(oldID) != nil { pinnedResultIDs.insert(fresh.id) }
+        if selectedResultID == oldID { selectedResultID = fresh.id }
+        if resultPane == .result(oldID) { resultPane = .result(fresh.id) }
+    }
+
     private func reload(_ result: QueryResult, maxRows: Int?) {
         guard !isRunning, canLoadMore(result), results.contains(where: { $0.id == result.id }) else { return }
+        if resultEditors[result.id]?.hasChanges == true { return }
         isRunning = true
         error = nil
         task = Task {
@@ -383,14 +451,7 @@ final class QueryTabModel: Identifiable {
                 activeDriver = driver
                 let began = Date()
                 let fresh = try await driver.executeTimed(result.statement, maxRows: maxRows)
-                guard let index = results.firstIndex(where: { $0.id == result.id }) else { return }
-                results[index] = fresh
-                if let plan = plans.removeValue(forKey: result.id) { plans[fresh.id] = plan }
-                if let position = executions.firstIndex(where: { $0.result?.id == result.id }) {
-                    executions[position] = StatementExecution(statement: executions[position].statement, start: began, duration: fresh.duration, result: fresh, error: nil)
-                }
-                if selectedResultID == result.id { selectedResultID = fresh.id }
-                if resultPane == .result(result.id) { resultPane = .result(fresh.id) }
+                replaceResult(result.id, with: fresh, began: began)
             } catch {
                 self.error = Task.isCancelled ? "Cancelled." : error.localizedDescription
             }

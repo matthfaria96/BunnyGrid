@@ -74,7 +74,7 @@ final class MainSplitViewController: NSSplitViewController {
         if isCapture || UserDefaults.standard.object(forKey: defaultsKey) == nil {
             let width = splitView.bounds.width
             if !navigatorItem.isCollapsed { splitView.setPosition(240, ofDividerAt: 0) }
-            if !rightItem.isCollapsed { splitView.setPosition(width - 345, ofDividerAt: 1) }
+            if !rightItem.isCollapsed { splitView.setPosition(width - 300, ofDividerAt: 1) }
         }
         if !isCapture { splitView.autosaveName = "BunnyGridMain" }
     }
@@ -88,7 +88,7 @@ final class MainSplitViewController: NSSplitViewController {
         rightItem.minimumThickness = expandedRightPane ? 560 : 300
         rightItem.maximumThickness = expandedRightPane ? 900 : 600
         if !rightItem.isCollapsed {
-            let target = splitView.bounds.width - (expandedRightPane ? 560 : 345)
+            let target = splitView.bounds.width - (expandedRightPane ? 560 : 300)
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.25
                 context.allowsImplicitAnimation = true

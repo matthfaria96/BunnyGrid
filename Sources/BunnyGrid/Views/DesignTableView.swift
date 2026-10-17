@@ -311,12 +311,21 @@ struct DesignTableView: View {
                 .menuStyle(.button)
                 .buttonStyle(.plain)
             }
-            TableColumn("ON CONFLICT") { _ in
-                HStack {
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+            TableColumn("ON CONFLICT") { index in
+                if model.kind == .sqlite {
+                    Picker("", selection: indexBinding(index.id, \.onConflict)) {
+                        Text("").tag(String?.none)
+                        ForEach(SQLiteTableOptions.conflictResolutions, id: \.self) { Text($0).tag(Optional($0)) }
+                    }
+                    .labelsHidden()
+                    .help("Changing it rebuilds the table (see SQL Preview)")
+                } else {
+                    HStack {
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                    }
+                    .help("ON CONFLICT is a SQLite clause")
                 }
-                .help("ON CONFLICT clauses aren't supported by the designer yet")
             }
             .width(min: 80, ideal: 110)
         }
@@ -407,6 +416,11 @@ struct DesignTableView: View {
                     Text("Comment:")
                     TextField("", text: $model.comment).frame(width: 360)
                 }
+                GridRow {
+                    Text("Auto Increment:")
+                    TextField("", text: $model.autoIncrementValue, prompt: Text("Default")).frame(width: 200)
+                        .help("The next value of the AUTO_INCREMENT column")
+                }
             case .postgresql, .sqlserver:
                 GridRow {
                     Text("Comment:").gridColumnAlignment(.trailing)
@@ -424,10 +438,16 @@ struct DesignTableView: View {
                 }
                 GridRow {
                     Text("Auto Increment:")
-                    Toggle("AUTOINCREMENT", isOn: $model.sqliteOptions.autoincrement)
-                        .toggleStyle(.checkbox)
-                        .disabled(model.sqliteOptions.withoutRowID)
-                        .help("Only applies to a single INTEGER primary key of a rowid table")
+                    HStack {
+                        Toggle("AUTOINCREMENT", isOn: $model.sqliteOptions.autoincrement)
+                            .toggleStyle(.checkbox)
+                            .disabled(model.sqliteOptions.withoutRowID)
+                            .help("Only applies to a single INTEGER primary key of a rowid table")
+                        TextField("", text: $model.autoIncrementValue, prompt: Text("Next value"))
+                            .frame(width: 120)
+                            .disabled(!model.sqliteOptions.autoincrement || model.sqliteOptions.withoutRowID)
+                            .help("The next id (kept in sqlite_sequence)")
+                    }
                 }
                 GridRow {
                     Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
@@ -472,12 +492,11 @@ struct DesignTableView: View {
             TableColumn("Name") { column in
                 TextField("", text: binding(column.id, \.name)).textFieldStyle(.plain)
             }
-            .width(min: 120, ideal: 180)
+            .width(min: 80, ideal: 100)
             TableColumn("Type") { column in
                 HStack(spacing: 2) {
                     TextField("", text: typePart(column.id, \.base))
                         .textFieldStyle(.plain)
-                        .font(.system(size: 12, design: .monospaced))
                     Menu {
                         ForEach(model.dialect.suggestedTypes, id: \.self) { type in
                             Button(type) { binding(column.id, \.type).wrappedValue = type }
@@ -492,7 +511,7 @@ struct DesignTableView: View {
                     .fixedSize()
                 }
             }
-            .width(min: 110, ideal: 140)
+            .width(min: 90, ideal: 100)
             TableColumn("Size") { column in
                 TextField("", text: typePart(column.id, \.size)).textFieldStyle(.plain).monospacedDigit()
             }
@@ -522,7 +541,7 @@ struct DesignTableView: View {
                 .buttonStyle(.plain)
                 .help(column.isPrimaryKey ? "Primary key" : "Make primary key")
             }
-            .width(60)
+            .width(40)
             TableColumn("") { column in
                 if column.originalName == nil {
                     Text("new").font(.system(size: 10)).foregroundStyle(.green)
@@ -633,10 +652,16 @@ private struct FieldProperties: View {
     private var inertProperties: [String] {
         switch model.kind {
         case .sqlite: ["Collate", "Not Null ON CONFLICT", "Generated Type", "Generated Value"]
-        case .postgresql, .sqlserver: ["Comment", "Collation"]
-        case .redis: []
-        case .mysql, .mariadb, .mongodb: ["Comment", "Character Set", "Collation"]
+        case .sqlserver: ["Comment", "Collation"]
+        case .postgresql, .redis: []
+        case .mysql, .mariadb: ["Character Set"]
+        case .mongodb: ["Comment", "Character Set", "Collation"]
         }
+    }
+
+    /// Comment and Collation, which the designer writes on PostgreSQL and MySQL.
+    private var editsCommentAndCollation: Bool {
+        [.postgresql, .mysql, .mariadb].contains(model.kind)
     }
 
     var body: some View {
@@ -648,6 +673,18 @@ private struct FieldProperties: View {
                         TextField("", text: $model.columns[index].defaultValue, prompt: Text("None"))
                             .font(.system(size: 12, design: .monospaced))
                             .frame(width: 280)
+                    }
+                    if editsCommentAndCollation {
+                        GridRow {
+                            Text("Comment:")
+                            TextField("", text: $model.columns[index].comment).frame(width: 280)
+                        }
+                        GridRow {
+                            Text("Collation:")
+                            TextField("", text: $model.columns[index].collation, prompt: Text("Default"))
+                                .font(.system(size: 12, design: .monospaced))
+                                .frame(width: 280)
+                        }
                     }
                     // Navicat's other field properties; the designer doesn't write them yet, so they stay inert.
                     ForEach(inertProperties, id: \.self) { title in

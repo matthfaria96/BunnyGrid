@@ -168,7 +168,12 @@ public actor PostgresDriver: DatabaseDriver {
                          ON k.constraint_name = tc.constraint_name AND k.table_schema = tc.table_schema
                       WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = c.table_schema
                         AND tc.table_name = c.table_name AND k.column_name = c.column_name
-                   )
+                   ),
+                   (SELECT d.description FROM pg_catalog.pg_attribute a
+                      JOIN pg_catalog.pg_description d ON d.objoid = a.attrelid AND d.objsubid = a.attnum
+                     WHERE a.attrelid = (quote_ident(c.table_schema) || '.' || quote_ident(c.table_name))::regclass
+                       AND a.attname = c.column_name),
+                   c.collation_name
               FROM information_schema.columns c
              WHERE c.table_schema = \(s) AND c.table_name = \(t)
              ORDER BY c.ordinal_position
@@ -180,7 +185,9 @@ public actor PostgresDriver: DatabaseDriver {
                 nullable: row[2] == .text("YES"),
                 defaultValue: row[3].isNull ? nil : row[3].displayString,
                 isPrimaryKey: row[5] == .bool(true),
-                ordinal: Int(row[4].displayString) ?? 0
+                ordinal: Int(row[4].displayString) ?? 0,
+                comment: row[6].isNull || row[6].displayString.isEmpty ? nil : row[6].displayString,
+                collation: row[7].isNull ? nil : row[7].displayString
             )
         }
     }
@@ -409,10 +416,11 @@ public actor PostgresDriver: DatabaseDriver {
             return (try? cell.decode(Decimal.self)).map { .text("\($0)") } ?? fallback(cell)
         case .uuid:
             return (try? cell.decode(UUID.self)).map { .text($0.uuidString.lowercased()) } ?? fallback(cell)
-        case .timestamptz:
-            return (try? cell.decode(Date.self)).map { .text(timestampTZFormat.format($0)) } ?? fallback(cell)
-        case .timestamp:
-            return (try? cell.decode(Date.self)).map { .text(timestampFormat.format($0)) } ?? fallback(cell)
+        case .timestamptz, .timestamp:
+            // Read the binary microseconds directly: Date loses the fraction's last digits, and a key
+            // shown without them would not find its row in the WHERE of an edit.
+            guard var bytes = cell.bytes, bytes.readableBytes == 8, let micros = bytes.readInteger(as: Int64.self) else { return fallback(cell) }
+            return .text(timestampText(microseconds: micros, timeZone: cell.dataType == .timestamptz ? .current : nil))
         case .date:
             return (try? cell.decode(Date.self)).map { .text(dateFormat.format($0)) } ?? fallback(cell)
         case .bytea:
@@ -433,11 +441,34 @@ public actor PostgresDriver: DatabaseDriver {
         return .text("<\(cell.dataType)>")
     }
 
-    private static let timestampFormat = Date.ISO8601FormatStyle(timeZone: .gmt)
-        .year().month().day().dateTimeSeparator(.space).time(includingFractionalSeconds: false)
-    /// Local time with its offset, like psql: 2026-10-16 19:57:39-03:00.
-    private static let timestampTZFormat = Date.ISO8601FormatStyle(timeZone: .current)
-        .year().month().day().dateTimeSeparator(.space).time(includingFractionalSeconds: false).timeZone(separator: .colon)
+    /// A binary timestamp (microseconds since 2000-01-01) as psql prints it: `2026-10-16 19:57:39.123456`,
+    /// the fraction without trailing zeros. With a time zone (timestamptz) the local time and its offset
+    /// (`…-03:00`); `infinity` / `-infinity` for the special values.
+    static func timestampText(microseconds: Int64, timeZone: TimeZone?) -> String {
+        if microseconds == .max { return "infinity" }
+        if microseconds == .min { return "-infinity" }
+        var seconds = microseconds / 1_000_000
+        var fraction = microseconds % 1_000_000
+        if fraction < 0 { fraction += 1_000_000; seconds -= 1 }
+        // PostgreSQL counts from 2000-01-01 UTC, Foundation from 2001-01-01 (366 days later).
+        let date = Date(timeIntervalSinceReferenceDate: TimeInterval(seconds) - 31_622_400)
+        let zone = timeZone ?? TimeZone(identifier: "UTC")!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let p = calendar.dateComponents([.era, .year, .month, .day, .hour, .minute, .second], from: date)
+        var text = String(format: "%04d-%02d-%02d %02d:%02d:%02d", p.year ?? 0, p.month ?? 1, p.day ?? 1, p.hour ?? 0, p.minute ?? 0, p.second ?? 0)
+        if fraction > 0 {
+            var digits = String(format: "%06lld", fraction)
+            while digits.hasSuffix("0") { digits.removeLast() }
+            text += "." + digits
+        }
+        if timeZone != nil {
+            let offset = zone.secondsFromGMT(for: date)
+            text += (offset < 0 ? "-" : "+") + String(format: "%02d:%02d", abs(offset) / 3600, abs(offset) / 60 % 60)
+        }
+        if p.era == 0 { text += " BC" }
+        return text
+    }
     private static let dateFormat = Date.ISO8601FormatStyle(timeZone: .gmt).year().month().day()
 
     /// Connection errors: server messages, SSL refusals and handshake failures in words.

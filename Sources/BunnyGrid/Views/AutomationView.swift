@@ -33,14 +33,14 @@ struct AutomationView: View {
 
     var body: some View {
         HSplitView {
-            jobList.frame(minWidth: 180, idealWidth: 220, maxWidth: 360)
+            jobList.frame(minWidth: 160, idealWidth: 200, maxWidth: 360)
             Group {
                 if draft != nil { editor } else {
                     ContentUnavailableView("No Batch Job", systemImage: "gearshape.2",
                                            description: Text("Create a batch job to run queries, SQL files, backups and exports, by hand or on a schedule — also while BunnyGrid is closed."))
                 }
             }
-            .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("Automation")
         .onAppear {

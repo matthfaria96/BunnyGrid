@@ -1,3 +1,4 @@
+import Compression
 import Foundation
 
 /// CRC-32 (IEEE 802.3, the polynomial zip and PNG use).
@@ -17,8 +18,42 @@ public enum CRC32 {
     }
 }
 
-/// A minimal zip writer: entries are stored uncompressed (method 0), which every unzip tool,
-/// Excel and Numbers accept. No zip64, so the archive must stay under 4 GB.
+/// Raw DEFLATE (RFC 1951, what zip method 8 holds) through the Compression framework, whose ZLIB
+/// algorithm reads and writes raw deflate streams without the zlib header.
+public enum Deflate {
+    public static func compress(_ data: Data) -> Data? {
+        guard !data.isEmpty else { return nil }
+        let capacity = data.count + data.count / 16 + 64
+        var out = Data(count: capacity)
+        let written = out.withUnsafeMutableBytes { dst in
+            data.withUnsafeBytes { src in
+                compression_encode_buffer(dst.bindMemory(to: UInt8.self).baseAddress!, capacity,
+                                          src.bindMemory(to: UInt8.self).baseAddress!, data.count, nil, COMPRESSION_ZLIB)
+            }
+        }
+        guard written > 0 else { return nil }
+        out.count = written
+        return out
+    }
+
+    /// Inflates `data`, which must expand to exactly `size` bytes (the size the zip directory records).
+    public static func decompress(_ data: Data, size: Int) -> Data? {
+        guard size > 0 else { return Data() }
+        guard !data.isEmpty else { return nil }
+        var out = Data(count: size)
+        let written = out.withUnsafeMutableBytes { dst in
+            data.withUnsafeBytes { src in
+                compression_decode_buffer(dst.bindMemory(to: UInt8.self).baseAddress!, size,
+                                          src.bindMemory(to: UInt8.self).baseAddress!, data.count, nil, COMPRESSION_ZLIB)
+            }
+        }
+        return written == size ? out : nil
+    }
+}
+
+/// A minimal zip writer: entries are deflated (method 8) when that makes them smaller, otherwise
+/// stored (method 0); every unzip tool, Excel and Numbers accept both. No zip64, so the archive
+/// must stay under 4 GB.
 public struct ZipWriter {
     public enum ZipError: LocalizedError {
         case tooLarge
@@ -29,6 +64,8 @@ public struct ZipWriter {
         let name: Data
         let crc: UInt32
         let size: UInt32
+        let compressedSize: UInt32
+        let method: UInt16
         let offset: UInt32
     }
 
@@ -36,6 +73,9 @@ public struct ZipWriter {
     private var entries: [Entry] = []
     private let dosTime: UInt16
     private let dosDate: UInt16
+
+    /// Deflate entries (false writes every entry stored, as earlier versions did).
+    public var compresses = true
 
     public init(date: Date = Date()) {
         let parts = Calendar(identifier: .gregorian).dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
@@ -46,21 +86,24 @@ public struct ZipWriter {
     public mutating func add(_ path: String, data: Data) throws {
         let name = Data(path.utf8)
         guard body.count + data.count + name.count + 30 < Int(UInt32.max), data.count < Int(UInt32.max) else { throw ZipError.tooLarge }
-        let entry = Entry(name: name, crc: CRC32.checksum(data), size: UInt32(data.count), offset: UInt32(body.count))
+        let deflated = compresses ? Deflate.compress(data).flatMap { $0.count < data.count ? $0 : nil } : nil
+        let payload = deflated ?? data
+        let entry = Entry(name: name, crc: CRC32.checksum(data), size: UInt32(data.count), compressedSize: UInt32(payload.count),
+                          method: deflated == nil ? 0 : 8, offset: UInt32(body.count))
         // Local file header.
         body.append(le32: 0x0403_4B50)
         body.append(le16: 20)              // version needed
         body.append(le16: 1 << 11)         // UTF-8 names
-        body.append(le16: 0)               // stored
+        body.append(le16: entry.method)
         body.append(le16: dosTime)
         body.append(le16: dosDate)
         body.append(le32: entry.crc)
-        body.append(le32: entry.size)      // compressed
+        body.append(le32: entry.compressedSize)
         body.append(le32: entry.size)      // uncompressed
         body.append(le16: UInt16(name.count))
         body.append(le16: 0)               // extra
         body.append(name)
-        body.append(data)
+        body.append(payload)
         entries.append(entry)
     }
 
@@ -77,11 +120,11 @@ public struct ZipWriter {
             out.append(le16: 20)           // version made by
             out.append(le16: 20)           // version needed
             out.append(le16: 1 << 11)
-            out.append(le16: 0)
+            out.append(le16: entry.method)
             out.append(le16: dosTime)
             out.append(le16: dosDate)
             out.append(le32: entry.crc)
-            out.append(le32: entry.size)
+            out.append(le32: entry.compressedSize)
             out.append(le32: entry.size)
             out.append(le16: UInt16(entry.name.count))
             out.append(le16: 0)            // extra
@@ -106,7 +149,8 @@ public struct ZipWriter {
     }
 }
 
-/// Reads the stored (uncompressed) entries of a zip, enough to check what ZipWriter produced.
+/// Reads the stored and deflated entries of a zip (what ZipWriter, Excel and Numbers write).
+/// No zip64, encryption or other methods: such an archive returns nil.
 public enum ZipReader {
     public static func entries(_ data: Data) -> [String: Data]? {
         let bytes = [UInt8](data)
@@ -121,13 +165,16 @@ public enum ZipReader {
         var p = u32(end + 16)
         var result: [String: Data] = [:]
         for _ in 0..<count {
-            guard p + 46 <= bytes.count, u32(p) == 0x0201_4B50, u16(p + 10) == 0 else { return nil }
-            let size = u32(p + 20), nameLength = u16(p + 28), extra = u16(p + 30), comment = u16(p + 32), offset = u32(p + 42)
+            guard p + 46 <= bytes.count, u32(p) == 0x0201_4B50, u16(p + 8) & 1 == 0 else { return nil }
+            let method = u16(p + 10)
+            guard method == 0 || method == 8 else { return nil }
+            let size = u32(p + 20), uncompressed = u32(p + 24), nameLength = u16(p + 28), extra = u16(p + 30), comment = u16(p + 32), offset = u32(p + 42)
             let name = String(decoding: bytes[(p + 46)..<(p + 46 + nameLength)], as: UTF8.self)
             guard offset + 30 <= bytes.count, u32(offset) == 0x0403_4B50 else { return nil }
             let start = offset + 30 + u16(offset + 26) + u16(offset + 28)
             guard start + size <= bytes.count else { return nil }
-            let content = Data(bytes[start..<(start + size)])
+            let raw = Data(bytes[start..<(start + size)])
+            guard let content = method == 0 ? raw : Deflate.decompress(raw, size: uncompressed) else { return nil }
             guard CRC32.checksum(content) == UInt32(u32(p + 16)) else { return nil }
             result[name] = content
             p += 46 + nameLength + extra + comment

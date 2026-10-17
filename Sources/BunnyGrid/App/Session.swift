@@ -45,7 +45,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
 
     static func categories(for kind: DatabaseKind) -> [ObjectCategory] {
         switch kind {
-        case .postgresql: allCases
+        case .postgresql: allCases.filter { $0 != .gridFS }  // GridFS is MongoDB-only
         case .mysql, .mariadb, .sqlserver: [.tables, .views, .functions, .queries, .backups]
         case .sqlite: [.tables, .views, .queries, .backups]
         case .redis: []
@@ -171,7 +171,9 @@ final class Session: Identifiable {
             try await driver.connect()
             try await Self.runInitialQueries(config, on: driver)
             serverVersion = (try? await driver.serverVersion()) ?? ""
-            databases = config.kind == .sqlite ? ["main"] : try await driver.listDatabases()
+            databases = config.kind == .sqlite
+                ? (config.attachedDatabases ?? []).isEmpty ? ["main"] : try await driver.listDatabases().filter { $0 != "temp" }
+                : config.visible(try await driver.listDatabases())
             if let kv = driver as? RedisDriver { redis = RedisBrowserModel(driver: kv, session: self); await redis?.refreshKeyspace() }
             state = .connected
             if config.kind.isKeyValue {
@@ -207,7 +209,7 @@ final class Session: Identifiable {
 
     func refreshDatabases() async {
         guard config.kind != .sqlite else { return }
-        databases = (try? await driver.listDatabases()) ?? databases
+        databases = (try? await driver.listDatabases()).map(config.visible) ?? databases
     }
 
     func context(_ name: String) -> DatabaseContext? { contexts[name] }

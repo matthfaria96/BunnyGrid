@@ -250,7 +250,7 @@ struct ResultGridView: NSViewRepresentable {
             var width = (title as NSString).size(withAttributes: [.font: headerFont]).width + 34
             if let type { width = max(width, (type as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width + 50) }
             for row in rows.prefix(sample) where row.indices.contains(column) {
-                let text = row[column].isNull ? "(Null)" : row[column].displayString
+                let text = row[column].isNull ? "(NULL)" : row[column].displayString
                 width = max(width, (text as NSString).size(withAttributes: [.font: Self.font]).width + 22)
                 if width >= cap { break }
             }
@@ -392,11 +392,11 @@ struct ResultGridView: NSViewRepresentable {
             let value = value(row: row, column: column)
             let state = state(row: row, column: column)
             let isFocused = focusedCell == GridCell(row: row, column: column)
-            // Navicat draws NULL as "(Null)" and unset cells of a new record as "(Default)".
+            // Navicat draws NULL as "(NULL)" and unset cells of a new record as "(Default)".
             let text: String = if state == .defaultValue || state == .editedDefault {
                 "(Default)"
             } else if value.isNull {
-                "(Null)"
+                "(NULL)"
             } else if case .blob(let data) = value {
                 Self.blobLabel(data)
             } else {
@@ -506,7 +506,7 @@ struct ResultGridView: NSViewRepresentable {
         }
 
         func controlTextDidBeginEditing(_ notification: Notification) {
-            // NULL is drawn as "(Null)"; start from an empty field instead of editing that label.
+            // NULL is drawn as "(NULL)"; start from an empty field instead of editing that label.
             guard let field = notification.object as? NSTextField, let (row, column) = position(of: field) else { return }
             field.textColor = .labelColor
             if value(row: row, column: column).isNull || state(row: row, column: column) == .defaultValue {

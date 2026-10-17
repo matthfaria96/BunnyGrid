@@ -69,6 +69,24 @@ struct PostgresIntegrationTests {
         await driver.disconnect()
     }
 
+    @Test func designerWritesColumnCommentAndCollation() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.executeStatement("CREATE TABLE \(schema).t (id int PRIMARY KEY, name text)")
+            let before = try await driver.listColumns(table: "t", schema: schema)
+            #expect(before[1].comment == nil && before[1].collation == nil)
+            var design = before.map(ColumnDesign.init)
+            design[1].comment = "the name"
+            design[1].collation = "C"
+            design.append(ColumnDesign(name: "code", type: "varchar(4)", comment: "new", collation: "POSIX"))
+            try await driver.applyDesign(try driver.dialect.alterTable(name: "t", schema: schema, original: before, design: design))
+            let after = try await driver.listColumns(table: "t", schema: schema)
+            #expect(after[1].comment == "the name")
+            #expect(after[1].collation == "C")
+            #expect(after[2].comment == "new" && after[2].collation == "POSIX")
+            #expect(try driver.dialect.alterTable(name: "t", schema: schema, original: after, design: after.map(ColumnDesign.init)).isEmpty)
+        }
+    }
+
     @Test func listsObjectsAndNavicatStyleTypes() async throws {
         try await withSchema { driver, schema in
             _ = try await driver.execute("""
@@ -98,6 +116,29 @@ struct PostgresIntegrationTests {
             let indexes = try await driver.listIndexes(table: "payment", schema: schema)
             #expect(indexes.contains { $0.name == "payment_customer_idx" && $0.columns == ["customer_id", "payment_date"] })
             #expect(indexes.contains { $0.primary })
+        }
+    }
+
+    @Test func fractionalTimestampKeysCanBeEdited() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.execute("""
+                CREATE TABLE \(schema).ev (at timestamp(6) PRIMARY KEY, tz timestamptz, note text);
+                INSERT INTO \(schema).ev VALUES ('2024-05-01 10:20:30.123456', '2024-05-01 10:20:30.5+00', 'a'),
+                                                ('1999-12-31 23:59:59.000001', NULL, 'b');
+                """)
+            let page = try await driver.executeStatement("SELECT * FROM \(schema).ev ORDER BY at DESC")
+            #expect(page.rows[0][0] == .text("2024-05-01 10:20:30.123456"))
+            #expect(page.rows[1][0] == .text("1999-12-31 23:59:59.000001"))
+            let columns = try await driver.listColumns(table: "ev", schema: schema)
+            for row in page.rows {
+                try await driver.applyChanges([.update(key: [ColumnValue("at", row[0])], values: [ColumnValue("note", .text("edited"))])],
+                                              table: "ev", schema: schema, columns: columns)
+            }
+            let notes = try await driver.executeStatement("SELECT note FROM \(schema).ev").rows
+            #expect(notes == [[.text("edited")], [.text("edited")]])
+            let tz = try await driver.executeStatement(
+                "SELECT tz = '\(page.rows[0][1].displayString)'::timestamptz FROM \(schema).ev WHERE tz IS NOT NULL").rows
+            #expect(tz == [[.bool(true)]], "timestamptz text keeps the fraction and the offset")
         }
     }
 
