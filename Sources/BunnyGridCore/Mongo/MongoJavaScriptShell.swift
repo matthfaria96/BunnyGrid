@@ -29,6 +29,8 @@ public final class MongoJavaScriptShell: @unchecked Sendable {
     private var bridgeTime: Duration = .zero
     private var printed: [String] = []
     private var lastError: Error?
+    /// Sets the watchdog's limit again (from its callback, on the script thread).
+    fileprivate var rearm: ((JSContextGroupRef?) -> Void)?
 
     public init(driver: MongoDriver, database: String, timeLimit: Duration = .seconds(60)) {
         self.driver = driver
@@ -261,11 +263,18 @@ public final class MongoJavaScriptShell: @unchecked Sendable {
             guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "JSContextGroupSetExecutionTimeLimit") else { return }
             let setLimit = unsafeBitCast(symbol, to: SetLimit.self)
             let group = JSContextGetGroup(context.jsGlobalContextRef)
-            let callback: Callback = { _, info in
+            let info = Unmanaged.passUnretained(shell).toOpaque()
+            // When the callback returns false JavaScriptCore doesn't always start the timer again (seen under load),
+            // so the callback sets the limit itself before letting the script go on.
+            let callback: Callback = { context, info in
                 guard let info else { return true }
-                return Unmanaged<MongoJavaScriptShell>.fromOpaque(info).takeUnretainedValue().shouldTerminate
+                let shell = Unmanaged<MongoJavaScriptShell>.fromOpaque(info).takeUnretainedValue()
+                if shell.shouldTerminate { return true }
+                if let context, let rearm = shell.rearm { rearm(JSContextGetGroup(context)) }
+                return false
             }
-            setLimit(group, 0.2, callback, Unmanaged.passUnretained(shell).toOpaque())
+            shell.rearm = { group in setLimit(group, 0.2, callback, info) }
+            setLimit(group, 0.2, callback, info)
         }
     }
 
