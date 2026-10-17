@@ -366,14 +366,20 @@ private struct NavContextMenu: View {
                 Button("New Database…") { app.creatingDatabaseFor = id }
                     .disabled(!isOpen)
             }
-            Button("New Query") { app.openQuery(in: app.sessions[id]?.contexts.values.first) }
-                .keyboardShortcut("y")
-                .disabled(!isOpen)
-            Divider()
-            Button("Console") { app.openQuery(in: app.sessions[id]?.contexts.values.first) }
-                .disabled(!isOpen)
-            Button("Execute SQL File…") { app.executeSQLFile(connectionID: id) }
-                .disabled(!isOpen)
+            // Redis has its own Console / Server Monitor items above; MongoDB runs no SQL files.
+            let kind = app.connection(id: id)?.kind
+            if kind != .redis {
+                Button("New Query") { app.openQuery(in: app.sessions[id]?.contexts.values.first) }
+                    .keyboardShortcut("y")
+                    .disabled(!isOpen)
+                Divider()
+                Button("Console") { app.openQuery(in: app.sessions[id]?.contexts.values.first) }
+                    .disabled(!isOpen)
+                if kind?.isDocumentStore != true {
+                    Button("Execute SQL File…") { app.executeSQLFile(connectionID: id) }
+                        .disabled(!isOpen)
+                }
+            }
             Divider()
             Button(app.starredConnections.contains(id) ? "Remove Star" : "Add Star") { app.toggleStar(id) }
             // "Color:" with the swatches inline, as in Navicat's menu.

@@ -501,7 +501,8 @@ private struct EndpointPicker: View {
             Form {
                 Picker("Connection", selection: $endpoint.connectionID) {
                     Text("Choose…").tag(UUID?.none)
-                    ForEach(app.connections) { config in
+                    // Data Transfer / Sync work on SQL engines only; Redis and MongoDB aren't offered.
+                    ForEach(app.connections.filter { $0.kind != .redis && !$0.kind.isDocumentStore }) { config in
                         Text("\(config.name) (\(config.kind.displayName))").tag(Optional(config.id))
                     }
                 }

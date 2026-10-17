@@ -18,12 +18,14 @@ struct WorkspaceView: View {
             // take the space from the navigator and clip the visible tab).
             Color.clear.overlay(alignment: .topLeading) { ZStack {
                 ObjectsView()
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
                     .opacity(app.selectedTabID == nil ? 1 : 0)
                     .allowsHitTesting(app.selectedTabID == nil)
                     .disabled(app.selectedTabID != nil)
                 ForEach(app.tabs) { tab in
                     let isActive = tab.id == app.selectedTabID
                     TabContent(tab: tab)
+                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
                         .opacity(isActive ? 1 : 0)
                         .allowsHitTesting(isActive)
                         .disabled(!isActive)
@@ -47,6 +49,7 @@ private struct TabContent: View {
         case .model(let model): ModelTabView(model: model)
         case .redis(let model): RedisTabView(model: model)
         case .document(let tab): DocumentTabView(tab: tab)
+        case .automation: AutomationView()
         }
     }
 }

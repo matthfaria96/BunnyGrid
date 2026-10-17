@@ -61,9 +61,10 @@ struct ObjectsView: View {
                     querySelection = []
                 }
             } else {
-                let noun = category.noun
+                let noun = context?.kind.isDocumentStore == true && category == .tables ? "Collection" : category.noun
                 let canOpen = selectedObject != nil && category.objectKind != .routine && category.objectKind != nil
-                let isTables = category == .tables
+                // Design, New and Import are SQL table tools; a MongoDB collection opens in its own viewer.
+                let isTables = category == .tables && context?.kind.isDocumentStore != true
                 let writable = context?.driver.config.readOnly == false
                 ToolIcon("folder", .blue, "Open \(noun)", isEnabled: canOpen) {
                     if let object = selectedObject { open(object) }
@@ -109,7 +110,7 @@ struct ObjectsView: View {
             }
             .font(.system(size: 13))
             .padding(.horizontal, 10)
-            .frame(minWidth: 90, maxWidth: 200, minHeight: 28, maxHeight: 28)
+            .frame(minWidth: 70, maxWidth: 200, minHeight: 28, maxHeight: 28)
             .glassBackground(in: Capsule())
         }
         .padding(.horizontal, 12)
@@ -284,7 +285,7 @@ private struct ToolIcon: View {
             Image(systemName: systemImage)
                 .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(isEnabled ? tint : Color.secondary.opacity(0.35))
-                .frame(width: 28, height: 26)
+                .frame(width: 26, height: 26)
                 .background(RoundedRectangle(cornerRadius: 6).fill(isHovering && isEnabled ? Color.primary.opacity(0.08) : .clear))
                 .contentShape(Rectangle())
         }

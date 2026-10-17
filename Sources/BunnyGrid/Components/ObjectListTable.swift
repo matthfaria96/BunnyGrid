@@ -58,6 +58,9 @@ struct ObjectListTable: NSViewRepresentable {
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
+        // Navicat indents the list (header and rows) about 20 pt from the pane edge.
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(top: 0, left: 18, bottom: 0, right: 0)
         context.coordinator.table = table
         context.coordinator.apply(self, force: true)
         return scroll

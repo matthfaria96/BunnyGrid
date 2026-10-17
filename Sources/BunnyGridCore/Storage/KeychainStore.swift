@@ -11,7 +11,12 @@ public struct KeychainStore: Sendable {
     }
 
     public func password(for id: UUID) -> String? {
-        password(account: id.uuidString)
+        #if DEBUG
+        // Screenshots against disposable servers: `BUNNYGRID_DEBUG_PASSWORD` stands in for every saved password,
+        // so a scratch data dir never needs Keychain items.
+        if let override = ProcessInfo.processInfo.environment["BUNNYGRID_DEBUG_PASSWORD"] { return override }
+        #endif
+        return password(account: id.uuidString)
     }
 
     public func setPassword(_ password: String?, for id: UUID) {
