@@ -56,6 +56,10 @@ public enum SchemaMapper {
                     "longtext", "mediumtext", "longblob", "blob", "date", "time", "datetime", "timestamp", "json", "bit", "year"].contains(base)
         case .sqlite:
             return true
+        case .sqlserver:
+            return ["int", "bigint", "smallint", "tinyint", "bit", "decimal", "numeric", "money", "smallmoney", "float", "real",
+                    "varchar", "nvarchar", "char", "nchar", "text", "ntext", "varbinary", "binary", "image", "date", "time",
+                    "datetime", "datetime2", "smalldatetime", "datetimeoffset", "uniqueidentifier", "xml", "sql_variant"].contains(base)
         case .redis:
             return false
         }
@@ -64,6 +68,20 @@ public enum SchemaMapper {
     private static func fallbackType(_ category: ColumnTypeCategory, to target: DatabaseKind, isKey: Bool) -> String {
         let pg = target == .postgresql
         switch target {
+        case .sqlserver:
+            switch category {
+            case .integer: return "bigint"
+            case .real: return "float"
+            case .decimal: return "decimal(38,10)"
+            case .boolean: return "bit"
+            case .binary: return "varbinary(max)"
+            case .date: return "date"
+            case .time, .timeWithTimeZone: return "time"
+            case .dateTime: return "datetime2"
+            case .dateTimeWithTimeZone: return "datetimeoffset"
+            case .uuid: return "uniqueidentifier"
+            case .json, .text, .other: return isKey ? "nvarchar(450)" : "nvarchar(max)"
+            }
         case .redis: return "text"
         case .sqlite:
             switch category {
@@ -183,7 +201,7 @@ public enum SchemaMapper {
             return "serial"
         case .sqlite:
             return "INTEGER"
-        case .mysql, .mariadb, .mongodb:
+        case .mysql, .mariadb, .mongodb, .sqlserver:
             return type
         case .redis:
             return type

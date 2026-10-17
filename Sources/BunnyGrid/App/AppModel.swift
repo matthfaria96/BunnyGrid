@@ -343,7 +343,7 @@ final class AppModel {
             if config.kind == .sqlite || !config.database.isEmpty {
                 let db = config.kind == .sqlite ? "main" : config.database
                 expanded.insert(.database(id, db))
-                if config.kind == .postgresql { expanded.insert(.schema(id, db, "public")) }
+                if let schema = config.kind.defaultSchema { expanded.insert(.schema(id, db, schema)) }
             }
         }
         return session

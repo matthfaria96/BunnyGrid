@@ -115,6 +115,11 @@ public struct SchemaSnapshot: Hashable, Sendable {
                key.dataType.trimmingCharacters(in: .whitespaces).uppercased() == "INTEGER" {
                 auto.insert(key.name)
             }
+        case .sqlserver:
+            let sql = "SELECT name FROM sys.identity_columns WHERE object_id = OBJECT_ID(\(dialect.quoteLiteral(dialect.qualifiedName(table: name, schema: schema ?? "dbo"))))"
+            if let result = try? await driver.executeStatement(sql) {
+                auto.formUnion(result.rows.compactMap { $0.first?.displayString })
+            }
         case .mysql, .mariadb, .mongodb:
             if let sql = dialect.autoIncrementColumnsQuery(table: name, schema: schema ?? driver.config.database),
                let result = try? await driver.executeStatement(sql) {
@@ -153,6 +158,8 @@ extension SQLDialect {
         case .sqlite: 32_000
         case .redis: 0
         case .postgresql, .mysql, .mariadb, .mongodb: 65_000
+        // sp_executesql takes at most 2100 parameters, two of them its own.
+        case .sqlserver: 2_000
         }
     }
 

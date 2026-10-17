@@ -507,7 +507,7 @@ extension DatabaseKind {
     var systemImage: String {
         switch self {
         case .sqlite: "doc.text.fill"
-        case .postgresql: "cylinder.split.1x2.fill"
+        case .postgresql, .sqlserver: "cylinder.split.1x2.fill"
         case .mysql, .mariadb: "cylinder.fill"
         case .redis: "key.fill"
         case .mongodb: "leaf.fill"
@@ -520,6 +520,7 @@ extension DatabaseKind {
         case .postgresql: .blue
         case .mysql: .orange
         case .mariadb: .brown
+        case .sqlserver: .yellow
         case .redis: .red
         case .mongodb: .green
         }

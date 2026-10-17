@@ -207,11 +207,24 @@ struct ConnectionEditorView: View {
             TextField("", value: $config.port, format: .number.grouping(.never)).frame(width: 90)
                 .disabled(usesSocket && config.kind != .postgresql)
         }
+        if config.kind == .sqlserver {
+            row("Authentication") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Picker("", selection: .constant(0)) {
+                        Text("SQL Server Authentication").tag(0)
+                        Text("Windows Authentication").tag(1).selectionDisabled()
+                    }
+                    .labelsHidden().frame(width: 240)
+                    Text("Windows (Kerberos/NTLM) and Microsoft Entra sign-in aren't supported yet; use a SQL Server login.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
         if config.kind.isDocumentStore { MongoConnectionRows(config: $config) }
-        row("User Name") { TextField("", text: $config.username) }
+        row("User Name") { TextField("", text: $config.username, prompt: config.kind == .sqlserver ? Text("sa") : nil) }
         row("Password") { SecureField("", text: $password) }
-        row(config.kind == .postgresql ? "Initial Database" : "Default Database") {
-            TextField("", text: $config.database, prompt: Text(config.kind == .postgresql ? "postgres" : config.kind == .redis ? "0 (database index)" : "Optional"))
+        row(config.kind.connectsPerDatabase ? "Initial Database" : "Default Database") {
+            TextField("", text: $config.database, prompt: Text(config.kind.serverDatabase ?? (config.kind == .redis ? "0 (database index)" : "Optional")))
         }
     }
 
@@ -233,7 +246,7 @@ struct ConnectionEditorView: View {
                         .help("Blocks INSERT, UPDATE, DELETE and DDL from BunnyGrid.")
                 }
             }
-            if !config.kind.isFileBased {
+            if !config.kind.isFileBased && config.kind != .sqlserver {
                 row("") {
                     Toggle("Use socket file", isOn: Binding(
                         get: { config.socketPath != nil },

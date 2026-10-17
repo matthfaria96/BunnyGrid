@@ -35,8 +35,10 @@ extension SQLDialect {
             ? ""
             : " (" + key.referencedColumns.map(quoteIdentifier).joined(separator: ", ") + ")"
         var sql = "\(constraint)FOREIGN KEY (\(columns)) REFERENCES \(parent)\(referenced)"
-        if key.onDelete.uppercased() != "NO ACTION" { sql += " ON DELETE \(key.onDelete.uppercased())" }
-        if key.onUpdate.uppercased() != "NO ACTION" { sql += " ON UPDATE \(key.onUpdate.uppercased())" }
+        // SQL Server has no RESTRICT; NO ACTION checks the same thing.
+        func action(_ text: String) -> String { kind == .sqlserver && text.uppercased() == "RESTRICT" ? "NO ACTION" : text.uppercased() }
+        if action(key.onDelete) != "NO ACTION" { sql += " ON DELETE \(action(key.onDelete))" }
+        if action(key.onUpdate) != "NO ACTION" { sql += " ON UPDATE \(action(key.onUpdate))" }
         return sql
     }
 

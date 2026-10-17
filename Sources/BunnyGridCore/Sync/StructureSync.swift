@@ -207,6 +207,36 @@ public struct StructureComparison: Sendable {
             for index in diff.indexesToCreate { alters.append(try d.createIndex(index, table: name, schema: schema)) }
             for key in diff.keysToAdd { keys.append(try d.addForeignKey(key, table: name, schema: schema)) }
 
+        case .sqlserver:
+            for key in diff.keysToDrop where !key.name.isEmpty { keyDrops.append(try d.dropForeignKey(named: key.name, table: name, schema: schema)) }
+            for index in diff.indexesToDrop { alters.append(d.dropIndex(named: index.name, table: name, schema: schema)) }
+            if diff.primaryKeyChanged, let pkName = diff.current.primaryKeyName {
+                alters.append("ALTER TABLE \(table) DROP CONSTRAINT \(d.quoteIdentifier(pkName))")
+            }
+            for column in diff.droppedColumns {
+                alters.append(d.sqlServerDropDefault(table: table, column: column))
+                alters.append("ALTER TABLE \(table) DROP COLUMN \(d.quoteIdentifier(column))")
+            }
+            for column in diff.addedColumns {
+                alters.append("ALTER TABLE \(table) ADD \(d.columnDefinition(column))\(diff.desired.autoIncrement.contains(column.name) ? " IDENTITY(1,1)" : "")")
+            }
+            for change in diff.changedColumns {
+                let column = d.quoteIdentifier(change.desired.name)
+                if change.type || change.nullability {
+                    alters.append("ALTER TABLE \(table) ALTER COLUMN \(column) \(change.desired.type) \(change.desired.nullable ? "NULL" : "NOT NULL")")
+                }
+                if change.defaultValue {
+                    alters.append(d.sqlServerDropDefault(table: table, column: change.desired.name))
+                    let value = change.desired.defaultValue.trimmingCharacters(in: .whitespaces)
+                    if !value.isEmpty { alters.append("ALTER TABLE \(table) ADD DEFAULT \(value) FOR \(column)") }
+                }
+            }
+            if diff.primaryKeyChanged, !diff.desired.primaryKey.isEmpty {
+                alters.append("ALTER TABLE \(table) ADD PRIMARY KEY (\(diff.desired.primaryKey.map(d.quoteIdentifier).joined(separator: ", ")))")
+            }
+            for index in diff.indexesToCreate { alters.append(try d.createIndex(index, table: name, schema: schema)) }
+            for key in diff.keysToAdd { keys.append(try d.addForeignKey(key, table: name, schema: schema)) }
+
         case .mysql, .mariadb, .mongodb:
             for key in diff.keysToDrop where !key.name.isEmpty { keyDrops.append(try d.dropForeignKey(named: key.name, table: name, schema: schema)) }
             for index in diff.indexesToDrop { alters.append(d.dropIndex(named: index.name, table: name, schema: schema)) }

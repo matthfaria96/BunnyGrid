@@ -46,7 +46,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
     static func categories(for kind: DatabaseKind) -> [ObjectCategory] {
         switch kind {
         case .postgresql: allCases
-        case .mysql, .mariadb: [.tables, .views, .functions, .queries, .backups]
+        case .mysql, .mariadb, .sqlserver: [.tables, .views, .functions, .queries, .backups]
         case .sqlite: [.tables, .views, .queries, .backups]
         case .redis: []
         case .mongodb: [.tables, .views, .gridFS, .indexes, .queries]
@@ -142,8 +142,8 @@ final class Session: Identifiable {
 
     private static func serverConfig(_ config: ConnectionConfig) -> ConnectionConfig {
         var serverConfig = config
-        if config.kind == .postgresql && serverConfig.database.isEmpty {
-            serverConfig.database = "postgres"
+        if serverConfig.database.isEmpty, let database = config.kind.serverDatabase {
+            serverConfig.database = database
         }
         return serverConfig
     }
@@ -154,7 +154,7 @@ final class Session: Identifiable {
 
     /// The database the server-level driver is attached to (PostgreSQL connects to one database).
     private var serverDatabase: String {
-        config.kind == .postgresql && config.database.isEmpty ? "postgres" : config.database
+        config.database.isEmpty ? (config.kind.serverDatabase ?? "") : config.database
     }
 
     func connect() async {
@@ -223,7 +223,7 @@ final class Session: Identifiable {
     func makeDedicatedDriver(database: String) -> any DatabaseDriver {
         var databaseConfig = config
         switch config.kind {
-        case .postgresql, .mysql, .mariadb, .mongodb: databaseConfig.database = database
+        case .postgresql, .mysql, .mariadb, .sqlserver, .mongodb: databaseConfig.database = database
         case .sqlite: break
         case .redis: break
         }
@@ -236,7 +236,7 @@ final class Session: Identifiable {
     func openDatabase(_ name: String) -> DatabaseContext {
         if let existing = contexts[name], !existing.isFailed { return existing }
         let context: DatabaseContext
-        if config.kind == .postgresql && name != serverDatabase {
+        if config.kind.connectsPerDatabase && name != serverDatabase {
             var databaseConfig = config
             databaseConfig.database = name
             context = DatabaseContext(name: name, session: self, driver: DriverFactory.make(config: databaseConfig, secrets: secrets), ownsDriver: true)
@@ -286,8 +286,8 @@ final class DatabaseContext: Identifiable {
     var kind: DatabaseKind { driver.config.kind }
     var isOpen: Bool { state == .open }
     var isFailed: Bool { if case .failed = state { true } else { false } }
-    var usesSchemas: Bool { kind == .postgresql }
-    var defaultSchema: String? { usesSchemas ? "public" : nil }
+    var usesSchemas: Bool { kind.hasSchemas }
+    var defaultSchema: String? { kind.defaultSchema }
 
     func open() async {
         state = .opening
@@ -319,7 +319,7 @@ final class DatabaseContext: Identifiable {
     /// The schema argument the driver expects: the database name on MySQL, nothing on SQLite.
     func driverSchema(_ schema: String?) -> String? {
         switch kind {
-        case .postgresql: schema
+        case .postgresql, .sqlserver: schema
         case .mysql, .mariadb, .mongodb: name
         // Attached SQLite databases are addressed as `alias.table`; main stays unqualified.
         case .sqlite: name == "main" ? nil : name
