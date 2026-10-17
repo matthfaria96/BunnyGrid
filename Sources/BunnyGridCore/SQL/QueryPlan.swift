@@ -43,6 +43,72 @@ public enum QueryPlan {
         case .postgresql, .mysql, .mariadb:
             guard result.columns.count == 1, result.rows.count == 1, let cell = result.rows.first?.first, !cell.isNull else { return nil }
             return kind == .postgresql ? postgresJSON(cell.displayString) : mysqlJSON(cell.displayString)
+        case .sqlserver:
+            guard result.columns.count == 1, let cell = result.rows.first?.first, !cell.isNull else { return nil }
+            return sqlServerXML(cell.displayString)
+        }
+    }
+
+    // MARK: - SQL Server
+
+    /// SET SHOWPLAN_XML documents: each `StmtSimple` becomes a root, its nested `RelOp`s the tree.
+    public static func sqlServerXML(_ text: String) -> [QueryPlanNode]? {
+        // Several documents (one per statement) are wrapped so they parse as one.
+        let wrapped = "<Plans>" + text.replacingOccurrences(of: #"<\?xml[^>]*\?>"#, with: "", options: .regularExpression) + "</Plans>"
+        let delegate = ShowplanParser()
+        let parser = XMLParser(data: Data(wrapped.utf8))
+        parser.delegate = delegate
+        guard parser.parse() else { return nil }
+        return delegate.roots.isEmpty ? nil : delegate.roots
+    }
+
+    private final class ShowplanParser: NSObject, XMLParserDelegate {
+        var roots: [QueryPlanNode] = []
+        /// Open statements and operators, innermost last.
+        private var stack: [QueryPlanNode] = []
+        private var counter = 0
+
+        func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName: String?,
+                    attributes: [String: String] = [:]) {
+            switch name {
+            case "StmtSimple", "StmtCond", "StmtCursor":
+                counter += 1
+                var details: [QueryPlanNode.Detail] = []
+                if let cost = attributes["StatementSubTreeCost"] { details.append(.init("cost", cost)) }
+                if let rows = attributes["StatementEstRows"] { details.append(.init("rows", rows)) }
+                if let level = attributes["StatementOptmLevel"] { details.append(.init("optimization", level)) }
+                let statement = (attributes["StatementText"] ?? "Statement").trimmingCharacters(in: .whitespacesAndNewlines)
+                stack.append(QueryPlanNode(id: counter, title: statement.count > 120 ? String(statement.prefix(120)) + "…" : statement, details: details))
+            case "RelOp":
+                counter += 1
+                let physical = attributes["PhysicalOp"] ?? "Operator"
+                let logical = attributes["LogicalOp"] ?? physical
+                var details: [QueryPlanNode.Detail] = []
+                if let cost = attributes["EstimatedTotalSubtreeCost"] { details.append(.init("cost", cost)) }
+                if let rows = attributes["EstimateRows"] { details.append(.init("rows", rows)) }
+                if let io = attributes["EstimateIO"] { details.append(.init("io", io)) }
+                if let cpu = attributes["EstimateCPU"] { details.append(.init("cpu", cpu)) }
+                if let width = attributes["AvgRowSize"] { details.append(.init("width", width)) }
+                if let parallel = attributes["Parallel"], parallel == "1" || parallel == "true" { details.append(.init("parallel", "true")) }
+                stack.append(QueryPlanNode(id: counter, title: logical == physical ? physical : "\(physical) (\(logical))", details: details))
+            case "Object":
+                // The table or index the innermost operator reads (only the first one names it).
+                guard var node = stack.last, !node.title.contains(" on ") else { return }
+                if let table = attributes["Table"] {
+                    let schema = attributes["Schema"].map { $0 + "." } ?? ""
+                    node.title += " on \(schema)\(table)"
+                    if let alias = attributes["Alias"] { node.title += " \(alias)" }
+                    if let index = attributes["Index"] { node.title += " using \(index)" }
+                    stack[stack.count - 1] = node
+                }
+            default:
+                break
+            }
+        }
+
+        func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
+            guard ["StmtSimple", "StmtCond", "StmtCursor", "RelOp"].contains(name), let node = stack.popLast() else { return }
+            if stack.isEmpty { roots.append(node) } else { stack[stack.count - 1].children.append(node) }
         }
     }
 

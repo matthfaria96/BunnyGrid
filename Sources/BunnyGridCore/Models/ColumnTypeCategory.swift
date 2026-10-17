@@ -47,6 +47,18 @@ public enum ColumnTypeCategory: String, Sendable, CaseIterable {
         if raw.hasSuffix("]") || (kind == .postgresql && raw.hasPrefix("_")) { return .other }
         let base = normalize(raw)
 
+        if kind == .sqlserver {
+            switch base {
+            case "bit": return .boolean
+            case "money", "smallmoney": return .decimal
+            case "ntext", "xml", "sysname": return .text
+            // SQL Server's timestamp is rowversion, a binary counter.
+            case "timestamp", "rowversion": return .binary
+            case "datetime": return .dateTime
+            default: break
+            }
+        }
+
         switch base {
         case "int", "integer", "smallint", "bigint", "tinyint", "mediumint", "int2", "int4", "int8",
              "serial", "smallserial", "bigserial", "serial2", "serial4", "serial8", "oid", "year":

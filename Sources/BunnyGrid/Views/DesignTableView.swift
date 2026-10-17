@@ -375,7 +375,7 @@ struct DesignTableView: View {
                     Text("Comment:")
                     TextField("", text: $model.comment).frame(width: 360)
                 }
-            case .postgresql:
+            case .postgresql, .sqlserver:
                 GridRow {
                     Text("Comment:").gridColumnAlignment(.trailing)
                     TextField("", text: $model.comment).frame(width: 360)

@@ -6,6 +6,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
     case postgresql
     case mysql
     case mariadb
+    case sqlserver
 
     public var id: String { rawValue }
 
@@ -15,6 +16,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .postgresql: "PostgreSQL"
         case .mysql: "MySQL"
         case .mariadb: "MariaDB"
+        case .sqlserver: "SQL Server"
         }
     }
 
@@ -23,14 +25,36 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .sqlite: nil
         case .postgresql: 5432
         case .mysql, .mariadb: 3306
+        case .sqlserver: 1433
         }
     }
 
     public var isFileBased: Bool { self == .sqlite }
 
-    /// Whether the engine exposes schemas inside a database (PostgreSQL)
+    /// Whether the engine exposes schemas inside a database (PostgreSQL, SQL Server)
     /// or treats databases as the namespace level (MySQL/MariaDB, SQLite).
-    public var hasSchemas: Bool { self == .postgresql }
+    public var hasSchemas: Bool { self == .postgresql || self == .sqlserver }
+
+    /// The schema unqualified names resolve to: `public` on PostgreSQL, `dbo` on SQL Server.
+    public var defaultSchema: String? {
+        switch self {
+        case .postgresql: "public"
+        case .sqlserver: "dbo"
+        default: nil
+        }
+    }
+
+    /// Engines that open one connection per database (the navigator's database nodes each get a driver).
+    public var connectsPerDatabase: Bool { self == .postgresql || self == .sqlserver }
+
+    /// The database a server-level connection attaches to when none is configured.
+    public var serverDatabase: String? {
+        switch self {
+        case .postgresql: "postgres"
+        case .sqlserver: "master"
+        default: nil
+        }
+    }
 }
 
 /// SSL modes, named after libpq's `sslmode` (MySQL's `ssl-mode` maps onto the same five).

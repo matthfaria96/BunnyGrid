@@ -18,7 +18,7 @@ struct UsersView: View {
 
     private var dialect: SQLDialect { session.driver.dialect }
     private var selected: DatabaseUser? { users.first { $0.id == selection } }
-    private var isMySQL: Bool { session.config.kind != .postgresql }
+    private var isMySQL: Bool { session.config.kind == .mysql || session.config.kind == .mariadb }
 
     var body: some View {
         VStack(spacing: 0) {

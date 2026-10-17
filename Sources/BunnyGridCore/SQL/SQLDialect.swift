@@ -12,6 +12,8 @@ public struct SQLDialect: Sendable {
         switch kind {
         case .mysql, .mariadb:
             "`" + name.replacingOccurrences(of: "`", with: "``") + "`"
+        case .sqlserver:
+            "[" + name.replacingOccurrences(of: "]", with: "]]") + "]"
         case .postgresql, .sqlite:
             "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
@@ -22,7 +24,8 @@ public struct SQLDialect: Sendable {
         if kind == .mysql || kind == .mariadb {
             escaped = escaped.replacingOccurrences(of: "\\", with: "\\\\")
         }
-        return "'" + escaped + "'"
+        // N'…' keeps characters outside the database's code page.
+        return (kind == .sqlserver ? "N'" : "'") + escaped + "'"
     }
 
     public func qualifiedName(_ object: DatabaseObject) -> String {
@@ -44,6 +47,11 @@ public struct SQLDialect: Sendable {
         if !orderBy.isEmpty {
             sql += " ORDER BY " + orderBy.map { "\(quoteIdentifier($0.column)) \($0.direction.rawValue)" }.joined(separator: ", ")
         }
+        if kind == .sqlserver {
+            // OFFSET … FETCH needs an ORDER BY; (SELECT NULL) keeps the server's order.
+            if orderBy.isEmpty { sql += " ORDER BY (SELECT NULL)" }
+            return sql + " OFFSET \(offset) ROWS FETCH NEXT \(limit) ROWS ONLY"
+        }
         sql += " LIMIT \(limit) OFFSET \(offset)"
         return sql
     }
@@ -60,10 +68,11 @@ public struct SQLDialect: Sendable {
         case .text(let v):
             return quoteLiteral(v)
         case .bool(let v):
-            if kind == .sqlite { return v ? "1" : "0" }
+            if kind == .sqlite || kind == .sqlserver { return v ? "1" : "0" }
             return v ? "TRUE" : "FALSE"
         case .blob(let data):
             let hex = data.map { String(format: "%02x", $0) }.joined()
+            if kind == .sqlserver { return "0x" + hex }
             return kind == .postgresql ? "decode('\(hex)', 'hex')" : "X'\(hex)'"
         }
     }
@@ -104,7 +113,11 @@ public struct SQLDialect: Sendable {
     }
 
     public var beginTransaction: String {
-        kind == .mysql || kind == .mariadb ? "START TRANSACTION" : "BEGIN"
+        switch kind {
+        case .mysql, .mariadb: "START TRANSACTION"
+        case .sqlserver: "BEGIN TRANSACTION"
+        default: "BEGIN"
+        }
     }
 
     /// The statement that shows `sql`'s plan without running it: `EXPLAIN QUERY PLAN` on SQLite,
@@ -114,12 +127,18 @@ public struct SQLDialect: Sendable {
         var statement = sql.trimmingCharacters(in: .whitespacesAndNewlines)
         while statement.hasSuffix(";") { statement = String(statement.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines) }
         if statement.prefix(while: { $0.isLetter }).uppercased() == "EXPLAIN" { return statement }
+        if kind == .sqlserver, statement.uppercased().hasPrefix(Self.showplanPrefix) { return statement }
         return switch kind {
+        case .sqlserver: Self.showplanPrefix + "\n" + statement
         case .sqlite: "EXPLAIN QUERY PLAN " + statement
         case .postgresql: "EXPLAIN (FORMAT JSON) " + statement
         case .mysql, .mariadb: "EXPLAIN FORMAT=JSON " + statement
         }
     }
+
+    /// SQL Server's estimated plan: SET SHOWPLAN_XML must run alone in its batch, so the driver splits this
+    /// prefix off, runs the statement for its plan (not executed) and switches SHOWPLAN off again.
+    public static let showplanPrefix = "SET SHOWPLAN_XML ON;"
 
     public func countRows(table: String, schema: String?, filter: String? = nil) -> String {
         var sql = "SELECT COUNT(*) FROM \(qualifiedName(table: table, schema: schema))"
