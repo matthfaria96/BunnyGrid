@@ -444,7 +444,7 @@ enum Benchmarks {
             _ = await timeToIdle("er.select") { model.selection = model.model?.tables[100].name }
             _ = await timeToIdle("er.zoom") { model.setZoom(0.5) }
             if let table = model.model?.tables[50].name, let origin = model.positions[table] {
-                await driveFrames("er.drag", duration: .seconds(1)) { frame in
+                await driveFrames("er.drag", duration: .seconds(CommandLine.arguments.contains("--bench-hot") ? 6 : 1)) { frame in
                     model.move(table, to: CGPoint(x: origin.x + CGFloat(frame * 3), y: origin.y + CGFloat(frame * 2)))
                 }
             }

@@ -278,6 +278,8 @@ struct ERDiagram<Menu: View>: View {
         let base = ERTableCard(table: table, size: frame.size, isSelected: isSelected,
                                isRelated: highlighted.contains(table.id) && !isSelected,
                                isDimmed: selection != nil && !highlighted.contains(table.id))
+            // Compared by value: dragging one card leaves the other cards' bodies alone.
+            .equatable()
             .offset(x: frame.minX, y: frame.minY)
         if interactive {
             base
@@ -311,7 +313,7 @@ extension ERDiagram where Menu == EmptyView {
 }
 
 /// A table card: name header, then one row per column with key / foreign key symbols and the type.
-private struct ERTableCard: View {
+private struct ERTableCard: View, Equatable {
     let table: ERTable
     let size: CGSize
     let isSelected: Bool
