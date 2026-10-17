@@ -149,15 +149,24 @@ final class AutomationCenter {
 
     // MARK: - Notifications
 
+    /// UI scenarios (scripts/ui-test.sh sets BUNNYGRID_UI_RUN) never ask for or post notifications.
+    nonisolated static var notificationsDisabled: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["BUNNYGRID_UI_RUN"] != nil
+        #else
+        false
+        #endif
+    }
+
     func requestNotificationPermission() {
-        guard Bundle.main.bundleIdentifier != nil else { return }
+        guard Bundle.main.bundleIdentifier != nil, !Self.notificationsDisabled else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     /// Posts "Job finished/failed". Needs a bundled app (UserNotifications refuses bare executables).
     nonisolated static func notify(_ run: JobRun, job: BatchJob, completion: (@Sendable () -> Void)? = nil) {
         let wanted = run.status == .succeeded ? job.notifyOnSuccess : job.notifyOnFailure
-        guard wanted, Bundle.main.bundleIdentifier != nil, run.status != .skipped else { completion?(); return }
+        guard wanted, Bundle.main.bundleIdentifier != nil, run.status != .skipped, !notificationsDisabled else { completion?(); return }
         let content = UNMutableNotificationContent()
         content.title = "\(job.name) \(run.status == .succeeded ? "finished" : run.status.displayName.lowercased())"
         content.body = run.summary

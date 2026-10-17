@@ -1,0 +1,22 @@
+{
+  "name": "automation",
+  "args": ["{{DB}}", "--show-objects", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "openSessions", "equals": 1},
+    {"op": "click", "label": "Automation", "role": "AXButton", "index": 0, "note": "toolbar Automation"},
+    {"op": "waitFor", "probe": "tabKind", "equals": "automation"},
+    {"op": "click", "id": "automation.newJob", "note": "+ New Batch Job"},
+    {"op": "waitFor", "probe": "automation.jobs.count", "equals": 1},
+    {"op": "click", "id": "automation.addStep", "menu": ["Run SQL"], "note": "Add Step › Run SQL"},
+    {"op": "waitFor", "id": "automation.sql", "exists": true},
+    {"op": "type", "target": {"id": "automation.sql"}, "text": "CREATE TABLE ui_job(x); INSERT INTO ui_job VALUES (42);"},
+    {"op": "screenshot", "name": "job"},
+    {"op": "click", "label": "Save", "role": "AXButton"},
+    {"op": "waitFor", "probe": "automation.jobs.0.steps.count", "equals": 1, "note": "the step is saved"},
+    {"op": "click", "label": "Start", "role": "AXButton", "note": "run the job now"},
+    {"op": "waitFor", "probe": "automation.runs.count", "atLeast": 1, "timeout": 20},
+    {"op": "waitFor", "probe": "automation.runs.0.status", "equals": "succeeded", "timeout": 20},
+    {"op": "assert", "probe": "sql:$RUN/demo.sqlite|SELECT x FROM ui_job", "equals": "42", "note": "the job ran against the database"},
+    {"op": "screenshot", "name": "history"}
+  ]
+}

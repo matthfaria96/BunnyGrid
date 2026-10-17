@@ -72,7 +72,7 @@ enum UIHarnessProbe {
         case "windowCount": return NSApp.windows.filter { $0.isVisible && $0.level == .normal }.count
         case "keyWindow": return NSApp.keyWindow?.title ?? "nil"
         case "pasteboard": return NSPasteboard.general.string(forType: .string) ?? "nil"
-        case "firstResponder": return NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+        case "firstResponder": return (NSApp.keyWindow ?? NSApp.orderedWindows.first { $0.isVisible })?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
         case "openSessions": return app.sessions.values.filter { $0.contexts.values.contains(where: \.isOpen) }.count
         default:
             // "menu:File>Save" → whether that menu bar item is enabled right now (without updating the menu first).

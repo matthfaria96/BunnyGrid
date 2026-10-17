@@ -97,6 +97,8 @@ struct AutomationView: View {
             HStack(spacing: 2) {
                 Button { let job = automation.newJob(); select(job.id) } label: { Image(systemName: "plus") }
                     .help("New Batch Job")
+                    .accessibilityLabel("New Batch Job")
+                    .accessibilityIdentifier("automation.newJob")
                 Button { if let saved { delete(saved) } } label: { Image(systemName: "minus") }
                     .disabled(saved == nil).help("Delete Batch Job")
                 Spacer()
@@ -138,9 +140,11 @@ struct AutomationView: View {
         let isRunning = automation.running[job.wrappedValue.id] != nil
         return VStack(spacing: 0) {
             HStack(spacing: 10) {
-                TextField("Name", text: job.name).textFieldStyle(.roundedBorder).frame(maxWidth: 280)
+                // In a narrow editor (navigator and right pane open) the name and the segments shrink, not the
+                // Start / Save buttons ("S…" and "New Ba" before).
+                TextField("Name", text: job.name).textFieldStyle(.roundedBorder).frame(minWidth: 90, maxWidth: 280)
                 Picker("", selection: $pane) { ForEach(Pane.allCases, id: \.self) { Text($0.rawValue) } }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 260)
+                    .pickerStyle(.segmented).labelsHidden().frame(minWidth: 170, maxWidth: 260)
                 Spacer()
                 if isRunning {
                     Button { automation.cancel(job.wrappedValue.id) } label: { Label("Stop", systemImage: "stop.fill") }
@@ -152,9 +156,11 @@ struct AutomationView: View {
                         selectedRun = nil
                     } label: { Label("Start", systemImage: "play.fill") }
                     .disabled(job.wrappedValue.steps.isEmpty)
+                    .fixedSize()
                 }
                 Button("Save") { if let draft { automation.save(draft) } }
                     .keyboardShortcut("s")
+                    .fixedSize()
                     .disabled(!isDirty)
             }
             .padding(10)
@@ -197,6 +203,7 @@ private struct StepsEditor: View {
                         }
                     } label: { Image(systemName: "plus") }
                     .menuStyle(.borderlessButton).fixedSize().help("Add Step")
+                    .accessibilityIdentifier("automation.addStep")
                     Button {
                         job.steps.removeAll { $0.id == selection }
                         selection = job.steps.first?.id
@@ -286,6 +293,7 @@ private struct StepForm: View {
                 Section("SQL") {
                     TextEditor(text: Binding(get: { sql }, set: { action = .sql(target: target, sql: $0) }))
                         .font(.system(size: 12, design: .monospaced)).frame(minHeight: 160)
+                        .accessibilityIdentifier("automation.sql")
                 }
             case .sqlFile(let target, let path, let options):
                 TargetFields(target: Binding(get: { target }, set: { action = .sqlFile(target: $0, path: path, options: options) }))

@@ -277,6 +277,9 @@ final class UIHarness {
                 post(.leftMouseDown, window, point)
                 post(.leftMouseUp, window, point)
                 try await drain()
+                focusText(at: point, in: window)
+            } else if !(window.firstResponder is NSText) {
+                focusText(at: pointer, in: window)
             }
             if step["replace"] as? Bool == true {
                 postKey("a", flags: .command, window: window)
@@ -823,19 +826,39 @@ final class UIHarness {
                         }
                         continue
                     }
-                    if postMode == "send" {
-                        let box = UncheckedBox(event)
-                        DispatchQueue.main.async { MainActor.assumeIsolated { NSApp.sendEvent(box.value) } }
-                    } else {
-                        NSApp.postEvent(event, atStart: false)
-                    }
+                    deliverKey(event, to: window)
                     continue
                 }
             }
             if let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                             windowNumber: window.windowNumber, context: nil, characters: characters,
                                             charactersIgnoringModifiers: ignoring, isARepeat: false, keyCode: code) {
-                NSApp.postEvent(event, atStart: false)
+                deliverKey(event, to: window)
+            }
+        }
+    }
+
+    /// A click on a text view in a window that is not really key (the app is in the background) does not always make
+    /// it first responder: do it, as the click would have.
+    private func focusText(at point: NSPoint, in window: NSWindow) {
+        guard !(window.firstResponder is NSText) else { return }
+        let hit = window.contentView?.superview?.hitTest(point)
+        var candidates: [NSView] = []
+        if let clip = hit as? NSClipView, let document = clip.documentView { candidates.append(document) }
+        if let scroll = hit as? NSScrollView, let document = scroll.documentView { candidates.append(document) }
+        var view = hit
+        while let current = view { candidates.append(current); view = current.superview }
+        if let text = candidates.first(where: { $0 is NSTextView || $0 is NSTextField }) { window.makeFirstResponder(text) }
+    }
+
+    /// Keystrokes go straight to the window (its first responder), in order, from the run loop: NSApp sends queued
+    /// key events to its key window, and a background app has none.
+    private func deliverKey(_ event: NSEvent, to window: NSWindow) {
+        let box = UncheckedBox((event, window))
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                let (event, window) = box.value
+                window.sendEvent(event)
             }
         }
     }

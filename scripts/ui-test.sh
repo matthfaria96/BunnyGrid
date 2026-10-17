@@ -11,7 +11,7 @@ ROOT="${0:A:h:h}"
 SCENARIOS="$ROOT/scripts/ui-scenarios"
 OUT="${UI_TEST_OUT:-${TMPDIR:-/tmp}/bunnygrid-ui-test}"
 TIMEOUT="${UI_TEST_TIMEOUT:-180}"
-APP="$ROOT/build/BunnyGrid.app/Contents/MacOS/BunnyGrid"
+APP=""
 if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode.app ]]; then
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
@@ -25,6 +25,16 @@ for arg in "$@"; do
   esac
 done
 if (( BUILD )); then "$ROOT/scripts/bundle.sh" debug >/dev/null || { echo "build failed"; exit 2; }; fi
+# A copy with its own bundle identifier, so scenarios never read or write the real app's preferences
+# (UserDefaults); they are wiped before every scenario.
+mkdir -p "$OUT"
+TEST_ID="app.bunnygrid.BunnyGrid.uitest"
+rm -rf "$OUT/BunnyGridUITest.app"
+ditto "$ROOT/build/BunnyGrid.app" "$OUT/BunnyGridUITest.app"
+plutil -replace CFBundleIdentifier -string "$TEST_ID" "$OUT/BunnyGridUITest.app/Contents/Info.plist"
+plutil -replace CFBundleName -string "BunnyGrid UI Test" "$OUT/BunnyGridUITest.app/Contents/Info.plist"
+codesign --force --sign - "$OUT/BunnyGridUITest.app" >/dev/null 2>&1
+APP="$OUT/BunnyGridUITest.app/Contents/MacOS/BunnyGrid"
 if (( ${#NAMES} == 0 )); then
   for file in "$SCENARIOS"/*.json; do NAMES+=("${${file:t}%.json}"); done
 fi
@@ -59,6 +69,7 @@ PY
   done
   if [[ -n "$missing" ]]; then echo "-- $name (skipped: no$missing)"; skipped=$((skipped+1)); continue; fi
 
+  defaults delete "$TEST_ID" >/dev/null 2>&1
   run="$OUT/$name"
   rm -rf "$run"; mkdir -p "$run/data" "$run/shots"
   cp "$ROOT/Resources/Samples/demo.sqlite" "$run/demo.sqlite"
@@ -89,7 +100,7 @@ for name, sql in json.loads(sys.argv[2]).items():
   for a in "${args[@]}"; do a="${a//\{\{DB\}\}/$run/demo.sqlite}"; final+=("${a//\{\{RUN\}\}/$run}"); done
   (
     cd "$run"
-    BUNNYGRID_DATA_DIR="$run/data" BUNNYGRID_MEMORY_KEYCHAIN=1 BUNNYGRID_UI_RUN="$run" \
+    BUNNYGRID_DATA_DIR="$run/data" BUNNYGRID_MEMORY_KEYCHAIN=1 BUNNYGRID_UI_RUN="$run" BUNNYGRID_LAUNCH_AGENTS_DIR="$run/agents" \
     BUNNYGRID_ANTHROPIC_BASE_URL="http://127.0.0.1:58989" BUNNYGRID_OPENAI_BASE_URL="http://127.0.0.1:58989" \
     "$APP" "${final[@]}" -AppleLanguages '(en)' -AppleLocale en_US -ApplePersistenceIgnoreState YES -NSQuitAlwaysKeepsWindows NO \
       --ui-script "$file" --ui-results "$run/results.json" --ui-shots "$run/shots" > "$run/app.log" 2>&1 &
