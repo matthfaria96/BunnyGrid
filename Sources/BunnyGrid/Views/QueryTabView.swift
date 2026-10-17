@@ -505,7 +505,14 @@ private struct ResultSetPane: View {
                 footer
             }
         }
-        .task(id: result.id) { await model.prepareEditor(for: result) }
+        .task(id: result.id) {
+            await model.prepareEditor(for: result)
+            #if DEBUG
+            // `--result-form` / `--result-profiling`: the Form View or Data Profiling of the result, for screenshots.
+            if CommandLine.arguments.contains("--result-form") { formView = true }
+            if CommandLine.arguments.contains("--result-profiling") { showingProfiling = true }
+            #endif
+        }
         .sheet(isPresented: $showingProfiling) {
             if let editor {
                 DataProfilingView(model: editor, driver: nil, driverSchema: nil)

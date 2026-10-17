@@ -687,9 +687,28 @@ private struct FormField: View {
         Group {
             if isLong {
                 HStack(alignment: .top, spacing: 4) {
-                    TextField(value.isNull ? "(Null)" : "", text: $text, axis: .vertical)
-                        .lineLimit(3...10)
-                        .focused($focused)
+                    if editable {
+                        // A text editor (a vertical TextField keeps to one line with the rounded style); it applies on leaving it.
+                        TextEditor(text: $text)
+                            .focused($focused)
+                            .scrollContentBackground(.hidden)
+                            .padding(.horizontal, 2)
+                            .padding(.vertical, 3)
+                            .frame(minHeight: 54, maxHeight: 160)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(Color(nsColor: .textBackgroundColor)))
+                            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color(nsColor: focused ? .keyboardFocusIndicatorColor : .separatorColor)))
+                    } else {
+                        // Read-only: every line, selectable (a disabled field shows only the first).
+                        Text(value.isNull ? "(Null)" : text)
+                            .foregroundStyle(value.isNull ? .tertiary : .secondary)
+                            .lineLimit(10)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.04)))
+                    }
                     Button { showingEditor = true } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                         .buttonStyle(.borderless)
                         .help("Open in the Value Editor (⌥↩ in the grid)")

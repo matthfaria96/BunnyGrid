@@ -542,7 +542,7 @@ struct ConnectionEditorView: View {
 
     /// The server's databases (once listed), or the chosen ones.
     private var shownServerDatabases: [String] {
-        let chosen = config.visibleDatabases ?? []
+        let chosen = (config.database.isEmpty ? [] : [config.database]) + (config.visibleDatabases ?? []).filter { $0 != config.database }
         return serverDatabases.isEmpty ? chosen : serverDatabases + chosen.filter { !serverDatabases.contains($0) }
     }
 

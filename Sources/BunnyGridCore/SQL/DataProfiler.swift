@@ -148,7 +148,12 @@ public enum DataProfiler {
                 profile.minimum = strings.min()
                 profile.maximum = strings.max()
             }
-            profile.topValues = counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+            // Ties in value order, numbers by their value (like ORDER BY COUNT(*) DESC, 1).
+            profile.topValues = counts.sorted { a, b in
+                if a.value != b.value { return a.value > b.value }
+                if inferred == .numeric, let x = Double(a.key), let y = Double(b.key) { return x < y }
+                return a.key < b.key
+            }
                 .prefix(topCount).map { ColumnProfile.TopValue(value: $0.key, count: $0.value) }
             return profile
         }
