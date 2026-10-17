@@ -179,7 +179,7 @@ struct CollectionTabView: View {
         }
         .task { await model.loadIfNeeded() }
         .sheet(item: $model.editor) { _ in DocumentEditorSheet(model: model) }
-        .confirmationDialog("Delete \(model.selectedRows.count) document(s)?", isPresented: $model.confirmingDelete) {
+        .confirmationDialog("Delete \(countLabel(model.selectedRows.count, "document"))?", isPresented: $model.confirmingDelete) {
             Button("Delete", role: .destructive) { Task { await model.deleteSelected() } }
         }
         .alert("Import", isPresented: Binding(get: { importMessage != nil }, set: { if !$0 { importMessage = nil } })) {
@@ -221,7 +221,7 @@ struct CollectionTabView: View {
     private func statsSummary(_ stats: BSONDocument) -> String {
         let size = ByteCountFormatter.string(fromByteCount: Int64(stats["size"]?.intValue ?? 0), countStyle: .file)
         let indexSize = ByteCountFormatter.string(fromByteCount: Int64(stats["totalIndexSize"]?.intValue ?? 0), countStyle: .file)
-        return "\((stats["count"]?.intValue ?? 0).formatted()) documents · \(size) · \(stats["nindexes"]?.intValue ?? 0) indexes (\(indexSize))"
+        return "\((stats["count"]?.intValue ?? 0).countText) documents · \(size) · \(stats["nindexes"]?.intValue ?? 0) indexes (\(indexSize))"
     }
 
     private func toolButton(_ title: String, _ symbol: String, disabled: Bool, action: @escaping () -> Void) -> some View {

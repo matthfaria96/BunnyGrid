@@ -433,7 +433,7 @@ private struct PageSizePopover: View {
                     Task { await model.setPageSize(size) }
                 } label: {
                     HStack {
-                        Text(size.formatted())
+                        Text(size.countText)
                         Spacer()
                         if model.pageSize == size { Image(systemName: "checkmark") }
                     }

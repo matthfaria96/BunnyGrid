@@ -329,7 +329,7 @@ private struct MessagePane: View {
                         } else {
                             Text("> OK")
                             if let result = execution.result, result.isTruncated {
-                                Text("> Fetched the first \(result.rows.count.formatted()) rows; more are available")
+                                Text("> Fetched the first \(result.rows.count.countText) rows; more are available")
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -501,13 +501,13 @@ private struct ResultSetPane: View {
             .foregroundStyle(.tertiary)
             .help("Query results are read-only")
             if result.isTruncated {
-                Text("First \(result.rows.count.formatted()) rows")
+                Text("First \(result.rows.count.countText) rows")
                     .foregroundStyle(.secondary)
                     .fixedSize()
                 if model.canLoadMore(result) {
                     Button("Load More") { model.loadMore(result) }
                         .fixedSize()
-                        .help("Run the statement again, fetching \((model.rowLimit ?? 1_000).formatted()) more rows")
+                        .help("Run the statement again, fetching \((model.rowLimit ?? 1_000).countText) more rows")
                     Button("Fetch All") { model.fetchAll(result) }
                         .fixedSize()
                         .help("Run the statement again, fetching every row")
@@ -569,7 +569,7 @@ private struct ResultInfo: View {
                         label("Database"); Text(model.databaseName)
                     }
                     GridRow {
-                        label("Rows"); Text(result.rows.count.formatted() + (result.isTruncated ? " (more not fetched)" : ""))
+                        label("Rows"); Text(result.rows.count.countText + (result.isTruncated ? " (more not fetched)" : ""))
                         Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]); Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
                     }
                 }

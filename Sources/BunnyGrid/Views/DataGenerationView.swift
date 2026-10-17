@@ -31,14 +31,8 @@ struct DataGenerationView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "wand.and.stars").foregroundStyle(.purple).font(.title2)
-                VStack(alignment: .leading) {
-                    Text("Data Generation").font(.headline)
-                    Text("Into \(target.object.qualifiedName) \(target.context.location(schema: target.object.schema))")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
+            SheetHeader(title: "Data Generation", systemImage: "wand.and.stars",
+                        subtitle: "Into \(target.object.qualifiedName) \(target.context.location(schema: target.object.schema))") {
                 HStack(spacing: 6) {
                     Text("Records")
                     TextField("100", text: $countText).frame(width: 80).textFieldStyle(.roundedBorder)
@@ -103,7 +97,7 @@ struct DataGenerationView: View {
                 if isRunning { ProgressView().controlSize(.small); Text("Generating…").foregroundStyle(.secondary) }
                 Spacer()
                 Button(result == nil ? "Cancel" : "Close") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Generate \(count.formatted()) Records") { Task { await generate() } }
+                Button("Generate \(count.countText) Records") { Task { await generate() } }
                     .keyboardShortcut(.defaultAction)
                     .disabled(count == 0 || isRunning || plan.allSatisfy { $0.generator == .skip })
             }
@@ -135,7 +129,7 @@ struct DataGenerationView: View {
         let rows = ValueGenerator.rows(count: count, columns: plan, types: types, seed: seed)
         do {
             try await target.context.driver.applyChanges(rows, table: target.object.name, schema: driverSchema, columns: columns)
-            result = "Generated \(rows.count.formatted()) records in \(target.object.name)."
+            result = "Generated \(rows.count.countText) records in \(target.object.name)."
             seed &+= 1
             for tab in app.tabs {
                 if case .table(let model) = tab, model.object == target.object { model.requestReload() }

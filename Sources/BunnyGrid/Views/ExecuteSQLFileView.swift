@@ -86,7 +86,7 @@ struct SQLScriptRunSections: View {
                 Button("Choose…") { run.chooseFile() }.disabled(run.isRunning)
             }
             if run.url != nil {
-                LabeledContent("Statements", value: run.statements.count.formatted())
+                LabeledContent("Statements", value: run.statements.count.countText)
                 LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: Int64(run.fileSize), countStyle: .file))
             }
             if let error = run.loadError {
@@ -105,14 +105,14 @@ struct SQLScriptRunSections: View {
         if let report = run.report {
             Section("Progress") {
                 ProgressView(value: report.fractionDone) {
-                    Text("\(report.executed.formatted()) of \(report.total.formatted()) statements")
+                    Text("\(report.executed.countText) of \(report.total.countText) statements")
                 }
                 HStack(spacing: 16) {
-                    Label("\(report.succeeded.formatted()) succeeded", systemImage: "checkmark.circle").foregroundStyle(.green)
-                    Label("\(report.errors.count.formatted()) failed", systemImage: "xmark.circle")
+                    Label("\(report.succeeded.countText) succeeded", systemImage: "checkmark.circle").foregroundStyle(.green)
+                    Label("\(report.errors.count.countText) failed", systemImage: "xmark.circle")
                         .foregroundStyle(report.errors.isEmpty ? Color.secondary : Color.red)
                     if report.affectedRows > 0 {
-                        Text("\(report.affectedRows.formatted()) rows affected").foregroundStyle(.secondary)
+                        Text("\(report.affectedRows.countText) rows affected").foregroundStyle(.secondary)
                     }
                 }
                 .font(.caption)
@@ -136,8 +136,8 @@ struct SQLScriptRunSections: View {
 
     private func summary(_ report: ScriptRunReport) -> String {
         if report.rolledBack { return "Stopped; the transaction was rolled back." }
-        if report.stopped { return "Stopped after \(report.executed.formatted()) statements." }
-        return report.errors.isEmpty ? "Finished without errors." : "Finished with \(report.errors.count.formatted()) errors."
+        if report.stopped { return "Stopped after \(report.executed.countText) statements." }
+        return report.errors.isEmpty ? "Finished without errors." : "Finished with \(report.errors.count.countText) errors."
     }
 }
 

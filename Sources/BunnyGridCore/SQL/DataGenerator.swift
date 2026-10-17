@@ -56,9 +56,21 @@ public enum ValueGenerator: String, CaseIterable, Codable, Sendable, Identifiabl
                                 "eiusmod", "tempor", "incididunt", "labore", "dolore", "magna", "aliqua"]
     private static let domains = ["example.com", "mail.test", "demo.org", "sample.net"]
 
+    /// The person a row describes, so First Name, Last Name, Full Name and Email of one row agree.
+    public struct Person: Sendable, Equatable {
+        public let first: String
+        public let last: String
+
+        public static func random(using rng: inout SeededGenerator) -> Person {
+            Person(first: firstNames[Int.random(in: 0..<firstNames.count, using: &rng)],
+                   last: lastNames[Int.random(in: 0..<lastNames.count, using: &rng)])
+        }
+    }
+
     /// A value for one row. `type` (e.g. `numeric(5,2)`, `int2`, `varchar(40)`) keeps values within the column's limits.
-    public func value(row: Int, type: String? = nil, using rng: inout SeededGenerator) -> CellValue {
-        let generated = rawValue(row: row, type: type?.lowercased() ?? "", using: &rng)
+    /// `person` is the row's person (a random one when nil).
+    public func value(row: Int, type: String? = nil, person: Person? = nil, using rng: inout SeededGenerator) -> CellValue {
+        let generated = rawValue(row: row, type: type?.lowercased() ?? "", person: person, using: &rng)
         // Text longer than varchar(n)/char(n) would be rejected; trim it.
         if case .text(let text) = generated, let limit = Self.lengthLimit(type), text.count > limit {
             return .text(String(text.prefix(limit)))
@@ -66,8 +78,9 @@ public enum ValueGenerator: String, CaseIterable, Codable, Sendable, Identifiabl
         return generated
     }
 
-    private func rawValue(row: Int, type: String, using rng: inout SeededGenerator) -> CellValue {
+    private func rawValue(row: Int, type: String, person: Person?, using rng: inout SeededGenerator) -> CellValue {
         func pick(_ list: [String]) -> String { list[Int.random(in: 0..<list.count, using: &rng)] }
+        func rowPerson() -> Person { person ?? .random(using: &rng) }
         switch self {
         case .skip, .null:
             return .null
@@ -88,14 +101,16 @@ public enum ValueGenerator: String, CaseIterable, Codable, Sendable, Identifiabl
         case .boolean:
             return .bool(Bool.random(using: &rng))
         case .firstName:
-            return .text(pick(Self.firstNames))
+            return .text(rowPerson().first)
         case .lastName:
-            return .text(pick(Self.lastNames))
+            return .text(rowPerson().last)
         case .fullName:
-            return .text("\(pick(Self.firstNames)) \(pick(Self.lastNames))")
+            let person = rowPerson()
+            return .text("\(person.first) \(person.last)")
         case .email:
-            let name = pick(Self.firstNames).folding(options: .diacriticInsensitive, locale: nil).lowercased()
-            let last = pick(Self.lastNames).folding(options: .diacriticInsensitive, locale: nil).lowercased()
+            let person = rowPerson()
+            let name = person.first.folding(options: .diacriticInsensitive, locale: nil).lowercased()
+            let last = person.last.folding(options: .diacriticInsensitive, locale: nil).lowercased()
             return .text("\(name).\(last)\(row + 1)@\(pick(Self.domains))")
         case .phone:
             return .text(String(format: "+55 11 9%04d-%04d", Int.random(in: 0...9999, using: &rng), Int.random(in: 0...9999, using: &rng)))
@@ -180,7 +195,8 @@ public enum ValueGenerator: String, CaseIterable, Codable, Sendable, Identifiabl
         var rng = SeededGenerator(seed: seed)
         let active = columns.filter { $0.generator != .skip }
         return (0..<count).map { row in
-            .insert(values: active.map { ColumnValue($0.name, $0.generator.value(row: row, type: types[$0.name], using: &rng)) })
+            let person = Person.random(using: &rng)
+            return .insert(values: active.map { ColumnValue($0.name, $0.generator.value(row: row, type: types[$0.name], person: person, using: &rng)) })
         }
     }
 }

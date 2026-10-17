@@ -159,7 +159,7 @@ struct BackupListView: View {
             }
             .width(min: 60, ideal: 80)
             TableColumn("Objects") { entry in
-                Text("\(entry.manifest.objects.count)\(entry.manifest.rowCount.map { " · \($0.formatted()) rows" } ?? "")").foregroundStyle(.secondary)
+                Text("\(entry.manifest.objects.count)\(entry.manifest.rowCount.map { " · \($0.countText) rows" } ?? "")").foregroundStyle(.secondary)
             }
             .width(min: 80, ideal: 100)
             TableColumn("Type") { entry in Text(entry.manifest.method.displayName).foregroundStyle(.secondary) }
@@ -235,13 +235,8 @@ struct BackupWizardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "clock.arrow.circlepath").foregroundStyle(.gray).font(.title2)
-                VStack(alignment: .leading) {
-                    Text("New Backup").font(.headline)
-                    Text(target.context.location(schema: target.schema)).font(.caption).foregroundStyle(.secondary)
-                }
-            }
+            SheetHeader(title: "New Backup", systemImage: "clock.arrow.circlepath", subtitle: target.context.location(schema: target.schema))
+            Divider()
             TextField("Comment", text: $comment, prompt: Text("Comment (optional)"))
             if target.context.kind == .sqlite {
                 Picker("Method", selection: $method) {

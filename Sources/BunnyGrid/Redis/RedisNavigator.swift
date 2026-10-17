@@ -60,7 +60,7 @@ extension NavigatorView {
         } else if !db.isComplete {
             var row = NavRow(node: .redisMore(id, index), depth: depth, title: "Load More Keys…", icon: "arrow.down.circle",
                              iconColor: .accentColor)
-            row.subtitle = "\(db.keys.count.formatted()) loaded"
+            row.subtitle = "\(db.keys.count.countText) loaded"
             row.isLoading = db.isLoading
             rows.append(row)
         } else if db.keys.isEmpty {
@@ -240,7 +240,8 @@ struct RedisFilterBar: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "key.viewfinder").foregroundStyle(.secondary).font(.system(size: 12))
-            TextField("SCAN pattern, e.g. user:*", text: $pattern)
+            TextField("Key pattern", text: $pattern)
+                .help("SCAN MATCH pattern, e.g. user:*")
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .onSubmit { browser.pattern = pattern }

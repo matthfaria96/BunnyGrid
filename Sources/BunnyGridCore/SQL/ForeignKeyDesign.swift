@@ -292,7 +292,7 @@ extension DatabaseDriver {
                 if isPragma(statement, "FOREIGN_KEY_CHECK"), !result.rows.isEmpty {
                     let parents = Set(result.rows.compactMap { $0.count > 2 ? $0[2].displayString : nil }).sorted()
                     throw DatabaseError.queryFailed(
-                        "\(result.rows.count) row(s) don't match the foreign key to \(parents.joined(separator: ", ")). Nothing was saved.")
+                        "\(result.rows.count) \(result.rows.count == 1 ? "row doesn't" : "rows don't") match the foreign key to \(parents.joined(separator: ", ")). Nothing was saved.")
                 }
             }
             if transactional { _ = try await executeTimed("COMMIT") }

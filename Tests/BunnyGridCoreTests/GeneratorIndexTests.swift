@@ -31,6 +31,17 @@ import Testing
         #expect(values.map(\.column) == ["name", "email", "score"])
     }
 
+    @Test func nameAndEmailOfARowBelongToTheSamePerson() {
+        let columns: [(name: String, generator: ValueGenerator)] = [("first", .firstName), ("name", .fullName), ("email", .email)]
+        for change in ValueGenerator.rows(count: 20, columns: columns, seed: 3) {
+            guard case .insert(let values) = change, case .text(let first) = values[0].value,
+                  case .text(let full) = values[1].value, case .text(let email) = values[2].value else { Issue.record("insert"); continue }
+            #expect(full.hasPrefix(first + " "))
+            let parts = full.split(separator: " ").map { $0.folding(options: .diacriticInsensitive, locale: nil).lowercased() }
+            #expect(email.hasPrefix("\(parts[0]).\(parts[1])"))
+        }
+    }
+
     @Test func valuesHaveTheRightShape() {
         var rng = SeededGenerator(seed: 1)
         guard case .text(let email) = ValueGenerator.email.value(row: 0, using: &rng) else { Issue.record("email"); return }

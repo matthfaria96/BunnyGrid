@@ -110,7 +110,7 @@ struct ResultGridView: NSViewRepresentable {
         /// Options › Records › Grid Font, or the default grid font.
         static var font: NSFont {
             if let cachedFont { return cachedFont }
-            let font = AppOptions.shared.values.gridFont?.nsFont ?? NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+            let font = AppOptions.shared.values.gridFont?.nsFont ?? NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             cachedFont = font
             return font
         }
@@ -820,7 +820,7 @@ final class PaddedTextField: NSTextField {
     private static var lineHeights: [NSFont: CGFloat] = [:]
 
     static func lineHeight(for font: NSFont?) -> CGFloat {
-        let font = font ?? .systemFont(ofSize: 13)
+        let font = font ?? .systemFont(ofSize: 12)
         if let height = lineHeights[font] { return height }
         let height = NSAttributedString(string: "Xg", attributes: [.font: font]).size().height
         lineHeights[font] = height

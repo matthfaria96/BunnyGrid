@@ -9,8 +9,8 @@ public enum RedisCommandLine {
 
         public var errorDescription: String? {
             switch self {
-            case .unbalancedQuotes: "Invalid argument(s): unbalanced quotes."
-            case .quoteNotFollowedBySpace: "Invalid argument(s): a closing quote must be followed by a space."
+            case .unbalancedQuotes: "Invalid arguments: unbalanced quotes."
+            case .quoteNotFollowedBySpace: "Invalid arguments: a closing quote must be followed by a space."
             }
         }
     }

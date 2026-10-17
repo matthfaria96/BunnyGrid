@@ -86,8 +86,8 @@ final class CollectionTabModel: DocumentTab {
     var recordText: String {
         guard hasLoaded else { return "" }
         let start = page * pageSize
-        let total = totalCount.map { " of \($0.formatted())" } ?? ""
-        return documents.isEmpty ? "No documents" : "Documents \((start + 1).formatted())–\((start + documents.count).formatted())\(total)"
+        let total = totalCount.map { " of \($0.countText)" } ?? ""
+        return documents.isEmpty ? "No documents" : "Documents \((start + 1).countText)–\((start + documents.count).countText)\(total)"
     }
     var attachmentText: String {
         "MongoDB collection \(databaseName).\(collection). Fields:\n" +
@@ -347,7 +347,7 @@ final class CollectionTabModel: DocumentTab {
             let documents = try DocumentTransfer.read(text, format: format)
             try await driver.insert(documents, database: databaseName, collection: collection)
             await reload()
-            return "Imported \(documents.count.formatted()) documents."
+            return "Imported \(documents.count.countText) documents."
         } catch {
             return ConnectionErrorText.describe(error)
         }

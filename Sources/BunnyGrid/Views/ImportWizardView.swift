@@ -44,16 +44,9 @@ struct ImportWizardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "square.and.arrow.down").foregroundStyle(.teal).font(.title2)
-                VStack(alignment: .leading) {
-                    Text("Import Wizard").font(.headline)
-                    Text(kind == .sql
+            SheetHeader(title: "Import Wizard", systemImage: "square.and.arrow.down", subtitle: kind == .sql
                          ? "Runs a script on \(target.context.location(schema: target.object.schema))"
-                         : "Into \(target.object.qualifiedName) \(target.context.location(schema: target.object.schema))")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
+                         : "Into \(target.object.qualifiedName) \(target.context.location(schema: target.object.schema))") {
                 Picker("Import type", selection: $kind) {
                     ForEach(ImportSourceKind.allCases) { Text($0.displayName).tag($0) }
                 }
@@ -123,7 +116,7 @@ struct ImportWizardView: View {
                 }
                 Toggle("Import empty fields as NULL", isOn: $emptyAsNull)
             }
-            Section("Preview (\(source.rows.count.formatted()) records)") {
+            Section("Preview (\(source.rows.count.countText) records)") {
                 ScrollView(.horizontal) {
                     Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
                         GridRow {
@@ -188,7 +181,7 @@ struct ImportWizardView: View {
                 Spacer()
                 Button(result == nil ? "Cancel" : "Close") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Import \(source.rows.count.formatted()) Records") { Task { await runImport() } }
+                Button("Import \(source.rows.count.countText) Records") { Task { await runImport() } }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!hasFile || mapping.isEmpty || isImporting || result != nil || source.rows.isEmpty)
             }
@@ -301,7 +294,7 @@ struct ImportWizardView: View {
         }
         do {
             try await target.context.driver.applyChanges(changes, table: target.object.name, schema: driverSchema, columns: targetColumns)
-            result = "Imported \(changes.count.formatted()) records into \(target.object.name)."
+            result = "Imported \(changes.count.countText) records into \(target.object.name)."
             reloadTabs(showing: target.object)
         } catch {
             self.error = "Nothing was imported: \(error.localizedDescription)"

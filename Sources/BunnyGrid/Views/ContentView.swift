@@ -168,7 +168,7 @@ struct StatusBar: View {
             var parts: [String] = []
             if let elapsed = model.elapsed { parts.append(String(format: "Elapsed Time: %.3fs", elapsed.milliseconds / 1_000)) }
             if case .result(let id) = model.resultPane, let result = model.resultSets.first(where: { $0.id == id }) {
-                parts.append("\(result.rows.count.formatted()) records")
+                parts.append("\(result.rows.count.countText) records")
             }
             parts.append("Line: \(model.cursorLine)  Col: \(model.cursorColumn)")
             return parts
@@ -218,7 +218,7 @@ struct StatusBar: View {
     private var record: String {
         switch app.selectedTab {
         case .table(let model): model.recordDescription
-        case .query(let model): model.selectedResult.map { "\($0.rows.count.formatted()) records" } ?? ""
+        case .query(let model): model.selectedResult.map { "\($0.rows.count.countText) records" } ?? ""
         case .design(let model): model.columns.count == 1 ? "1 field" : "\(model.columns.count) fields"
         case .model(let model): model.summary
         case .redis(let model): model.statusText

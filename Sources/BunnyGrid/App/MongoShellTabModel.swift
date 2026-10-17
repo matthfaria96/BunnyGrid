@@ -46,7 +46,7 @@ final class MongoShellTabModel: DocumentTab {
     var recordText: String {
         guard let output = selectedOutput else { return "" }
         let count = output.output.documents.count
-        return count == 1 ? "1 document" : "\(count.formatted()) documents"
+        return count == 1 ? "1 document" : "\(count.countText) documents"
     }
     var attachmentText: String { text }
     var canSave: Bool { false }

@@ -287,7 +287,7 @@ final class TableTabModel: Identifiable {
     var rangeDescription: String {
         guard let page, !page.rows.isEmpty else { return "No rows" }
         let range = "\(offset + 1)–\(offset + page.rows.count)"
-        if let totalRows { return "\(range) of \(totalRows.formatted())" }
+        if let totalRows { return "\(range) of \(totalRows.countText)" }
         return range
     }
 

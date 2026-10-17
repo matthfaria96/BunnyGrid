@@ -12,7 +12,7 @@ struct ExportMenu: View {
     var body: some View {
         Menu {
             ForEach(ExportFormat.allCases) { format in
-                Button("Export \(rows.count.formatted()) Rows as \(format.displayName)…") {
+                Button("Export \(rows.count.countText) Rows as \(format.displayName)…") {
                     Self.export(columns: columns, rows: rows, suggestedName: suggestedName, format: format)
                 }
             }
@@ -46,7 +46,7 @@ struct ExportChip: View {
     var body: some View {
         Menu {
             ForEach(ExportFormat.allCases) { format in
-                Button("Export \(rows.count.formatted()) Records as \(format.displayName)…") {
+                Button("Export \(rows.count.countText) Records as \(format.displayName)…") {
                     ExportMenu.export(columns: columns, rows: rows, suggestedName: suggestedName, format: format)
                 }
             }

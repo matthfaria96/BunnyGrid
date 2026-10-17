@@ -235,7 +235,7 @@ struct ObjectsView: View {
         let rows = objects.map { object -> ObjectListRow in
             let stats = statistics[object.name]
             return ObjectListRow(id: object.id, icon: object.kind.iconName,
-                                 cells: [object.name, stats?.rows.map { $0.formatted() } ?? "", bytes(stats?.sizeBytes),
+                                 cells: [object.name, stats?.rows.map { $0.countText } ?? "", bytes(stats?.sizeBytes),
                                          bytes(stats?.storageBytes), stats?.indexCount.map(String.init) ?? "", bytes(stats?.averageObjectBytes)])
         }
         return ObjectListTable(columns: columns, rows: rows, selection: $selection, onOpen: { ids in
@@ -264,9 +264,9 @@ struct ObjectsView: View {
             let cells: [String]
             if isSQLite {
                 cells = [object.name, stats?.rootPage.map(String.init) ?? "", stats?.hasIndexes.map { $0 ? "Yes" : "No" } ?? "",
-                         stats?.hasTriggers.map { $0 ? "Yes" : "No" } ?? "", stats?.rows.map { $0.formatted() } ?? ""]
+                         stats?.hasTriggers.map { $0 ? "Yes" : "No" } ?? "", stats?.rows.map { $0.countText } ?? ""]
             } else {
-                cells = [object.name, stats?.rows.map { $0.formatted() } ?? "",
+                cells = [object.name, stats?.rows.map { $0.countText } ?? "",
                          stats?.sizeBytes.flatMap { $0 > 0 ? ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) : nil } ?? "",
                          stats?.engine ?? object.schema ?? context.name, stats?.created ?? "", stats?.modified ?? "",
                          stats?.collation ?? "", stats?.comment ?? ""]

@@ -25,10 +25,12 @@ final class MainSplitViewController: NSSplitViewController {
     private var didRestore = false
 
     init(app: AppModel) {
-        func host(_ view: some View) -> NSHostingController<AnyView> {
+        func host(_ view: some View, honoursMinimumWidth: Bool = false) -> NSHostingController<AnyView> {
             let controller = NSHostingController(rootView: AnyView(view.environment(app)))
-            // The split view owns the sizes; SwiftUI shouldn't push them around.
-            controller.sizingOptions = []
+            // The split view owns the sizes; SwiftUI shouldn't push them around, except the workspace's minimum
+            // width: a tab that needs more room narrows the side panes (down to their own minimums) instead of
+            // overflowing and being clipped on both sides.
+            controller.sizingOptions = honoursMinimumWidth ? [.minSize] : []
             return controller
         }
         navigatorItem = NSSplitViewItem(viewController: host(NavigatorView()))
@@ -37,7 +39,7 @@ final class MainSplitViewController: NSSplitViewController {
         navigatorItem.canCollapse = true
         navigatorItem.holdingPriority = .init(260)
 
-        workspaceItem = NSSplitViewItem(viewController: host(WorkspaceView()))
+        workspaceItem = NSSplitViewItem(viewController: host(WorkspaceView(), honoursMinimumWidth: true))
         workspaceItem.minimumThickness = 360
         workspaceItem.holdingPriority = .init(200)
 

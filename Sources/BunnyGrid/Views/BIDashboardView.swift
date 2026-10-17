@@ -34,7 +34,8 @@ struct BIDashboardView: View {
             filterBar
             Divider()
             GeometryReader { geo in
-                ScrollView {
+                // Below the 480 pt grid minimum the dashboard scrolls sideways instead of being clipped.
+                ScrollView(geo.size.width - 40 < 480 ? [.vertical, .horizontal] : .vertical) {
                     let width = max(geo.size.width - 40, 480)
                     BIDashboardCanvas(model: model, dashboard: dashboard, width: width, interactive: true)
                         .frame(width: width, height: max(BIDashboardLayout.contentSize(dashboard, width: width).height + 120, geo.size.height - 40),

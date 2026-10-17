@@ -280,7 +280,7 @@ struct ValueEditorView: View {
     private var summary: String {
         if isBinary { return ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file) }
         let lines = text.isEmpty ? 0 : text.reduce(1) { $1.isNewline ? $0 + 1 : $0 }
-        return "\(text.count.formatted()) characters · \(lines.formatted()) line\(lines == 1 ? "" : "s")"
+        return "\(text.count.countText) characters · \(lines.countText) line\(lines == 1 ? "" : "s")"
     }
 
     private var defaultHelp: String {

@@ -94,7 +94,7 @@ struct NavigatorView: View {
             Text("Runs CREATE DATABASE on the server.")
         }
         .sheet(item: Binding(get: { app.redisNewKey }, set: { app.redisNewKey = $0 })) { RedisNewKeySheet(target: $0) }
-        .confirmationDialog("Delete \(app.redisPendingDelete?.keys.count ?? 0) key(s) matching “\(app.redisPendingDelete?.label ?? "")”?",
+        .confirmationDialog("Delete \(countLabel(app.redisPendingDelete?.keys.count ?? 0, "key")) matching “\(app.redisPendingDelete?.label ?? "")”?",
                             isPresented: Binding(get: { app.redisPendingDelete != nil }, set: { if !$0 { app.redisPendingDelete = nil } })) {
             Button("Delete", role: .destructive) {
                 if let pending = app.redisPendingDelete { app.deleteRedisKeys(pending.keys, database: pending.database, connectionID: pending.connectionID) }

@@ -413,7 +413,7 @@ struct NewConnectionSheet: View {
 
     private var sidebar: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 1) {  // 22 pt rows, as in Navicat
                 Text("Connection Filter").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                     .padding(.bottom, 2)
                 ForEach(ConnectionFamily.allCases) { family in

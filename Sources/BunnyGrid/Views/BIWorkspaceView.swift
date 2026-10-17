@@ -637,7 +637,7 @@ struct BIChartCard<Header: View>: View {
             if !compact, let result = model.results[key] {
                 HStack(spacing: 6) {
                     Image(systemName: result.statement == nil ? "memorychip" : "bolt.horizontal.circle")
-                    Text("\(result.rows.count) group(s)\(result.rows.count >= chart.spec().limit ?? .max ? " (capped)" : "") · \(result.statement == nil ? "aggregated in memory" : "aggregated by the database") · \(result.duration.formatted(.units(allowed: [.milliseconds])))")
+                    Text("\(countLabel(result.rows.count, "group"))\(result.rows.count >= chart.spec().limit ?? .max ? " (capped)" : "") · \(result.statement == nil ? "aggregated in memory" : "aggregated by the database") · \(result.duration.formatted(.units(allowed: [.milliseconds])))")
                 }
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)

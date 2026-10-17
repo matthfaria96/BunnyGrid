@@ -47,11 +47,8 @@ struct SyncWizardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: request.tool.symbol).foregroundStyle(.teal).font(.title2)
-                Text(request.tool.title).font(.headline)
-                Spacer()
-            }
+            SheetHeader(title: request.tool.title, systemImage: request.tool.symbol)
+            Divider()
             if let source, let target {
                 HStack(alignment: .top, spacing: 12) {
                     EndpointPicker(title: "Source", endpoint: source)
@@ -193,7 +190,7 @@ struct SyncWizardView: View {
             }
             let summary = try await DataTransfer(source: sourceDriver, sourceSchema: sourceSchema, tables: tables,
                                                  destination: destination, options: options).run { event in await report(event) }
-            await report(.log("Finished: \(summary.tables) table(s), \(summary.rows) record(s), \(summary.errors) error(s)."))
+            await report(.log("Finished: \(countLabel(summary.tables, "table")), \(countLabel(summary.rows, "record")), \(countLabel(summary.errors, "error"))."))
             if let fileURL { await MainActor.run { NSWorkspace.shared.activateFileViewerSelecting([fileURL]) } }
             if await MainActor.run(body: { target.context }) != nil, fileURL == nil {
                 await target.context?.loadObjects(schema: target.schema, force: true)
@@ -259,7 +256,7 @@ struct SyncWizardView: View {
                 structure = comparison
                 selectedDifferences = Set(comparison.differences.filter { $0.action != .drop }.map(\.id))
             }
-            await report(.log("\(comparison.differences.count) difference(s)."))
+            await report(.log("\(countLabel(comparison.differences.count, "difference"))."))
         }
     }
 
@@ -272,7 +269,7 @@ struct SyncWizardView: View {
         start { report in
             let t = try await target.makeDriver()
             defer { Task { await t.disconnect() } }
-            await report(.log("Running \(statements.count) statement(s)…"))
+            await report(.log("Running \(countLabel(statements.count, "statement"))…"))
             try await StructureSync.deploy(statements, on: t)
             await report(.log("Deployed."))
             await target.context?.loadObjects(schema: target.schema, force: true)
@@ -376,7 +373,7 @@ struct SyncWizardView: View {
                 dataResults = results
                 selectedRows = Dictionary(uniqueKeysWithValues: results.map { ($0.targetTable, Set($0.differences.map(\.id))) })
             }
-            await report(.log("Compared \(results.count) table(s): \(results.reduce(0) { $0 + $1.differences.count }) difference(s)."))
+            await report(.log("Compared \(countLabel(results.count, "table")): \(countLabel(results.reduce(0) { $0 + $1.differences.count }, "difference"))."))
         }
     }
 
@@ -388,7 +385,7 @@ struct SyncWizardView: View {
             defer { Task { await t.disconnect() } }
             let changed = try await DataSync.apply(entries.map { (comparison: $0.0, selection: Optional($0.1)) }, to: t, schema: schema,
                                                    batchSize: batch) { await report($0) }
-            await report(.log("Committed: \(changed) row(s) changed."))
+            await report(.log("Committed: \(countLabel(changed, "row")) changed."))
             await MainActor.run { dataResults = [] }
         }
     }
@@ -427,7 +424,7 @@ struct SyncWizardView: View {
             log.append(LogLine(text: "[\(index + 1)/\(count)] \(name)", isError: false))
             fraction = Double(index) / Double(max(count, 1))
         case .rowsCopied(let name, let copied, let total):
-            let line = "\(name): \(copied)\(total.map { " of \($0)" } ?? "") record(s)"
+            let line = "\(name): \(copied)\(total.map { " of \($0)" } ?? "") record\((total ?? copied) == 1 ? "" : "s")"
             if let last = log.last, last.text.hasPrefix("\(name): "), !last.isError { log[log.count - 1] = LogLine(text: line, isError: false) } else {
                 log.append(LogLine(text: line, isError: false))
             }

@@ -298,7 +298,7 @@ public enum StructureSync {
         }
         for table in target.tables.sorted(by: { $0.name < $1.name }) where source.table(table.name) == nil {
             comparison.differences.append(SchemaDifference(kind: .table, action: .drop, name: table.name,
-                                                           details: ["\(table.columns.count) column(s)"]))
+                                                           details: ["\(table.columns.count) column\(table.columns.count == 1 ? "" : "s")"]))
         }
 
         if source.kind.dialectFamily == target.kind.dialectFamily {

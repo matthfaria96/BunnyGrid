@@ -126,7 +126,7 @@ public struct DataTransfer: Sendable {
         let writer = Writer(destination: destination, continueOnError: options.continueOnError, onEvent: onEvent)
 
         if case .script = destination {
-            try await writer.comment("BunnyGrid Data Transfer: \(definitions.count) table(s) from \(source.config.kind.displayName) to \(kind.displayName)")
+            try await writer.comment("BunnyGrid Data Transfer: \(definitions.count) table\(definitions.count == 1 ? "" : "s") from \(source.config.kind.displayName) to \(kind.displayName)")
         }
         // Keys are checked by the server only once every table and row is in.
         if isMySQL { try await writer.execute("SET FOREIGN_KEY_CHECKS = 0") }

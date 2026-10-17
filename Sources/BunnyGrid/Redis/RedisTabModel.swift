@@ -122,8 +122,8 @@ final class RedisKeyModel {
         guard let info else { return "" }
         var parts = [info.type.displayName]
         if let length = info.length {
-            if case .string = info.type { parts.append("\(length.formatted()) bytes") } else {
-                parts.append(value.map { "\($0.count.formatted()) of \(length.formatted()) items" } ?? "\(length) items")
+            if case .string = info.type { parts.append("\(length.countText) bytes") } else {
+                parts.append(value.map { "\($0.count.countText) of \(length.countText) items" } ?? "\(length) items")
             }
         }
         if let memory = info.memoryBytes { parts.append("memory \(ByteCountFormatter.string(fromByteCount: memory, countStyle: .memory))") }

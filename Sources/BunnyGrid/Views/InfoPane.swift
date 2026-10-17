@@ -89,7 +89,8 @@ struct RightPane: View {
         case .field: Image(systemName: "rectangle.split.3x1").font(.system(size: 13, weight: .medium))
         case .snippets: Image(systemName: "curlybraces").font(.system(size: 13, weight: .medium))
         case .identifiers: Image(systemName: "list.bullet.rectangle").font(.system(size: 13, weight: .medium))
-        case .ai: AppIcon(name: app.assistant.provider.iconName, size: 15)
+        // A monochrome "AI" mark like the other tabs, so the selected tab reads blue (the provider logo is coloured).
+        case .ai: Text("AI").font(.system(size: 13, weight: .semibold, design: .rounded))
         }
     }
 
@@ -111,7 +112,11 @@ private struct InfoContent: View {
 
     var body: some View {
         Group {
-            if let node = app.navSelection, let id = node.connectionID, let config = app.connection(id: id) {
+            // Design Table describes the table being designed (Navicat's card), whatever the navigator selection.
+            if case .design(let design) = app.selectedTab, let object = design.tableObject,
+               let id = design.connectionID, let config = app.connection(id: id) {
+                ObjectInfo(config: config, context: app.sessions[id]?.context(design.databaseName), object: object)
+            } else if let node = app.navSelection, let id = node.connectionID, let config = app.connection(id: id) {
                 switch node {
                 case .object(_, let db, let object):
                     ObjectInfo(config: config, context: app.sessions[id]?.context(db), object: object)
@@ -299,9 +304,9 @@ private struct ObjectInfo: View {
                 if let page = stats?.rootPage { InfoField(label: "Root Page", value: String(page)) }
                 if let indexes = stats?.hasIndexes { InfoField(label: "Has Indexes", value: indexes ? "Yes" : "No") }
                 if let triggers = stats?.hasTriggers { InfoField(label: "Has Triggers", value: triggers ? "Yes" : "No") }
-                if let rows = stats?.rows { InfoField(label: "Rows", value: rows.formatted()) }
+                if let rows = stats?.rows { InfoField(label: "Rows", value: rows.countText) }
             } else {
-                if let rows = stats?.rows { InfoField(label: "Rows", value: rows.formatted()) }
+                if let rows = stats?.rows { InfoField(label: "Rows", value: rows.countText) }
                 if let size = stats?.sizeBytes, size > 0 { InfoField(label: "Data Length", value: ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)) }
                 if let engine = stats?.engine { InfoField(label: "Engine", value: engine) }
                 if let created = stats?.created { InfoField(label: "Created Date", value: created) }

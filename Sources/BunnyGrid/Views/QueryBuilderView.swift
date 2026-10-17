@@ -388,7 +388,8 @@ struct PredicateEditor: View {
     let remove: () -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
+        // Wraps (field / operator / values / buttons) when the clause pane is narrow, like Navicat's grammar editor.
+        QueryBuilderFlow(spacing: 6) {
             Menu(model.label(predicate.left)) {
                 if having {
                     Button("COUNT(*)") { change { $0.left = .aggregate(.count, tableID: nil, column: "*") } }

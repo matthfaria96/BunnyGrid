@@ -37,13 +37,8 @@ struct ExportWizardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "square.and.arrow.up").foregroundStyle(.teal).font(.title2)
-                VStack(alignment: .leading) {
-                    Text("Export Wizard").font(.headline)
-                    Text(target.context.location(schema: schema)).font(.caption).foregroundStyle(.secondary)
-                }
-            }
+            SheetHeader(title: "Export Wizard", systemImage: "square.and.arrow.up", subtitle: target.context.location(schema: schema))
+            Divider()
             HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Format").font(.subheadline.weight(.semibold))

@@ -67,9 +67,9 @@ private struct ProfileCard: View {
                 Spacer()
             }
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 3) {
-                stat("Records", profile.total.formatted())
+                stat("Records", profile.total.countText)
                 stat("Null", "\(profile.nullCount.formatted()) (\(profile.nullRatio.formatted(.percent.precision(.fractionLength(0...1)))))")
-                if let distinct = profile.distinct { stat("Distinct", distinct.formatted()) }
+                if let distinct = profile.distinct { stat("Distinct", distinct.countText) }
                 if let minimum = profile.minimum { stat("Min", minimum) }
                 if let maximum = profile.maximum { stat("Max", maximum) }
                 if let average = profile.average { stat("Average", average) }
@@ -93,7 +93,7 @@ private struct ProfileCard: View {
                                     .frame(width: max(3, proxy.size.width * Double(item.count) / Double(largest)))
                             }
                             .frame(height: 12)
-                            Text(item.count.formatted())
+                            Text(item.count.countText)
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundStyle(.secondary)
                                 .frame(width: 44, alignment: .trailing)

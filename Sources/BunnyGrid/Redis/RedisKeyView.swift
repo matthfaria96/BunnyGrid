@@ -28,8 +28,11 @@ struct RedisKeyView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
-            footer
+            // Sizes and memory are in the window's status bar; the footer only appears for an error or Load More.
+            if model.error != nil || model.isTruncated {
+                Divider()
+                footer
+            }
         }
         .task { if model.value == nil { await model.load() } }
         .alert("Rename Key", isPresented: $renaming) {
@@ -93,8 +96,6 @@ struct RedisKeyView: View {
         HStack(spacing: 10) {
             if let error = model.error {
                 Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(1).help(error)
-            } else {
-                Text(model.statusText).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             if model.isLoading { ProgressView().controlSize(.mini) }
