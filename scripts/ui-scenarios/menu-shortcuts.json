@@ -1,0 +1,21 @@
+{
+  "name": "menu-shortcuts",
+  "args": ["{{DB}}", "--open-table", "customers", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "tab.rowCount", "atLeast": 20},
+    {"op": "rightClick", "view": "GridTableView", "anchor": "cell:5,4", "menu": ["Set to NULL"]},
+    {"op": "waitFor", "probe": "tab.changeCount", "equals": 1},
+    {"op": "log", "text": "save enabled", "probe": "menu:File>Save"},
+    {"op": "key", "key": "s", "modifiers": ["cmd"], "note": "⌘S applies grid edits without the File menu having been opened"},
+    {"op": "wait", "ms": 500},
+    {"op": "log", "text": "save enabled after", "probe": "menu:File>Save"},
+    {"op": "waitFor", "probe": "tab.changeCount", "equals": 0},
+    {"op": "key", "key": "t", "modifiers": ["cmd"], "note": "regression: ⌘T (New BI Workspace) after connecting"},
+    {"op": "waitFor", "probe": "tabKind", "equals": "document"},
+    {"op": "key", "key": "w", "modifiers": ["cmd"], "note": "⌘W closes the tab (not the window)"},
+    {"op": "waitFor", "probe": "tabKind", "equals": "table"},
+    {"op": "assert", "probe": "windowCount", "equals": 1},
+    {"op": "key", "key": "+", "modifiers": ["cmd"], "note": "⌘+ adds a record"},
+    {"op": "waitFor", "probe": "tab.insertedRows.count", "equals": 1, "timeout": 3}
+  ]
+}

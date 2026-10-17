@@ -80,10 +80,13 @@ final class UIHarness {
         shotsDir = URL(fileURLWithPath: Self.argument("--ui-shots") ?? resultsURL.deletingLastPathComponent().path)
         try? FileManager.default.createDirectory(at: shotsDir, withIntermediateDirectories: true)
         installMenuTracking()
-        Self.acceptFirstMouseEverywhere()
-        Self.virtualizePointer()
-        Self.virtualizeKeyWindow()
         logs.append("app active at start: \(NSApp.isActive)")
+        if ProcessInfo.processInfo.environment["BUNNYGRID_UI_REAL_FOCUS"] == nil {
+            Self.acceptFirstMouseEverywhere()
+            Self.virtualizePointer()
+            Self.virtualizeKeyWindow()
+        }
+        Self.privatePasteboard()
         if ProcessInfo.processInfo.environment["BUNNYGRID_UI_TRACE"] != nil {
             // Every event the app dispatches, with the view under it: why a synthesized event went nowhere.
             _ = NSEvent.addLocalMonitorForEvents(matching: .any) { event in
@@ -216,6 +219,41 @@ final class UIHarness {
             try await drain()
         case "mode":
             postMode = step["mode"] as? String ?? "cg"
+        case "keyEquivalentProbe":
+            let window = try targetWindow(step)
+            let key = step["key"] as? String ?? "s"
+            for kind in ["ns", "cg"] {
+                var event: NSEvent?
+                if kind == "ns" {
+                    event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: window.windowNumber, context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false,
+                                             keyCode: Self.letterCodes[Character(key)] ?? 0)
+                } else if let cg = CGEvent(keyboardEventSource: nil, virtualKey: Self.letterCodes[Character(key)] ?? 0, keyDown: true) {
+                    cg.flags = .maskCommand
+                    event = NSEvent(cgEvent: cg)
+                }
+                guard let event else { continue }
+                let box = UncheckedBox(event)
+                let windowBox = UncheckedBox(window)
+                let byWindow = await onRunLoop { windowBox.value.performKeyEquivalent(with: box.value) }
+                let responder = window.firstResponder.map { String(describing: type(of: $0)) } ?? "-"
+                let handled = byWindow ? false : await onRunLoop { NSApp.mainMenu?.performKeyEquivalent(with: box.value) ?? false }
+                logs.append("keyEquivalent \(kind) ⌘\(key): window=\(byWindow) menu=\(handled) responder=\(responder) active=\(NSApp.isActive)")
+                try await drain(ms: 300)
+            }
+        case "menuDump":
+            // The menu bar: title, key equivalent, enabled.
+            var lines: [String] = []
+            func walk(_ menu: NSMenu, _ depth: Int) {
+                for item in menu.items where !item.isSeparatorItem {
+                    lines.append(String(repeating: "  ", count: depth) + "\(item.title) [\(item.keyEquivalentModifierMask.rawValue >> 16)+\(item.keyEquivalent)] \(item.isEnabled ? "" : "disabled") \(item.action.map { NSStringFromSelector($0) } ?? "")")
+                    if let submenu = item.submenu { walk(submenu, depth + 1) }
+                }
+            }
+            if let menu = NSApp.mainMenu { walk(menu, 0) }
+            let url = shotsDir.appendingPathComponent("\(scenarioName)-menus.txt")
+            try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+            return url.path
         case "release":
             guard let (window, point, flags) = held else { throw Failure("no drag is held") }
             held = nil
@@ -363,6 +401,17 @@ final class UIHarness {
         }
     }
 
+    /// Copy commands in a scenario must not overwrite the person's clipboard: `NSPasteboard.general` is a private
+    /// pasteboard for the run (the `pasteboard` probe reads it).
+    nonisolated(unsafe) static let scenarioPasteboard = NSPasteboard(name: NSPasteboard.Name("app.bunnygrid.uiharness.general.\(getpid())"))
+
+    private static func privatePasteboard() {
+        let general: @convention(block) (AnyObject) -> NSPasteboard = { _ in UIHarness.scenarioPasteboard }
+        if let method = class_getClassMethod(NSPasteboard.self, #selector(getter: NSPasteboard.general)) {
+            method_setImplementation(method, imp_implementationWithBlock(general))
+        }
+    }
+
     nonisolated(unsafe) static var virtualButtons = 0
     nonisolated(unsafe) static var virtualLocation: NSPoint?
 
@@ -412,7 +461,7 @@ final class UIHarness {
     private func evaluate(_ step: [String: Any]) throws -> String {
         if let path = step["probe"] as? String {
             guard let app else { throw Failure("no app") }
-            return UIHarnessProbe.evaluate(path, app: app) ?? "nil"
+            return UIHarnessProbe.evaluate(substitute(path), app: app) ?? "nil"
         }
         if step["id"] != nil || step["label"] != nil || step["view"] != nil {
             if step["exists"] != nil { return (try? element(step)) == nil ? "false" : "true" }
@@ -446,6 +495,7 @@ final class UIHarness {
         if let expected = step["notEquals"] { guard value != "\(expected)" else { throw Failure("\(describe(step)) is \"\(value)\"") } }
         if let expected = step["contains"] as? String { guard value.contains(expected) else { throw Failure("\(describe(step)) = \"\(value.prefix(300))\", missing \"\(expected)\"") } }
         if let expected = step["notContains"] as? String { guard !value.contains(expected) else { throw Failure("\(describe(step)) contains \"\(expected)\"") } }
+        if let expected = step["startsWith"] as? String { guard value.hasPrefix(expected) else { throw Failure("\(describe(step)) = \"\(value.prefix(300))\", expected to start with \"\(expected)\"") } }
         if let minimum = step["atLeast"] as? Double {
             guard let number = Double(value), number >= minimum else { throw Failure("\(describe(step)) = \(value), expected ≥ \(minimum)") }
         }
@@ -487,7 +537,14 @@ final class UIHarness {
 
     /// Finds the step's element: `id` (accessibility identifier), `label` (+ optional `role`), or `view` (class name)
     /// with optional `anchor`; `index` picks among matches; `window` ("sheet", "main", "settings" or a title) narrows.
-    private func element(_ spec: [String: Any]) throws -> Element {
+    private func substitute(_ text: String) -> String {
+        variables.keys.sorted { $0.count > $1.count }.reduce(text) { $0.replacingOccurrences(of: "$" + $1, with: variables[$1]!) }
+    }
+
+    private func element(_ raw: [String: Any]) throws -> Element {
+        // "$name" in a target's strings is a remembered value.
+        var spec = raw
+        for key in ["id", "label", "anchor"] { if let text = spec[key] as? String, text.contains("$") { spec[key] = substitute(text) } }
         var candidates = windows
         if let which = spec["window"] as? String {
             candidates = candidates.filter { window in
@@ -708,7 +765,7 @@ final class UIHarness {
         "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15,
         "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29,
         "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43, "/": 44,
-        "n": 45, "m": 46, ".": 47, "`": 50,
+        "n": 45, "m": 46, ".": 47, "`": 50, "+": 24, "_": 27, "?": 44, ":": 41, "\"": 39, "!": 18, "@": 19, "(": 25, ")": 29, "*": 28,
     ]
 
     private func postKey(_ key: String, flags: NSEvent.ModifierFlags, window: NSWindow) {
@@ -721,11 +778,59 @@ final class UIHarness {
             code = key.count == 1 ? (Self.letterCodes[Character(key.lowercased())] ?? 0) : 0
         }
         var flags = flags
-        if characters.count == 1, let scalar = characters.unicodeScalars.first, CharacterSet.uppercaseLetters.contains(scalar) { flags.insert(.shift) }
+        if characters.count == 1, let scalar = characters.unicodeScalars.first,
+           CharacterSet.uppercaseLetters.contains(scalar) || "+_?:\"!@()*".unicodeScalars.contains(scalar) { flags.insert(.shift) }
         let ignoring = flags.contains(.shift) ? characters : characters.lowercased()
         if flags.contains(.option), key.count == 1 { characters = key }
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             eventNumber += 1
+            // A CGEvent-backed key event (never posted to the system), like a real keystroke: SwiftUI's menu-bar
+            // commands only matched those. Its text is set explicitly, so the keyboard layout does not matter.
+            if code != 0 || characters == "a", let cg = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: type == .keyDown) {
+                cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
+                let utf16 = Array(characters.utf16)
+                cg.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
+                cg.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+                if let event = NSEvent(cgEvent: cg), event.characters == characters {
+                    if !flags.intersection([.command, .control]).isEmpty {
+                        // Shortcuts are dispatched the way NSApplication does for a keystroke from the window server:
+                        // the key window's views, then the menu bar, then the window. (Queued events reached the
+                        // window but never the menu bar's key equivalents.)
+                        guard type == .keyDown else { continue }
+                        // NSEvent-made: SwiftUI's menu items did not match the CGEvent-backed one.
+                        let plain = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: event.timestamp,
+                                                     windowNumber: window.windowNumber, context: nil, characters: characters,
+                                                     charactersIgnoringModifiers: ignoring, isARepeat: false, keyCode: code) ?? event
+                        let box = UncheckedBox((plain, window))
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated {
+                                let (event, window) = box.value
+                                // A background app's menu bar is not kept current by SwiftUI (it is not on screen):
+                                // bring it up to date first, as it is for the active app a person types into.
+                                for item in NSApp.mainMenu?.items ?? [] {
+                                    guard let submenu = item.submenu else { continue }
+                                    submenu.delegate?.menuNeedsUpdate?(submenu)
+                                    submenu.update()
+                                }
+                                let byWindow = window.performKeyEquivalent(with: event)
+                                let byMenu = byWindow ? false : NSApp.mainMenu?.performKeyEquivalent(with: event) == true
+                                if !byWindow && !byMenu { window.sendEvent(event) }
+                                if ProcessInfo.processInfo.environment["BUNNYGRID_UI_TRACE"] != nil {
+                                    FileHandle.standardError.write(Data("[ui-trace] shortcut \(event.charactersIgnoringModifiers ?? "") window=\(byWindow) menu=\(byMenu)\n".utf8))
+                                }
+                            }
+                        }
+                        continue
+                    }
+                    if postMode == "send" {
+                        let box = UncheckedBox(event)
+                        DispatchQueue.main.async { MainActor.assumeIsolated { NSApp.sendEvent(box.value) } }
+                    } else {
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                    continue
+                }
+            }
             if let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                             windowNumber: window.windowNumber, context: nil, characters: characters,
                                             charactersIgnoringModifiers: ignoring, isARepeat: false, keyCode: code) {
@@ -829,9 +934,12 @@ final class UIHarness {
             root.cancelTrackingWithoutAnimation()
             throw Failure("menu item \"\(item.title)\" is disabled")
         }
-        root.cancelTrackingWithoutAnimation()
-        try await drain(ms: 30)
-        await onRunLoop { owner.performActionForItem(at: index) }
+        // The action is sent while the menu is still up, then the menu closes: what the menu's owner set up for it
+        // (NSTableView's clickedRow, for one) is still in place, as when a person picks the item.
+        await onRunLoop {
+            owner.performActionForItem(at: index)
+            root.cancelTrackingWithoutAnimation()
+        }
         try await drain()
     }
 

@@ -30,7 +30,7 @@ if (( ${#NAMES} == 0 )); then
 fi
 
 mkdir -p "$OUT"
-passed=0; failed=0; skipped=0
+passed=0; failed=0; skipped=0; xfailed=0
 FAILED=()
 for name in "${NAMES[@]}"; do
   file="$SCENARIOS/$name.json"
@@ -41,10 +41,11 @@ import json, sys
 s = json.load(open(sys.argv[1]))
 print(" ".join(s.get("requires", [])))
 print(s.get("fixture", "demo"))
+print("1" if s.get("knownIssue") else "0")
 for a in s.get("args", []): print(a)
 PY
 )}")
-  requires="${meta[1]}"; fixture="${meta[2]}"; args=("${(@)meta[3,-1]}")
+  requires="${meta[1]}"; fixture="${meta[2]}"; known="${meta[3]}"; args=("${(@)meta[4,-1]}")
   missing=""
   for need in ${=requires}; do
     case "$need" in
@@ -92,10 +93,9 @@ PY
   [[ -n "$mock_pid" ]] && kill $mock_pid 2>/dev/null
   code=$(cat "$run/exit")
   if [[ -f "$run/results.json" ]] && /usr/bin/python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' "$run/results.json"; then
-    echo "ok $name"
+    if [[ "$known" == 1 ]]; then echo "XPASS $name (known issue fixed? remove \"knownIssue\")"; else echo "ok $name"; fi
     passed=$((passed+1))
   else
-    failed=$((failed+1)); FAILED+=("$name")
     if [[ -f "$run/timeout" ]]; then reason="timed out"
     elif [[ ! -f "$run/results.json" ]]; then reason="crashed (exit $code), see $run/app.log"
     else reason=$(/usr/bin/python3 -I -c '
@@ -105,8 +105,14 @@ bad = [s for s in r["steps"] if not s["ok"]]
 b = bad[0] if bad else None
 print(r.get("fatal") or ("step %s %s %s: %s" % (b["index"], b["op"], b.get("note") or "", b.get("error")) if b else "failed"))' "$run/results.json")
     fi
-    echo "FAIL $name: $reason"
+    if [[ "$known" == 1 ]]; then
+      echo "xfail $name (known issue): $reason"
+      xfailed=$((xfailed+1))
+    else
+      echo "FAIL $name: $reason"
+      failed=$((failed+1)); FAILED+=("$name")
+    fi
   fi
 done
-echo "$passed passed, $failed failed, $skipped skipped  (results in $OUT)"
+echo "$passed passed, $failed failed, $xfailed known issues, $skipped skipped  (results in $OUT)"
 (( failed == 0 ))

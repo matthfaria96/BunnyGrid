@@ -1,0 +1,13 @@
+{
+  "name": "grid-type-to-edit",
+  "knownIssue": "Typing on a focused cell starts editing but drops the first character: beginEditingFocused(with:) sets currentEditor()?.string right after editColumn, but in the view-based grid the cell's text field only becomes first responder later, so currentEditor() is nil (ResultGridView, being rewritten by another agent).",
+  "args": ["{{DB}}", "--open-table", "customers", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "tab.rowCount", "atLeast": 20},
+    {"op": "click", "view": "GridTableView", "anchor": "cell:1,2", "note": "focus a cell"},
+    {"op": "wait", "ms": 300},
+    {"op": "type", "text": "Xyz", "note": "type to replace its value, as in a spreadsheet"},
+    {"op": "key", "key": "return"},
+    {"op": "waitFor", "probe": "tab.value:1,1", "equals": "text(\"Xyz\")", "timeout": 3}
+  ]
+}

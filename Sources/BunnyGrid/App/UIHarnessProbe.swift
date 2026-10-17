@@ -51,11 +51,24 @@ enum UIHarnessProbe {
         case "navSelection": return app.navSelection.map { "\($0)" } ?? "nil"
         case "expandedCount": return app.expanded.count
         case "sheet": return NSApp.windows.contains { $0.isVisible && $0.isSheet }
+        case "popover": return NSApp.windows.contains { $0.isVisible && String(describing: type(of: $0)).contains("Popover") }
+        case "windowCount": return NSApp.windows.filter { $0.isVisible && $0.level == .normal }.count
         case "keyWindow": return NSApp.keyWindow?.title ?? "nil"
         case "pasteboard": return NSPasteboard.general.string(forType: .string) ?? "nil"
         case "firstResponder": return NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
         case "openSessions": return app.sessions.values.filter { $0.contexts.values.contains(where: \.isOpen) }.count
-        default: return nil
+        default:
+            // "menu:File>Save" → whether that menu bar item is enabled right now (without updating the menu first).
+            if name.hasPrefix("menu:") {
+                var menu = NSApp.mainMenu
+                var item: NSMenuItem?
+                for title in name.dropFirst(5).split(separator: ">").map(String.init) {
+                    item = menu?.items.first { $0.title == title }
+                    menu = item?.submenu
+                }
+                return item.map { $0.isEnabled } ?? "missing"
+            }
+            return nil
         }
     }
 
@@ -128,7 +141,7 @@ enum UIHarnessProbe {
         if let number = value as? CGFloat { return String(format: "%.1f", Double(number)) }
         let mirror = Mirror(reflecting: value)
         if mirror.displayStyle == .enum, mirror.children.isEmpty { return "\(value)" }
-        if mirror.displayStyle == .enum, let label = mirror.children.first?.label { return label }
+        if mirror.displayStyle == .enum { return String(describing: value) }
         return "\(value)"
     }
 }
