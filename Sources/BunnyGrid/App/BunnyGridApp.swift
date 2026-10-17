@@ -34,7 +34,7 @@ struct BunnyGridApp: App {
         Window("BunnyGrid", id: "main") {
             ContentView()
                 .environment(model)
-                .frame(minWidth: 1100, minHeight: 680)
+                .frame(minWidth: 960, minHeight: 600)
                 .onAppear { AppearancePreference(rawValue: appearance)?.apply() }
                 .onChange(of: appearance) { _, value in AppearancePreference(rawValue: value)?.apply() }
         }
