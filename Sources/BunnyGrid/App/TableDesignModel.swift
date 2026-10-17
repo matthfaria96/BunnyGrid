@@ -62,6 +62,11 @@ final class TableDesignModel: Identifiable {
     /// SQLite Options tab: Primary Key ON CONFLICT, AUTOINCREMENT, WITHOUT ROWID (read from the stored CREATE TABLE).
     private(set) var originalSQLiteOptions = SQLiteTableOptions()
     var sqliteOptions = SQLiteTableOptions()
+    /// Options tab: the next auto-increment id (SQLite sqlite_sequence, MySQL AUTO_INCREMENT); empty leaves it alone.
+    private(set) var originalAutoIncrement = ""
+    var autoIncrementValue = ""
+    /// Indexes as loaded (with SQLite uniques' ON CONFLICT), to tell which uniques changed.
+    @ObservationIgnored private var originalIndexDesigns: [IndexDesign] = []
     private(set) var isLoading = false
     private(set) var isSaving = false
     var saveError: String?
@@ -124,6 +129,10 @@ final class TableDesignModel: Identifiable {
         originalSQL = kind == .sqlite ? try? await driver.storedTableSQL(originalName, schema: driverSchema) : nil
         originalSQLiteOptions = originalSQL.map(SQLiteTableOptions.init(sql:)) ?? SQLiteTableOptions()
         sqliteOptions = originalSQLiteOptions
+        indexDesigns = SQLiteTableOptions.applyingUniqueConflicts(from: originalSQL, to: indexDesigns)
+        originalIndexDesigns = indexDesigns
+        originalAutoIncrement = (await driver.autoIncrementNext(table: originalName, schema: driverSchema)).map(String.init) ?? ""
+        autoIncrementValue = originalAutoIncrement
         #if DEBUG
         // --demo-fk: a pending foreign key change, to see the Foreign Keys tab and SQL Preview with an edit.
         if CommandLine.arguments.contains("--demo-fk"), !foreignKeyDesigns.isEmpty {
@@ -222,10 +231,15 @@ final class TableDesignModel: Identifiable {
     /// The statements Save would run, or why the design can't be saved.
     var plan: Result<[String], any Error> {
         Result {
+            let nextID = try autoIncrementPlanValue()
             if isNew {
+                let constraints = kind == .sqlite ? indexDesigns.filter(\.isTableConstraint) : []
                 return [try dialect.createTable(name: tableName, schema: driverSchema, columns: columns, foreignKeys: foreignKeyDesigns.map(\.key),
-                                                sqliteOptions: kind == .sqlite ? sqliteOptions : nil)]
-                    + (try dialect.alterIndexes(table: tableName, schema: driverSchema, original: [], design: indexDesigns))
+                                                sqliteOptions: kind == .sqlite ? sqliteOptions : nil, uniqueConstraints: constraints)]
+                    + (try dialect.alterIndexes(table: tableName, schema: driverSchema, original: [],
+                                                design: indexDesigns.filter { index in !constraints.contains { $0.id == index.id } }))
+                    + dialect.columnCommentStatements(table: tableName, schema: driverSchema, columns: columns)
+                    + (nextID.map { dialect.setAutoIncrement(table: tableName, schema: driverSchema, next: $0) } ?? [])
             }
             let currentName = originalName ?? tableName
             let finalName = tableName.isEmpty ? currentName : tableName
@@ -240,6 +254,7 @@ final class TableDesignModel: Identifiable {
             }()
             var statements: [String]
             if kind == .sqlite, sqliteOptions != originalSQLiteOptions
+                || SQLiteTableOptions.uniqueConflictsChanged(original: originalIndexDesigns, design: indexDesigns)
                 || SQLiteTableRebuild.isNeeded(originalColumns: originalColumns, columns: columns, originalIndexes: indexes,
                                                originalForeignKeys: foreignKeys, foreignKeys: foreignKeyDesigns) {
                 // SQLite: rebuild under the current name (indexes, kept triggers and keys included), then rename natively.
@@ -251,6 +266,10 @@ final class TableDesignModel: Identifiable {
                     options: sqliteOptions)
                 rebuild.schema = driverSchema
                 statements = try rebuild.statements()
+                // The copy restarts the AUTOINCREMENT counter from the highest copied id: put the old one (or the edited one) back.
+                if let next = nextID ?? Int64(originalAutoIncrement), sqliteOptions.autoincrementApplies(to: columns.filter(\.isPrimaryKey)) {
+                    statements += dialect.setAutoIncrement(table: currentName, schema: driverSchema, next: next)
+                }
                 if let rename { statements.append(rename) }
             } else {
                 // Foreign keys: drop removed or changed ones first (a key can hold a column or index the changes remove),
@@ -264,6 +283,9 @@ final class TableDesignModel: Identifiable {
                 statements += try dialect.alterIndexes(table: finalName, schema: driverSchema, original: indexes, design: indexDesigns)
                 statements += keys.adds
                 for name in droppedTriggers.sorted() { statements.append(dialect.dropTrigger(named: name, table: finalName, schema: driverSchema)) }
+                if let nextID, autoIncrementValue != originalAutoIncrement {
+                    statements += dialect.setAutoIncrement(table: finalName, schema: driverSchema, next: nextID)
+                }
             }
             // Triggers.
             statements += newTriggers.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
@@ -289,6 +311,18 @@ final class TableDesignModel: Identifiable {
             }
             return statements
         }
+    }
+
+    /// The edited Auto Increment value, nil when empty or unchanged-and-unsupported; throws when it isn't a positive number.
+    private func autoIncrementPlanValue() throws -> Int64? {
+        let text = autoIncrementValue.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty, dialect.supportsAutoIncrementValue else { return nil }
+        guard let value = Int64(text), value > 0 else { throw TableDesignError.invalid("Auto Increment must be a positive whole number.") }
+        if kind == .sqlite, !sqliteOptions.autoincrementApplies(to: columns.filter(\.isPrimaryKey)) {
+            if text == originalAutoIncrement { return nil }
+            throw TableDesignError.invalid("The Auto Increment value needs AUTOINCREMENT on a single INTEGER primary key.")
+        }
+        return value
     }
 
     var planError: String? {

@@ -140,6 +140,29 @@ public enum SSHAuthMethod: String, Codable, CaseIterable, Sendable, Identifiable
     }
 }
 
+/// One extra SQLite database file of a connection (Navicat's Databases tab): ATTACHed as `alias`.
+public struct AttachedDatabase: Codable, Hashable, Identifiable, Sendable {
+    public var id = UUID()
+    public var alias: String
+    public var path: String
+
+    public init(alias: String, path: String) {
+        self.alias = alias
+        self.path = path
+    }
+
+    /// A default alias for a file: its name without extension, as an identifier (`sales-2024.db` → `sales_2024`).
+    public static func suggestedAlias(for path: String, taken: [String]) -> String {
+        let stem = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        var base = String(stem.map { $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "_" })
+        if base.isEmpty || base.first!.isNumber { base = "db_" + base }
+        let lowered = Set(taken.map { $0.lowercased() } + ["main", "temp"])
+        var alias = base, n = 2
+        while lowered.contains(alias.lowercased()) { alias = "\(base)_\(n)"; n += 1 }
+        return alias
+    }
+}
+
 /// The SSH tab: connect to the database through a local port forwarded over SSH.
 /// The SSH password or the key's passphrase is in the Keychain (`KeychainStore.sshAccount`).
 public struct SSHTunnelConfig: Codable, Hashable, Sendable {
@@ -224,6 +247,10 @@ public struct ConnectionConfig: Codable, Hashable, Identifiable, Sendable {
     public var socketPath: String?
     /// MongoDB: SRV, auth source and mechanism, replica set (nil for other engines).
     public var mongo: MongoOptions?
+    /// Databases tab, SQLite: more database files ATTACHed on every connection, beside main.
+    public var attachedDatabases: [AttachedDatabase]?
+    /// Databases tab, servers: the databases the navigator lists (nil or empty lists them all).
+    public var visibleDatabases: [String]?
 
     public init(
         id: UUID = UUID(),
@@ -263,6 +290,14 @@ public struct ConnectionConfig: Codable, Hashable, Identifiable, Sendable {
     public var activeSocketPath: String? {
         guard !kind.isFileBased, let path = socketPath?.trimmingCharacters(in: .whitespaces), !path.isEmpty else { return nil }
         return (path as NSString).expandingTildeInPath
+    }
+
+    /// The databases to list in the navigator: `visibleDatabases` in server order, plus the connection's
+    /// own database (always shown); everything when no choice was made.
+    public func visible(_ databases: [String]) -> [String] {
+        guard let chosen = visibleDatabases, !chosen.isEmpty else { return databases }
+        let keep = Set(chosen).union(database.isEmpty ? [] : [database])
+        return databases.filter { keep.contains($0) }
     }
 
     /// Name shown in the UI, falling back to something derived from the target.

@@ -438,9 +438,16 @@ private struct ResultSetPane: View {
     @State private var chosenTab: SubTab?
     @State private var formView = false
     @State private var focusedRow = 0
+    /// Edit Result is on by default for a result that can be edited; the toolbar button turns it off.
+    @State private var editingOff = false
+    @State private var showingProfiling = false
+    @State private var showingSQLPreview = false
 
     private var plan: [QueryPlanNode]? { model.plan(for: result) }
     private var subTab: SubTab { chosenTab ?? (plan != nil ? .plan : .data) }
+    /// The table-tab model behind this result (edits, Form View, profiling); nil until prepared.
+    private var editor: TableTabModel? { model.editor(for: result) }
+    private var isEditing: Bool { !editingOff && editor?.isEditable == true }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -450,11 +457,17 @@ private struct ResultSetPane: View {
                 subTabButton("Info", .info)
                 Spacer()
                 if subTab == .data {
-                    ToolIconButton(systemImage: "square.and.pencil", help: "Edit Result: query results are read-only; open the table to edit") {}
-                        .disabled(true)
+                    ToolIconButton(systemImage: "square.and.pencil",
+                                   help: editor?.readOnlyReason ?? (editor == nil ? "Edit Result" : "Edit Result: changes apply to \(editor?.object.qualifiedName ?? "")"),
+                                   isToggle: true, isOn: isEditing) {
+                        editingOff.toggle()
+                    }
+                    .disabled(editor?.isEditable != true || editor?.hasChanges == true)
                     Divider().frame(height: 16).padding(.horizontal, 4)
-                    ToolIconButton(systemImage: "chart.bar.xaxis", help: "Data Profiling: available on table tabs") {}
-                        .disabled(true)
+                    ToolIconButton(systemImage: "chart.bar.xaxis", help: "Data Profiling: statistics of the rows in this result") {
+                        showingProfiling = true
+                    }
+                    .disabled(editor == nil || result.rows.isEmpty)
                     ExportMenu(columns: result.columns, rows: result.rows, suggestedName: model.title)
                         .buttonStyle(.borderless)
                         .foregroundStyle(.orange)
@@ -476,35 +489,119 @@ private struct ResultSetPane: View {
             case .plan:
                 QueryPlanView(nodes: plan ?? [])
             case .data:
-                if formView {
+                if formView, let editor {
+                    FormRecordView(model: editor)
+                } else if formView {
                     QueryResultForm(result: result, row: $focusedRow)
+                } else if isEditing, let editor {
+                    editableGrid(editor)
                 } else {
                     ResultGridView(columns: result.columns, rows: result.rows, onFocusChange: { cell in
                         if let cell { focusedRow = cell.row }
+                        editor?.focusedCell = cell
                     })
                 }
                 Divider()
                 footer
             }
         }
+        .task(id: result.id) {
+            await model.prepareEditor(for: result)
+            #if DEBUG
+            // `--result-form` / `--result-profiling`: the Form View or Data Profiling of the result, for screenshots.
+            if CommandLine.arguments.contains("--result-form") { formView = true }
+            if CommandLine.arguments.contains("--result-profiling") { showingProfiling = true }
+            #endif
+        }
+        .sheet(isPresented: $showingProfiling) {
+            if let editor {
+                DataProfilingView(model: editor, driver: nil, driverSchema: nil)
+            }
+        }
+        .alert("Couldn't Apply Changes", isPresented: Binding(
+            get: { editor?.saveError != nil },
+            set: { if !$0 { editor?.saveError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(editor?.saveError ?? "")
+        }
     }
 
-    /// The statement, and for a result cut at the row limit: how many rows came, Load More and Fetch All.
-    private var footer: some View {
-        HStack(spacing: 10) {
-            // Record buttons as in Navicat; a query result is read-only, so they stay disabled.
+    /// The result grid with the table tab's editing (typed edits applied through the primary key).
+    private func editableGrid(_ editor: TableTabModel) -> some View {
+        ResultGridView(
+            columns: editor.page?.columns ?? result.columns,
+            rows: editor.displayRows,
+            columnTypes: editor.columnTypes,
+            editing: GridEditing(
+                revision: editor.revision,
+                cellState: { editor.cellState(row: $0, column: $1) },
+                onEdit: { editor.setValue($2, row: $0, column: $1) },
+                onToggleDelete: { editor.toggleDelete($0) },
+                prefersEditor: { editor.prefersValueEditor(row: $0, column: $1) },
+                onSetDefault: { editor.setDefault(row: $0, column: $1) },
+                onDuplicate: { editor.duplicateRows($0) }
+            ),
+            focusedCell: editor.focusedCell,
+            lockedColumns: editor.maskedColumnIndexes,
+            onFocusChange: { cell in
+                editor.focusedCell = cell
+                if let cell { focusedRow = cell.row }
+            },
+            onSelectionChange: { editor.selectedRows = $0 },
+            scrollRequest: editor.scrollRequest,
+            copyTarget: editor.copyTarget,
+            editorContent: { cell, close in
+                AnyView(ValueEditorView(model: editor, cell: cell, onClose: close).frame(width: 520, height: 360))
+            },
+            editorRequest: editor.editorRequest
+        )
+    }
+
+    /// + − ✓ ✗ as in the table tab's footer, live while the result is being edited.
+    @ViewBuilder
+    private var recordButtons: some View {
+        if isEditing, let editor {
+            HStack(spacing: 4) {
+                ToolIconButton(systemImage: "plus", help: "Add Record", tint: .primary) { editor.addRow() }
+                ToolIconButton(systemImage: "minus", help: "Delete Selected Records (⌫)", tint: .primary) { editor.toggleDelete(editor.selectedRows) }
+                    .disabled(editor.selectedRows.isEmpty)
+                ToolIconButton(systemImage: "checkmark", help: "Apply Changes", tint: .green) { Task { await editor.applyChanges() } }
+                    .disabled(!editor.hasChanges || editor.isSaving)
+                ToolIconButton(systemImage: "xmark", help: "Discard Changes", tint: .red) { editor.discardChanges() }
+                    .disabled(!editor.hasChanges)
+            }
+            .buttonStyle(.plain)
+            if editor.hasChanges {
+                Button("\(editor.changeCount) pending change\(editor.changeCount == 1 ? "" : "s")") { showingSQLPreview = true }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.orange)
+                    .fixedSize()
+                    .help("Preview the SQL that Apply will run")
+                    .popover(isPresented: $showingSQLPreview, arrowEdge: .top) { SQLPreview(sql: editor.pendingSQL) }
+            }
+        } else {
             HStack(spacing: 4) {
                 ForEach(["plus", "minus", "checkmark", "xmark"], id: \.self) { symbol in
                     Image(systemName: symbol).font(.system(size: 12, weight: .medium)).frame(width: 22)
                 }
             }
             .foregroundStyle(.tertiary)
-            .help("Query results are read-only")
+            .help(editor?.readOnlyReason ?? (editingOff ? "Edit Result is off" : "Query results are read-only"))
+        }
+    }
+
+    /// The statement, and for a result cut at the row limit: how many rows came, Load More and Fetch All.
+    private var footer: some View {
+        HStack(spacing: 10) {
+            // Record buttons as in Navicat: live when the result comes from one table with its primary key.
+            recordButtons
             if result.isTruncated {
                 Text("First \(result.rows.count.countText) rows")
                     .foregroundStyle(.secondary)
                     .fixedSize()
-                if model.canLoadMore(result) {
+                if model.canLoadMore(result), editor?.hasChanges != true {
                     Button("Load More") { model.loadMore(result) }
                         .fixedSize()
                         .help("Run the statement again, fetching \((model.rowLimit ?? 1_000).countText) more rows")

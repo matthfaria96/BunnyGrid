@@ -19,6 +19,11 @@ struct ConnectionEditorView: View {
     @State private var showProfiles = true
     @State private var showingURI = false
     @State private var newFile = false
+    /// Databases tab: the selected attached file (SQLite), the server's databases once listed, and listing state.
+    @State private var selectedAttachment: AttachedDatabase.ID?
+    @State private var serverDatabases: [String] = []
+    @State private var isListingDatabases = false
+    @State private var databasesError: String?
     private let isNew: Bool
     /// Set when coming from the New Connection picker: the chosen type, and how to go back to it.
     private let type: ConnectionType?
@@ -51,7 +56,10 @@ struct ConnectionEditorView: View {
     private var title: String {
         isNew || config.name.isEmpty ? "\(isNew ? "New" : "Edit") Connection (\(typeName))" : "\(config.name) — Edit Connection (\(typeName))"
     }
-    private var tabs: [Tab] { config.kind.isFileBased ? [.general, .advanced, .databases, .http, .remarks] : Tab.allCases }
+    /// No HTTP tab: Navicat's HTTP tunnel needs its own server-side tunnel script, which BunnyGrid doesn't have.
+    private var tabs: [Tab] {
+        config.kind.isFileBased ? [.general, .advanced, .databases, .remarks] : Tab.allCases.filter { $0 != .http }
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -438,36 +446,160 @@ struct ConnectionEditorView: View {
         }
     }
 
-    // MARK: Databases / HTTP (shown as in Navicat; not supported yet, so inert)
+    // MARK: Databases
 
+    /// SQLite: the files ATTACHed beside main. Servers: which databases the navigator lists.
     private var databasesTab: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if !config.kind.isFileBased {
+                HStack {
+                    Toggle("Show all databases", isOn: Binding(
+                        get: { (config.visibleDatabases ?? []).isEmpty },
+                        set: { all in config.visibleDatabases = all ? nil : (serverDatabases.isEmpty ? [config.database].filter { !$0.isEmpty } : serverDatabases) }
+                    ))
+                    .toggleStyle(.checkbox)
+                    Spacer()
+                    if isListingDatabases { ProgressView().controlSize(.small) }
+                    Button("List Databases") { listServerDatabases() }
+                        .disabled(isListingDatabases)
+                        .help("Connect with these settings and read the server's databases")
+                }
+                if let databasesError {
+                    Text(databasesError).font(.caption).foregroundStyle(.red).lineLimit(3)
+                }
+            }
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
-                    Text(config.kind.isFileBased ? "Database" : "Database").frame(width: 150, alignment: .leading)
+                    Text(config.kind.isFileBased ? "Database" : "Show").frame(width: config.kind.isFileBased ? 150 : 60, alignment: .leading)
                     Divider().frame(height: 14)
-                    Text(config.kind.isFileBased ? "File" : "Show").padding(.leading, 6).frame(maxWidth: .infinity, alignment: .leading)
-                    Divider().frame(height: 14)
-                    Text(config.kind.isFileBased ? "Encrypted" : "").padding(.leading, 6).frame(width: 70, alignment: .leading)
+                    Text(config.kind.isFileBased ? "File" : "Database").padding(.leading, 6).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .font(.system(size: 11.5, weight: .semibold))
                 .padding(.horizontal, 10)
                 .frame(height: 28)
                 Divider()
-                Color(nsColor: .textBackgroundColor).frame(height: 360)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        if config.kind.isFileBased {
+                            mainDatabaseRow
+                            ForEach(config.attachedDatabases ?? []) { database in attachedRow(database) }
+                        } else {
+                            ForEach(shownServerDatabases, id: \.self) { name in serverDatabaseRow(name) }
+                        }
+                    }
+                }
+                .frame(height: 360)
+                .background(Color(nsColor: .textBackgroundColor))
             }
             .overlay(Rectangle().strokeBorder(Color(nsColor: .separatorColor)))
-            HStack(spacing: 12) {
-                Image(systemName: "plus")
-                Image(systemName: "minus")
+            if config.kind.isFileBased {
+                HStack(spacing: 4) {
+                    ToolIconButton(systemImage: "plus", help: "Attach a Database File…", tint: .primary) { attachDatabaseFile() }
+                    ToolIconButton(systemImage: "minus", help: "Remove the Selected Database", tint: .primary) {
+                        config.attachedDatabases?.removeAll { $0.id == selectedAttachment }
+                        selectedAttachment = nil
+                    }
+                    .disabled(selectedAttachment == nil)
+                }
+            } else if (config.visibleDatabases ?? []).isEmpty {
+                Text("Every database of the server is listed in the navigator.").font(.caption).foregroundStyle(.secondary)
             }
-            .foregroundStyle(.tertiary)
-            .padding(.leading, 8)
         }
         .frame(width: 660)
-        .help(config.kind.isFileBased ? "Attaching more database files isn't supported yet." : "Choosing which databases to show isn't supported yet.")
     }
 
+    private var mainDatabaseRow: some View {
+        HStack(spacing: 0) {
+            Text("main").frame(width: 150, alignment: .leading)
+            Text(config.filePath.isEmpty ? "(in memory)" : config.filePath)
+                .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).padding(.leading, 7)
+            Spacer()
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+    }
+
+    private func attachedRow(_ database: AttachedDatabase) -> some View {
+        let binding = Binding(
+            get: { config.attachedDatabases?.first { $0.id == database.id }?.alias ?? "" },
+            set: { alias in
+                if let index = config.attachedDatabases?.firstIndex(where: { $0.id == database.id }) { config.attachedDatabases?[index].alias = alias }
+            }
+        )
+        return HStack(spacing: 0) {
+            TextField("", text: binding).textFieldStyle(.plain).frame(width: 150, alignment: .leading)
+            Text(database.path).lineLimit(1).truncationMode(.middle).padding(.leading, 7)
+            Spacer()
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .background(selectedAttachment == database.id ? Color.accentColor.opacity(0.18) : .clear)
+        .contentShape(Rectangle())
+        .onTapGesture { selectedAttachment = database.id }
+    }
+
+    /// The server's databases (once listed), or the chosen ones.
+    private var shownServerDatabases: [String] {
+        let chosen = (config.database.isEmpty ? [] : [config.database]) + (config.visibleDatabases ?? []).filter { $0 != config.database }
+        return serverDatabases.isEmpty ? chosen : serverDatabases + chosen.filter { !serverDatabases.contains($0) }
+    }
+
+    private func serverDatabaseRow(_ name: String) -> some View {
+        let all = (config.visibleDatabases ?? []).isEmpty
+        let isShown = all || config.visibleDatabases?.contains(name) == true || name == config.database
+        return HStack(spacing: 0) {
+            Toggle("", isOn: Binding(
+                get: { isShown },
+                set: { show in
+                    var chosen = all ? shownServerDatabases : (config.visibleDatabases ?? [])
+                    if show { if !chosen.contains(name) { chosen.append(name) } } else { chosen.removeAll { $0 == name } }
+                    config.visibleDatabases = chosen
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.checkbox)
+            .disabled(name == config.database)
+            .frame(width: 60, alignment: .leading)
+            Text(name).padding(.leading, 7)
+            Spacer()
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .help(name == config.database ? "The connection's own database is always shown" : "")
+    }
+
+    private func attachDatabaseFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        var list = config.attachedDatabases ?? []
+        for url in panel.urls {
+            list.append(AttachedDatabase(alias: AttachedDatabase.suggestedAlias(for: url.path, taken: list.map(\.alias)), path: url.path))
+        }
+        config.attachedDatabases = list
+    }
+
+    private func listServerDatabases() {
+        isListingDatabases = true
+        databasesError = nil
+        let driver = model.makeDriver(for: config, secrets: secrets)
+        Task {
+            defer { isListingDatabases = false }
+            do {
+                try await driver.connect()
+                serverDatabases = try await driver.listDatabases()
+            } catch {
+                databasesError = error.localizedDescription
+            }
+            await driver.disconnect()
+        }
+    }
+
+    // HTTP tunnels (Navicat's tunnel scripts) aren't supported, so the HTTP tab isn't listed; this stays for reference.
     private var httpTab: some View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("Use HTTP tunnel", isOn: .constant(false)).toggleStyle(.checkbox)

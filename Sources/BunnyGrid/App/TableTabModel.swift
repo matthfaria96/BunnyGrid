@@ -105,6 +105,46 @@ final class TableTabModel: Identifiable {
         self.databaseName = context.name
     }
 
+    // MARK: Query results ("Edit Result")
+
+    /// Set when the rows come from a query result instead of a page of the table: the table column behind each
+    /// result column (nil = read-only), why the result can't be edited, and how to run the statement again.
+    struct ResultBinding {
+        var sources: [String?] = []
+        var refusal: String?
+        var rerun: @MainActor () async throws -> QueryResult
+    }
+
+    @ObservationIgnored private(set) var resultBinding: ResultBinding?
+    var isQueryResult: Bool { resultBinding != nil }
+
+    /// A query result shown with the table tab's editing pipeline. `target` is the table the statement reads
+    /// (nil when it reads none, or several); its catalog loads in `loadResultCatalog`.
+    convenience init(result: QueryResult, object: DatabaseObject, context: DatabaseContext, refusal: String?,
+                     rerun: @escaping @MainActor () async throws -> QueryResult) {
+        self.init(object: object, context: context)
+        page = TablePage(columns: result.columns, rows: result.rows, offset: 0, limit: max(result.rows.count, 1))
+        lastSQL = result.statement
+        resultBinding = ResultBinding(sources: result.columns.map { _ in nil }, refusal: refusal, rerun: rerun)
+        hasLoaded = true
+    }
+
+    /// Reads the table's columns and maps the result columns onto them.
+    func loadResultCatalog(target: ResultEditTarget?) async {
+        guard resultBinding != nil, let page, let target else { return }
+        columns = (try? await driver.listColumns(table: object.name, schema: object.schema)) ?? []
+        let sources = target.sourceColumns(resultColumns: page.columns, tableColumns: columns.map(\.name))
+        resultBinding?.sources = sources ?? page.columns.map { _ in nil }
+        if sources == nil, resultBinding?.refusal == nil { resultBinding?.refusal = "Read-only: the result's fields don't match the table's" }
+        revision += 1
+    }
+
+    /// Result columns that aren't a column of the table (expressions, renamed columns): never editable.
+    private var resultLockedColumns: Set<Int> {
+        guard let resultBinding else { return [] }
+        return Set(resultBinding.sources.indices.filter { resultBinding.sources[$0] == nil })
+    }
+
     var kind: DatabaseKind { driver.config.kind }
 
     /// Column name → type as shown in the grid header ("int4", "numeric(5,2)").
@@ -205,6 +245,19 @@ final class TableTabModel: Identifiable {
         isLoading = true
         error = nil
         defer { isLoading = false }
+        if let resultBinding {
+            // A query result: run its statement again.
+            do {
+                let fresh = try await resultBinding.rerun()
+                page = TablePage(columns: fresh.columns, rows: fresh.rows, offset: 0, limit: max(fresh.rows.count, 1))
+                lastSQL = fresh.statement
+                lastRefresh = Date()
+            } catch {
+                self.error = error.localizedDescription
+            }
+            clearPendingChanges()
+            return
+        }
         let filter = appliedFilter.isEmpty ? nil : appliedFilter
         lastSQL = driver.dialect.selectPage(
             table: object.name, schema: object.schema, offset: offset, limit: pageSize,
@@ -299,6 +352,14 @@ final class TableTabModel: Identifiable {
 
     /// Why the grid is read-only, or nil when it can be edited.
     var readOnlyReason: String? {
+        if let resultBinding {
+            if let refusal = resultBinding.refusal { return refusal }
+            if driver.config.readOnly { return "Read-only connection" }
+            if columns.isEmpty { return "Read-only: \(object.name) isn't a table here" }
+            if primaryKeyColumns.isEmpty { return "Read-only: table has no primary key" }
+            if primaryKeyColumns.contains(where: { !resultBinding.sources.contains($0) }) { return "Read-only: the primary key isn't in the result" }
+            return nil
+        }
         if object.kind != .table { return "Views are read-only" }
         if driver.config.readOnly { return "Read-only connection" }
         if columns.isEmpty { return nil }
@@ -327,10 +388,10 @@ final class TableTabModel: Identifiable {
         return applyMasks(rows)
     }
 
-    /// Indexes of masked columns, which the grid won't edit inline.
+    /// Indexes of masked columns (and, for a query result, of fields that aren't table columns), which the grid won't edit.
     var maskedColumnIndexes: Set<Int> {
         guard let page else { return [] }
-        return Set(page.columns.indices.filter { (masks[page.columns[$0]] ?? .none) != .none })
+        return Set(page.columns.indices.filter { (masks[page.columns[$0]] ?? .none) != .none }).union(resultLockedColumns)
     }
 
     /// The loaded page as exports should see it: masks applied, pending edits not.
@@ -449,7 +510,8 @@ final class TableTabModel: Identifiable {
     func duplicateRows(_ rows: IndexSet) {
         guard isEditable, let page, !rows.isEmpty else { return }
         let skipped = Set(columns.filter { $0.isGeneratedOnInsert(among: columns, kind: kind) }.map(\.name))
-        let copied = page.columns.indices.filter { !skipped.contains(page.columns[$0]) }
+        let locked = resultLockedColumns
+        let copied = page.columns.indices.filter { !skipped.contains(page.columns[$0]) && !locked.contains($0) }
         var added = 0
         for row in rows.sorted() {
             var values: [Int: CellValue] = [:]
@@ -548,7 +610,9 @@ final class TableTabModel: Identifiable {
     /// The pending edits as row changes, ordered deletes → updates → inserts.
     func pendingChanges() -> [RowChange] {
         guard let page else { return [] }
-        let keyIndexes = primaryKeyColumns.compactMap { name in page.columns.firstIndex(of: name).map { (name, $0) } }
+        let keyIndexes = primaryKeyColumns.compactMap { name in
+            (resultBinding.map { $0.sources.firstIndex(of: name) } ?? page.columns.firstIndex(of: name)).map { (name, $0) }
+        }
         func key(_ row: Int) -> [ColumnValue] {
             keyIndexes.map { ColumnValue($0.0, page.rows[row][$0.1]) }
         }

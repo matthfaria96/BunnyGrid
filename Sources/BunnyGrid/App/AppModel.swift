@@ -934,6 +934,19 @@ final class AppModel {
                 // `--explain` opens the query's plan instead of its result.
                 if CommandLine.arguments.contains("--explain") { selectedQueryTab?.explain() } else { selectedQueryTab?.run() }
                 #if DEBUG
+                // `--demo-result-edits`: pending edits in the first result (Edit Result), for screenshots.
+                if CommandLine.arguments.contains("--demo-result-edits"), let tab = selectedQueryTab {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    while tab.isRunning { try? await Task.sleep(for: .milliseconds(50)) }
+                    if let result = tab.resultSets.first {
+                        await tab.prepareEditor(for: result)
+                        if let editor = tab.editor(for: result), editor.isEditable {
+                            editor.setValue(.text("Edited in the result"), row: 1, column: 1)
+                            editor.toggleDelete([3])
+                            editor.addRow()
+                        }
+                    }
+                }
                 if CommandLine.arguments.contains("--query-builder") { selectedQueryTab?.showingQueryBuilder = true }
                 if let index = CommandLine.arguments.firstIndex(of: "--ask-ai"), CommandLine.arguments.indices.contains(index + 1),
                    let tab = selectedQueryTab {

@@ -5,7 +5,8 @@ import SwiftUI
 struct DataProfilingView: View {
     @Environment(\.dismiss) private var dismiss
     let model: TableTabModel
-    let driver: any DatabaseDriver
+    /// nil for a query result, whose rows are profiled in memory.
+    let driver: (any DatabaseDriver)?
     let driverSchema: String?
 
     @State private var profiles: [ColumnProfile] = []
@@ -17,7 +18,10 @@ struct DataProfilingView: View {
                 Image(systemName: "chart.bar.doc.horizontal").foregroundStyle(.green).font(.title2)
                 VStack(alignment: .leading) {
                     Text("Data Profiling").font(.headline)
-                    Text("\(model.object.qualifiedName) \(model.location)").font(.caption).foregroundStyle(.secondary)
+                    Text(model.isQueryResult
+                         ? "\(model.page?.rows.count.formatted() ?? "0") rows of the query result \(model.location)"
+                         : "\(model.object.qualifiedName) \(model.location)")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if isLoading {
@@ -47,6 +51,12 @@ struct DataProfilingView: View {
     private func run() async {
         isLoading = true
         defer { isLoading = false }
+        guard let driver, !model.isQueryResult else {
+            // A query result: the rows it holds, not the whole table.
+            guard let page = model.page else { return }
+            profiles = DataProfiler.profile(columns: page.columns, types: page.columns.map { model.columnTypes[$0] ?? "" }, rows: model.exportRows)
+            return
+        }
         for column in model.columns {
             guard !Task.isCancelled else { return }
             let result = await DataProfiler.profile(driver: driver, table: model.object.name, schema: driverSchema, columns: [column])

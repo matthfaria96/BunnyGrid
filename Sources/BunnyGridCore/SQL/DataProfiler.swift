@@ -104,6 +104,61 @@ public enum DataProfiler {
         return profiles
     }
 
+    /// Profiles rows already in memory (a query result): the same statistics, computed locally.
+    /// `types` gives each column's declared type when known ("" otherwise); unknown types are inferred from the values.
+    public static func profile(columns: [String], types: [String], rows: [[CellValue]], topCount: Int = 5) -> [ColumnProfile] {
+        columns.indices.map { index in
+            let values = rows.map { index < $0.count ? $0[index] : .null }
+            let present = values.filter { !$0.isNull }
+            let declared = index < types.count ? types[index] : ""
+            let inferred: Category
+            if !declared.isEmpty {
+                inferred = category(declared)
+            } else if present.contains(where: { if case .blob = $0 { true } else { false } }) {
+                inferred = .other
+            } else if !present.isEmpty, present.allSatisfy({ if case .integer = $0 { true } else if case .double = $0 { true } else { false } }) {
+                inferred = .numeric
+            } else {
+                inferred = .text
+            }
+            var profile = ColumnProfile(name: columns[index], type: declared, total: values.count, nonNull: present.count, topValues: [])
+            guard inferred != .other else {
+                profile.note = "Min, max and distinct aren't computed for \(declared.isEmpty ? "binary values" : declared)."
+                return profile
+            }
+            func number(_ value: CellValue) -> Double? {
+                switch value {
+                case .integer(let v): Double(v)
+                case .double(let v): v
+                case .text(let s): Double(s)
+                case .bool(let b): b ? 1 : 0
+                default: nil
+                }
+            }
+            var counts: [String: Int] = [:]
+            for value in present { counts[value.displayString, default: 0] += 1 }
+            profile.distinct = counts.count
+            if inferred == .numeric {
+                let pairs = present.compactMap { value in number(value).map { ($0, value) } }
+                profile.minimum = pairs.min { $0.0 < $1.0 }?.1.displayString
+                profile.maximum = pairs.max { $0.0 < $1.0 }?.1.displayString
+                if !pairs.isEmpty { profile.average = formatAverage(.double(pairs.map(\.0).reduce(0, +) / Double(pairs.count))) }
+            } else {
+                let strings = present.map(\.displayString)
+                profile.minimum = strings.min()
+                profile.maximum = strings.max()
+            }
+            // Ties in value order, numbers by their value (like ORDER BY COUNT(*) DESC, 1).
+            profile.topValues = counts.sorted { a, b in
+                if a.value != b.value { return a.value > b.value }
+                if inferred == .numeric, let x = Double(a.key), let y = Double(b.key) { return x < y }
+                return a.key < b.key
+            }
+                .prefix(topCount).map { ColumnProfile.TopValue(value: $0.key, count: $0.value) }
+            return profile
+        }
+    }
+
     private static func intValue(_ value: CellValue) -> Int {
         switch value {
         case .integer(let v): Int(v)

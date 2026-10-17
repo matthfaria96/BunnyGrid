@@ -53,6 +53,30 @@ struct MySQLIntegrationTests {
         await admin.disconnect()
     }
 
+    @Test func designerCommentCollationAndAutoIncrement() async throws {
+        try await withDatabase { driver, db in
+            _ = try await driver.executeStatement("CREATE TABLE t (id int NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT 'k', name varchar(20))")
+            let before = try await driver.listColumns(table: "t", schema: db)
+            #expect(before[0].comment == "k")
+            #expect(before[1].collation?.hasPrefix("utf8mb4") == true)
+            var design = before.map(ColumnDesign.init)
+            design[0].comment = "the id"
+            design[1].collation = "utf8mb4_bin"
+            design[1].comment = "who"
+            let dialect = driver.dialect
+            try await driver.applyDesign(try dialect.alterTable(name: "t", schema: db, original: before, design: design)
+                                         + dialect.setAutoIncrement(table: "t", schema: db, next: 50))
+            let after = try await driver.listColumns(table: "t", schema: db)
+            #expect(after[0].comment == "the id" && after[0].extra == "AUTO_INCREMENT")
+            #expect(after[1].collation == "utf8mb4_bin" && after[1].comment == "who")
+            #expect(try dialect.alterTable(name: "t", schema: db, original: after, design: after.map(ColumnDesign.init)).isEmpty)
+            #expect(await driver.autoIncrementNext(table: "t", schema: db) == 50)
+            _ = try await driver.executeStatement("INSERT INTO t (name) VALUES ('a')")
+            #expect(try await driver.executeStatement("SELECT id FROM t").rows == [[.integer(50)]])
+            #expect(await driver.autoIncrementNext(table: "t", schema: db) == 51)
+        }
+    }
+
     @Test func connectsAndListsCatalog() async throws {
         try await withDatabase { driver, db in
             let version = try await driver.serverVersion()
@@ -327,7 +351,8 @@ struct MySQLIntegrationTests {
                 _ = try await driver.executeStatement(statement)
             }
             let after = try await driver.listColumns(table: "t", schema: db)
-            #expect(after[0].extra == "AUTO_INCREMENT COMMENT 'the key'")
+            #expect(after[0].extra == "AUTO_INCREMENT")
+            #expect(after[0].comment == "the key")
             #expect(after[1].defaultValue == "'it''s'")
             #expect(after[1].dataType == "varchar(40)")
             #expect(after[2].defaultValue == nil)

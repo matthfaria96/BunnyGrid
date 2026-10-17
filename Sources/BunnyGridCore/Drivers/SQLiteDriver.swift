@@ -29,6 +29,15 @@ public actor SQLiteDriver: DatabaseDriver {
         sqlite3_busy_timeout(handle, 5_000)
         db = handle
         interruptHandle.set(handle)
+        // The connection's Databases tab: every connection (editor, transaction) sees the same files.
+        for database in config.attachedDatabases ?? [] where !database.alias.isEmpty && !database.path.isEmpty {
+            do {
+                try await attach(path: database.path, as: database.alias)
+            } catch {
+                await disconnect()
+                throw DatabaseError.connectionFailed("Could not attach \(database.path) as \(database.alias): \(error.localizedDescription)")
+            }
+        }
     }
 
     public func disconnect() async {
