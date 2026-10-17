@@ -46,6 +46,8 @@ enum TDSToken: Equatable, Sendable {
     case envChange(TDSEnvChange)
     case loginAck(program: String, version: String)
     case returnStatus(Int32)
+    /// SSPI token: the server's NTLM CHALLENGE during Windows Authentication.
+    case sspi([UInt8])
     case ignored(UInt8)
 }
 
@@ -130,7 +132,10 @@ enum TDSTokenParser {
             let info = try TDSTypeInfo.read(&buffer, inMetadata: false)
             _ = try TDSValue.read(&buffer, info)
             return .ignored(type)
-        case 0xA9, 0xA5, 0xA4, 0xED: // ORDER, COLINFO, TABNAME, SSPI
+        case 0xED: // SSPI
+            let length = Int(try buffer.tdsInt(UInt16.self))
+            return .sspi(try buffer.tdsBytes(length))
+        case 0xA9, 0xA5, 0xA4: // ORDER, COLINFO, TABNAME
             let length = Int(try buffer.tdsInt(UInt16.self))
             _ = try buffer.tdsSlice(length)
             return .ignored(type)

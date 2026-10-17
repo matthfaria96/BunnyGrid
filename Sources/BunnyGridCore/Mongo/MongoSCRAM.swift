@@ -3,7 +3,7 @@ import CryptoKit
 import Foundation
 
 /// SCRAM-SHA-256 and SCRAM-SHA-1 (RFC 5802 / 7677) as MongoDB uses them. SHA-1 hashes the password as
-/// `md5("user:mongo:password")` first. Passwords are used as given (no SASLprep beyond ASCII).
+/// `md5("user:mongo:password")` first. SCRAM-SHA-256 passwords go through SASLprep (RFC 4013), as the MongoDB auth spec asks.
 public struct MongoSCRAM: Sendable {
     public enum Mechanism: String, Sendable {
         case sha256 = "SCRAM-SHA-256"
@@ -62,7 +62,7 @@ public struct MongoSCRAM: Sendable {
         guard let nonce = attrs["r"], let saltText = attrs["s"], let salt = Data(base64Encoded: saltText),
               let iterations = attrs["i"].flatMap(Int.init), iterations > 0 else { throw SCRAMError.badServerMessage }
         guard nonce.hasPrefix(clientNonce) else { throw SCRAMError.nonceMismatch }
-        let secret = mechanism == .sha1 ? Self.md5Hex("\(username):mongo:\(password)") : password
+        let secret = mechanism == .sha1 ? Self.md5Hex("\(username):mongo:\(password)") : try Self.saslPrep(password)
         let salted = Self.pbkdf2(password: Array(secret.utf8), salt: [UInt8](salt), iterations: iterations, sha256: mechanism == .sha256)
         let clientKey = hmac(salted, Array("Client Key".utf8))
         let storedKey = hash(clientKey)
@@ -96,6 +96,60 @@ public struct MongoSCRAM: Sendable {
         case .sha256: Array(SHA256.hash(data: data))
         case .sha1: Array(Insecure.SHA1.hash(data: data))
         }
+    }
+
+    /// SASLprep (RFC 4013, the stringprep profile of RFC 3454): non-ASCII spaces become U+0020, characters
+    /// "commonly mapped to nothing" go away, the result is NFKC-normalised, and prohibited or unassigned-looking
+    /// code points (controls, private use, surrogates, non-characters, tagging) and bad bidi mixes are refused.
+    public static func saslPrep(_ text: String) throws -> String {
+        if text.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value < 0x7F }) { return text }
+        var mapped = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            let v = scalar.value
+            if [0x00A0, 0x1680, 0x202F, 0x205F, 0x3000].contains(v) || (0x2000...0x200B).contains(v) {
+                mapped.append(" ")
+            } else if [0x00AD, 0x034F, 0x1806, 0x180B, 0x180C, 0x180D, 0x200C, 0x200D, 0x2060, 0xFEFF].contains(v)
+                        || (0xFE00...0xFE0F).contains(v) || v == 0x200B {
+                continue
+            } else {
+                mapped.append(scalar)
+            }
+        }
+        let normalized = String(mapped).precomposedStringWithCompatibilityMapping
+        var hasRandAL = false, hasL = false
+        for scalar in normalized.unicodeScalars {
+            let v = scalar.value
+            let prohibited = Self.isProhibited(scalar)
+            if prohibited { throw DatabaseError.connectionFailed("The password has a character SASLprep forbids (U+\(String(v, radix: 16, uppercase: true))).") }
+            if Self.isRandAL(scalar) { hasRandAL = true } else if scalar.properties.isAlphabetic { hasL = true }
+        }
+        if hasRandAL {
+            let scalars = Array(normalized.unicodeScalars)
+            if hasL || !Self.isRandAL(scalars.first!) || !Self.isRandAL(scalars.last!) {
+                throw DatabaseError.connectionFailed("The password mixes right-to-left and left-to-right text in a way SASLprep forbids.")
+            }
+        }
+        return normalized
+    }
+
+    static func isProhibited(_ scalar: Unicode.Scalar) -> Bool {
+        let v = scalar.value
+        if scalar.properties.generalCategory == .unassigned || (v & 0xFFFE) == 0xFFFE { return true }
+        switch v {
+        case 0..<0x20, 0x7F...0x9F, 0x06DD, 0x070F, 0x180E, 0x200E...0x200F, 0x202A...0x202E, 0x2028...0x2029,
+             0x2060...0x2063, 0x206A...0x206F, 0xFFF9...0xFFFD, 0x1D173...0x1D17A, 0xE000...0xF8FF, 0xF0000...0x10FFFF,
+             0xFDD0...0xFDEF, 0x2FF0...0x2FFB, 0xE0001, 0xE0020...0xE007F, 0x0340...0x0341:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Right-to-left letters (RFC 3454 table D.1, by block: Hebrew, Arabic, Syriac, Thaana, NKo… and their presentation forms).
+    static func isRandAL(_ scalar: Unicode.Scalar) -> Bool {
+        let v = scalar.value
+        guard scalar.properties.isAlphabetic || (0x05BE...0x05C6).contains(v) else { return false }
+        return (0x0590...0x08FF).contains(v) || (0xFB1D...0xFDFF).contains(v) || (0xFE70...0xFEFF).contains(v)
     }
 
     static func md5Hex(_ text: String) -> String {

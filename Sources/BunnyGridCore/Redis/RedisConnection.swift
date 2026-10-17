@@ -18,6 +18,13 @@ final class RedisChannelHandler: ChannelDuplexHandler {
 
     private var decoder = RESPStreamDecoder()
     private var waiting: CircularBuffer<EventLoopPromise<RESPValue>> = []
+    /// Streaming connections (Pub/Sub, MONITOR): every value goes here once `streaming` is on.
+    let listener: (@Sendable (RESPValue) -> Void)?
+    var streaming = false
+
+    init(listener: (@Sendable (RESPValue) -> Void)? = nil) {
+        self.listener = listener
+    }
 
     func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
         let request = unwrapOutboundIn(data)
@@ -32,6 +39,11 @@ final class RedisChannelHandler: ChannelDuplexHandler {
         if let bytes = buffer.readBytes(length: buffer.readableBytes) { decoder.append(bytes) }
         do {
             while let value = try decoder.next() {
+                if streaming, let listener {
+                    listener(value)
+                    waiting.popFirst()?.succeed(value)
+                    continue
+                }
                 if case .push = value { continue }
                 guard let promise = waiting.popFirst() else { continue }
                 promise.succeed(value)
@@ -66,7 +78,8 @@ final class RedisConnection: Sendable {
         self.channel = channel
     }
 
-    static func open(address: ConnectionEndpoint.Address, tls: TLSConfiguration?, serverName: String?) async throws -> RedisConnection {
+    static func open(address: ConnectionEndpoint.Address, tls: TLSConfiguration?, serverName: String?,
+                     listener: (@Sendable (RESPValue) -> Void)? = nil) async throws -> RedisConnection {
         let socketAddress: SocketAddress
         switch address {
         case .tcp(let host, let port): socketAddress = try SocketAddress.makeAddressResolvingHost(host, port: port)
@@ -82,7 +95,7 @@ final class RedisConnection: Sendable {
                         let handler = try NIOSSLClientHandler(context: sslContext, serverHostname: serverName)
                         try channel.pipeline.syncOperations.addHandler(handler)
                     }
-                    try channel.pipeline.syncOperations.addHandler(RedisChannelHandler())
+                    try channel.pipeline.syncOperations.addHandler(RedisChannelHandler(listener: listener))
                 }
             }
         let channel = try await bootstrap.connect(to: socketAddress).get()
@@ -108,6 +121,13 @@ final class RedisConnection: Sendable {
         var replies: [RESPValue] = []
         for future in futures { replies.append(try await future.get()) }
         return replies
+    }
+
+    /// From now on every value read goes to the listener given to `open` (replies included).
+    func startStreaming() async throws {
+        try await channel.eventLoop.submit { [channel] in
+            try channel.pipeline.syncOperations.handler(type: RedisChannelHandler.self).streaming = true
+        }.get()
     }
 
     func close() async {

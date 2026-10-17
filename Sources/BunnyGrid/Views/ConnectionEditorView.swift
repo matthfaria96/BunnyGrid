@@ -225,17 +225,20 @@ struct ConnectionEditorView: View {
         if config.kind == .sqlserver {
             row("Authentication") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Picker("", selection: .constant(0)) {
-                        Text("SQL Server Authentication").tag(0)
-                        Text("Windows Authentication").tag(1).selectionDisabled()
+                    Picker("", selection: Binding(get: { config.windowsAuthentication ?? false }, set: { config.windowsAuthentication = $0 ? true : nil })) {
+                        Text("SQL Server Authentication").tag(false)
+                        Text("Windows Authentication (NTLM)").tag(true)
                     }
                     .labelsHidden().frame(width: 240)
-                    Text("Windows (Kerberos/NTLM) and Microsoft Entra sign-in aren't supported yet; use a SQL Server login.")
+                    Text(config.windowsAuthentication == true
+                         ? "User Name as DOMAIN\\user with its Windows password (NTLMv2; Kerberos isn't used)."
+                         : "Microsoft Entra sign-in isn't supported yet.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
         if config.kind.isDocumentStore { MongoConnectionRows(config: $config) }
+        if config.kind == .redis { RedisSentinelRows(config: $config) }
         row("User Name") { TextField("", text: $config.username, prompt: config.kind == .sqlserver ? Text("sa") : nil) }
         row("Password") { SecureField("", text: $password) }
         row(config.kind.connectsPerDatabase ? "Initial Database" : "Default Database") {

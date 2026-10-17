@@ -36,7 +36,7 @@ public actor SQLServerDriver: DatabaseDriver {
                 host: host, port: port, tlsServerName: endpoint.tlsServerName, mode: config.tls, tls: tls,
                 username: config.username, password: secrets.password ?? "",
                 database: config.database.isEmpty ? (config.kind.serverDatabase ?? "") : config.database,
-                serverName: config.host)
+                serverName: config.host, windowsAuthentication: config.windowsAuthentication ?? false)
             do {
                 connection = try await TDSConnection.connect(options)
             } catch let error as DatabaseError {

@@ -145,6 +145,11 @@ public struct RedisKeyspace: Hashable, Sendable {
     public var keys: Int
     public var expires: Int
     public var averageTTL: Int
+
+    /// Totals of two nodes (cluster keyspace); the average TTL is the larger one.
+    func adding(_ other: RedisKeyspace) -> RedisKeyspace {
+        RedisKeyspace(keys: keys + other.keys, expires: expires + other.expires, averageTTL: max(averageTTL, other.averageTTL))
+    }
 }
 
 /// INFO, CLIENT LIST and SLOWLOG parsed for the server pane.

@@ -89,7 +89,24 @@ final class MongoShellTabModel: DocumentTab {
         task = Task {
             defer { isRunning = false }
             do {
-                var statements = try MongoShellParser.parseScript(script)
+                // Plain shell statements run one by one; anything else (variables, loops, functions) runs as JavaScript.
+                guard let parsed = try? MongoShellParser.parseScript(script) else {
+                    if explain { _ = try MongoShellParser.parseScript(script) }
+                    let driver = try await connectedDriver()
+                    lastStatement = script
+                    let result = try await MongoJavaScriptShell(driver: driver, database: database).run(script, maxDocuments: limit)
+                    database = result.database
+                    let results = result.outputs.map { Output(output: $0, plan: nil) }
+                    if let session = context?.session, let last = result.outputs.last {
+                        let ms = Double(last.duration.components.seconds) * 1000 + Double(last.duration.components.attoseconds) / 1e15
+                        session.onQueryExecuted?(QueryHistoryEntry(connectionID: session.id, sql: script, durationMilliseconds: ms,
+                                                                   rowCount: last.documents.count))
+                    }
+                    outputs = results
+                    selectedOutputID = results.last?.id
+                    return
+                }
+                var statements = parsed
                 if explain {
                     guard var first = statements.first(where: { if case .collection = $0.target { true } else { false } }) else {
                         throw DatabaseError.queryFailed("Explain needs a collection command such as db.coll.find().")

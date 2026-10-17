@@ -44,6 +44,9 @@ struct RedisConsoleView: View {
                     .onKeyPress(.downArrow) { model.step(1); return .handled }
                 if model.isRunning { ProgressView().controlSize(.mini) }
                 IconButton(systemImage: "play.fill", help: "Run (↩)", isEnabled: !model.isRunning) { Task { await model.run() } }
+                if model.isStreaming {
+                    IconButton(systemImage: "stop.fill", help: "Stop streaming (SUBSCRIBE / MONITOR)") { model.stopStream() }
+                }
                 IconButton(systemImage: "trash", help: "Clear the output") { model.clear() }
             }
             .padding(.horizontal, 10)
