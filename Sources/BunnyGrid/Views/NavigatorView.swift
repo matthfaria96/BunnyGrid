@@ -243,6 +243,8 @@ struct NavRowView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(row.isExpanded ? "Collapse \(row.title)" : "Expand \(row.title)")
+                    .accessibilityIdentifier("nav.toggle.\(row.title)")
                 } else {
                     Color.clear.frame(width: 14, height: 16)
                 }

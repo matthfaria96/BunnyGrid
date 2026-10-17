@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import BunnyGridCore
+import SQLite3
 
 /// Reads model state for `assert` / `waitFor` steps: `{"probe": "tab.builder.joins.count"}`.
 ///
@@ -11,6 +12,10 @@ import BunnyGridCore
 @MainActor
 enum UIHarnessProbe {
     static func evaluate(_ path: String, app: AppModel) -> String? {
+        // "sql:FILE|STATEMENT": the first column of the first row, read straight from a SQLite file.
+        if path.hasPrefix("sql:"), let bar = path.firstIndex(of: "|") {
+            return sqliteValue(file: String(path[path.index(path.startIndex, offsetBy: 4)..<bar]), sql: String(path[path.index(after: bar)...]))
+        }
         var segments = path.split(separator: ".").map(String.init)
         guard let head = segments.first else { return nil }
         segments.removeFirst()
@@ -36,6 +41,18 @@ enum UIHarnessProbe {
         }
         guard let value = value.flatMap(unwrap) else { return "nil" }
         return describe(value)
+    }
+
+    private static func sqliteValue(file: String, sql: String) -> String {
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(file, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { sqlite3_close(db); return "error: cannot open \(file)" }
+        defer { sqlite3_close(db) }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return "error: \(String(cString: sqlite3_errmsg(db)))" }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { return "no rows" }
+        guard let text = sqlite3_column_text(statement, 0) else { return "NULL" }
+        return String(cString: text)
     }
 
     /// Computed state that reflection cannot see.

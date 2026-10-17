@@ -42,10 +42,11 @@ s = json.load(open(sys.argv[1]))
 print(" ".join(s.get("requires", [])))
 print(s.get("fixture", "demo"))
 print("1" if s.get("knownIssue") else "0")
+print(json.dumps(s.get("setupSQL", {})))
 for a in s.get("args", []): print(a)
 PY
 )}")
-  requires="${meta[1]}"; fixture="${meta[2]}"; known="${meta[3]}"; args=("${(@)meta[4,-1]}")
+  requires="${meta[1]}"; fixture="${meta[2]}"; known="${meta[3]}"; setup="${meta[4]}"; args=("${(@)meta[5,-1]}")
   missing=""
   for need in ${=requires}; do
     case "$need" in
@@ -61,6 +62,14 @@ PY
   run="$OUT/$name"
   rm -rf "$run"; mkdir -p "$run/data" "$run/shots"
   cp "$ROOT/Resources/Samples/demo.sqlite" "$run/demo.sqlite"
+  # A second copy and an empty database, for transfers and sync ({{RUN}}/demo2.sqlite, {{RUN}}/empty.sqlite).
+  cp "$ROOT/Resources/Samples/demo.sqlite" "$run/demo2.sqlite"
+  : > "$run/empty.sqlite"
+  # "setupSQL": {"demo2.sqlite": "UPDATE …"} prepares those copies before launch.
+  /usr/bin/python3 -I -c '
+import json, sqlite3, sys
+for name, sql in json.loads(sys.argv[2]).items():
+    db = sqlite3.connect(sys.argv[1] + "/" + name); db.executescript(sql); db.commit(); db.close()' "$run" "$setup"
   # A scenario may seed the data dir (connections.json with {{PORT}} placeholders) from scripts/ui-scenarios/fixtures.
   if [[ "$fixture" != "demo" && -d "$SCENARIOS/fixtures/$fixture" ]]; then
     for f in "$SCENARIOS/fixtures/$fixture"/*; do
@@ -80,7 +89,7 @@ PY
   for a in "${args[@]}"; do a="${a//\{\{DB\}\}/$run/demo.sqlite}"; final+=("${a//\{\{RUN\}\}/$run}"); done
   (
     cd "$run"
-    BUNNYGRID_DATA_DIR="$run/data" BUNNYGRID_MEMORY_KEYCHAIN=1 \
+    BUNNYGRID_DATA_DIR="$run/data" BUNNYGRID_MEMORY_KEYCHAIN=1 BUNNYGRID_UI_RUN="$run" \
     BUNNYGRID_ANTHROPIC_BASE_URL="http://127.0.0.1:58989" BUNNYGRID_OPENAI_BASE_URL="http://127.0.0.1:58989" \
     "$APP" "${final[@]}" -AppleLanguages '(en)' -AppleLocale en_US -ApplePersistenceIgnoreState YES -NSQuitAlwaysKeepsWindows NO \
       --ui-script "$file" --ui-results "$run/results.json" --ui-shots "$run/shots" > "$run/app.log" 2>&1 &

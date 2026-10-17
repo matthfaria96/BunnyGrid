@@ -44,7 +44,8 @@ final class UIHarness {
     }
 
     private var results: [StepResult] = []
-    private var variables: [String: String] = [:]
+    /// Remembered values ("$name"); "$RUN" is the run's scratch directory (scripts/ui-test.sh sets BUNNYGRID_UI_RUN).
+    private var variables: [String: String] = ["RUN": ProcessInfo.processInfo.environment["BUNNYGRID_UI_RUN"] ?? FileManager.default.currentDirectoryPath]
     /// How mouse events are made and delivered: "cg" (from a CGEvent, queued), "ns" (NSEvent.mouseEvent, queued),
     /// "send" (from a CGEvent, NSApp.sendEvent from the run loop). Scenarios may set it: {"op": "mode", "mode": ...}.
     private var postMode = "cg"
@@ -463,7 +464,7 @@ final class UIHarness {
             guard let app else { throw Failure("no app") }
             return UIHarnessProbe.evaluate(substitute(path), app: app) ?? "nil"
         }
-        if step["id"] != nil || step["label"] != nil || step["view"] != nil {
+        if step["id"] != nil || step["label"] != nil || step["view"] != nil || step["role"] != nil {
             if step["exists"] != nil { return (try? element(step)) == nil ? "false" : "true" }
             let found = try element(step)
             switch step["attribute"] as? String ?? "value" {
@@ -505,7 +506,7 @@ final class UIHarness {
     }
 
     private func describe(_ step: [String: Any]) -> String {
-        for key in ["probe", "id", "label", "view"] { if let value = step[key] { return "\(key) \(value)" } }
+        for key in ["probe", "id", "label", "view", "role"] { if let value = step[key] { return "\(key) \(value)" } }
         return "value"
     }
 
@@ -578,7 +579,7 @@ final class UIHarness {
         let identifier = spec["id"] as? String
         let label = spec["label"] as? String
         let role = spec["role"] as? String
-        guard identifier != nil || label != nil else { throw Failure("target needs id, label or view") }
+        guard identifier != nil || label != nil || role != nil else { throw Failure("target needs id, label, role or view") }
         var matches: [Element] = []
         for window in candidates {
             walkAccessibility(AXNode(window), depth: 0) { node in

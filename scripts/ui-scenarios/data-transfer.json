@@ -1,0 +1,25 @@
+{
+  "name": "data-transfer",
+  "args": ["{{DB}}", "{{RUN}}/empty.sqlite", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "openSessions", "equals": 2, "note": "demo.sqlite and empty.sqlite connected"},
+    {"op": "menuBar", "path": ["Tools", "Data Transfer…"], "note": "Tools › Data Transfer…"},
+    {"op": "waitFor", "sheet": true, "equals": "true"},
+    {"op": "waitFor", "role": "AXPopUpButton", "window": "sheet", "index": 1, "exists": true},
+    {"op": "click", "role": "AXPopUpButton", "window": "sheet", "index": 0, "menu": ["demo.sqlite (SQLite)"], "note": "source connection picker"},
+    {"op": "waitFor", "role": "AXPopUpButton", "window": "sheet", "index": 0, "equals": "demo.sqlite (SQLite)"},
+    {"op": "click", "role": "AXPopUpButton", "window": "sheet", "index": 1, "menu": ["empty.sqlite (SQLite)"], "note": "target connection picker"},
+    {"op": "waitFor", "role": "AXPopUpButton", "window": "sheet", "index": 1, "equals": "empty.sqlite (SQLite)"},
+    {"op": "waitFor", "label": "customers", "window": "sheet", "exists": true, "timeout": 10, "note": "source tables listed"},
+    {"op": "click", "label": "Select All", "role": "AXButton", "window": "sheet", "note": "select every table"},
+    {"op": "wait", "ms": 300},
+    {"op": "screenshot", "name": "ready"},
+    {"op": "click", "label": "Start", "role": "AXButton", "window": "sheet", "note": "run the transfer"},
+    {"op": "waitFor", "probe": "sql:$RUN/empty.sqlite|SELECT count(*) FROM customers", "equals": "1200", "timeout": 30, "note": "customers copied"},
+    {"op": "waitFor", "probe": "sql:$RUN/empty.sqlite|SELECT count(*) FROM orders", "equals": "3000", "timeout": 30, "note": "orders copied"},
+    {"op": "waitFor", "label": "Close", "role": "AXButton", "window": "sheet", "exists": true, "timeout": 30},
+    {"op": "screenshot", "name": "done"},
+    {"op": "click", "label": "Close", "role": "AXButton", "window": "sheet"},
+    {"op": "waitFor", "sheet": true, "equals": "false"}
+  ]
+}

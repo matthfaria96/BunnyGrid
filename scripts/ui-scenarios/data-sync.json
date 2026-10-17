@@ -1,0 +1,22 @@
+{
+  "name": "data-sync",
+  "args": ["{{DB}}", "{{RUN}}/demo2.sqlite", "--window-size", "1400x900"],
+  "setupSQL": {"demo2.sqlite": "UPDATE customers SET name = 'Changed' WHERE id <= 3; DELETE FROM customers WHERE id BETWEEN 10 AND 11; INSERT INTO customers (id, name, email) VALUES (99999, 'Extra', 'extra@example.com');"},
+  "steps": [
+    {"op": "waitFor", "probe": "openSessions", "equals": 2},
+    {"op": "menuBar", "path": ["Tools", "Data Synchronization…"]},
+    {"op": "waitFor", "sheet": true, "equals": "true"},
+    {"op": "waitFor", "role": "AXPopUpButton", "window": "sheet", "index": 1, "exists": true},
+    {"op": "click", "role": "AXPopUpButton", "window": "sheet", "index": 0, "menu": ["demo.sqlite (SQLite)"], "note": "source"},
+    {"op": "click", "role": "AXPopUpButton", "window": "sheet", "index": 1, "menu": ["demo2.sqlite (SQLite)"], "note": "target"},
+    {"op": "wait", "ms": 1000},
+    {"op": "click", "label": "Compare", "role": "AXButton", "window": "sheet"},
+    {"op": "waitFor", "label": "Apply", "role": "AXButton", "window": "sheet", "attribute": "enabled", "equals": "true", "timeout": 20},
+    {"op": "screenshot", "name": "compared"},
+    {"op": "click", "label": "Apply", "role": "AXButton", "window": "sheet"},
+    {"op": "waitFor", "probe": "sql:$RUN/demo2.sqlite|SELECT count(*) FROM customers WHERE name = 'Changed'", "equals": "0", "timeout": 20, "note": "updates applied"},
+    {"op": "waitFor", "probe": "sql:$RUN/demo2.sqlite|SELECT count(*) FROM customers", "equals": "1200", "timeout": 20, "note": "inserts and deletes applied"},
+    {"op": "assert", "probe": "sql:$RUN/demo2.sqlite|SELECT count(*) FROM customers WHERE id = 99999", "equals": "0"},
+    {"op": "screenshot", "name": "applied"}
+  ]
+}

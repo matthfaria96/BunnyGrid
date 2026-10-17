@@ -1,0 +1,26 @@
+{
+  "name": "navigator",
+  "args": ["{{DB}}", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "openSessions", "equals": 1, "note": "demo.sqlite connected"},
+    {"op": "waitFor", "id": "nav.toggle.Tables", "exists": true},
+    {"op": "click", "id": "nav.toggle.Tables", "note": "expand Tables with the disclosure chevron"},
+    {"op": "waitFor", "label": "orders", "role": "AXStaticText", "exists": true},
+    {"op": "doubleClick", "label": "orders", "role": "AXStaticText", "index": 0, "note": "double-click a table opens it"},
+    {"op": "waitFor", "probe": "tabKind", "equals": "table"},
+    {"op": "assert", "probe": "tabTitle", "contains": "orders"},
+    {"op": "rightClick", "label": "customers", "role": "AXStaticText", "index": 0, "menu": ["Design Table"], "note": "table context menu → Design Table"},
+    {"op": "waitFor", "probe": "tabKind", "equals": "design"},
+    {"op": "rightClick", "label": "customers", "role": "AXStaticText", "index": 0, "menu": ["Add to Favorites"]},
+    {"op": "waitFor", "probe": "app.favorites.count", "equals": 1},
+    {"op": "rightClick", "label": "customers", "role": "AXStaticText", "index": 0, "menu": ["Duplicate Table", "Structure Only"], "note": "nested context submenu"},
+    {"op": "waitFor", "label": "customers_copy", "role": "AXStaticText", "exists": true, "timeout": 5, "optional": true},
+    {"op": "rightClick", "label": "Tables", "role": "AXStaticText", "index": 0, "menu": ["New Table"], "note": "category context menu"},
+    {"op": "waitFor", "probe": "tabKind", "equals": "design"},
+    {"op": "rightClick", "label": "demo.sqlite", "role": "AXStaticText", "index": 0, "menu": ["New Query"], "note": "connection context menu"},
+    {"op": "waitFor", "probe": "tabKind", "equals": "query"},
+    {"op": "click", "id": "nav.toggle.Tables", "note": "collapse Tables"},
+    {"op": "waitFor", "label": "orders", "role": "AXStaticText", "exists": false, "timeout": 3, "optional": true},
+    {"op": "screenshot", "name": "end"}
+  ]
+}

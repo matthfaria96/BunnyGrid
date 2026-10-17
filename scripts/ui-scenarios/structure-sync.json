@@ -1,0 +1,23 @@
+{
+  "name": "structure-sync",
+  "args": ["{{DB}}", "{{RUN}}/demo2.sqlite", "--window-size", "1400x900"],
+  "setupSQL": {"demo2.sqlite": "DROP VIEW big_orders; DROP TABLE orders; ALTER TABLE customers DROP COLUMN city;"},
+  "steps": [
+    {"op": "waitFor", "probe": "openSessions", "equals": 2},
+    {"op": "menuBar", "path": ["Tools", "Structure Synchronization…"]},
+    {"op": "waitFor", "sheet": true, "equals": "true"},
+    {"op": "waitFor", "role": "AXPopUpButton", "window": "sheet", "index": 1, "exists": true},
+    {"op": "click", "role": "AXPopUpButton", "window": "sheet", "index": 0, "menu": ["demo.sqlite (SQLite)"], "note": "source"},
+    {"op": "click", "role": "AXPopUpButton", "window": "sheet", "index": 1, "menu": ["demo2.sqlite (SQLite)"], "note": "target"},
+    {"op": "wait", "ms": 800},
+    {"op": "click", "label": "Compare", "role": "AXButton", "window": "sheet"},
+    {"op": "waitFor", "label": "Deploy", "role": "AXButton", "window": "sheet", "attribute": "enabled", "equals": "true", "timeout": 15, "note": "differences found and selected"},
+    {"op": "screenshot", "name": "compared"},
+    {"op": "click", "label": "Deploy", "role": "AXButton", "window": "sheet"},
+    {"op": "waitFor", "probe": "sql:$RUN/demo2.sqlite|SELECT count(*) FROM sqlite_master WHERE name = 'orders'", "equals": "1", "timeout": 20, "note": "missing table created"},
+    {"op": "waitFor", "probe": "sql:$RUN/demo2.sqlite|SELECT count(*) FROM pragma_table_info('customers') WHERE name = 'city'", "equals": "1", "timeout": 20, "note": "missing column added"},
+    {"op": "screenshot", "name": "deployed"},
+    {"op": "key", "key": "escape"},
+    {"op": "waitFor", "sheet": true, "equals": "false"}
+  ]
+}
