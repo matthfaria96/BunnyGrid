@@ -58,10 +58,11 @@ extension DatabaseDriver {
         return try await generatedTableDDL(name: name, schema: schema)
     }
 
-    /// CREATE TABLE (and CREATE INDEX) rebuilt from the catalog.
+    /// CREATE TABLE (with its foreign keys) and CREATE INDEX rebuilt from the catalog.
     public func generatedTableDDL(name: String, schema: String?) async throws -> String {
         let columns = try await listColumns(table: name, schema: schema).map(ColumnDesign.init)
-        var statements = [try dialect.createTable(name: name, schema: schema, columns: columns) + ";"]
+        let keys = (try? await listForeignKeys(table: name, schema: schema)) ?? []
+        var statements = [try dialect.createTable(name: name, schema: schema, columns: columns, foreignKeys: keys) + ";"]
         for index in try await listIndexes(table: name, schema: schema) where !index.primary {
             statements.append(try dialect.createIndex(IndexDesign(index), table: name, schema: schema) + ";")
         }

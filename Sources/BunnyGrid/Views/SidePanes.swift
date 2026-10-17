@@ -2,10 +2,17 @@ import AppKit
 import BunnyGridCore
 import SwiftUI
 
+private struct DDLPaneKey: Equatable {
+    var object: DatabaseObject.ID?
+    var revision: Int
+}
+
 /// DDL tab: the object's CREATE statement, highlighted, with Copy.
 struct DDLPane: View {
     let context: DatabaseContext?
     let object: DatabaseObject?
+    /// Changes when the object was altered (Design Table saved), to reload.
+    var revision = 0
     @State private var ddl = ""
     @State private var error: String?
 
@@ -38,7 +45,7 @@ struct DDLPane: View {
                 .frame(height: 26)
             }
         }
-        .task(id: object?.id) { await load() }
+        .task(id: DDLPaneKey(object: object?.id, revision: revision)) { await load() }
     }
 
     private func load() async {

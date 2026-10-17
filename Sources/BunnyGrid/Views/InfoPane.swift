@@ -57,7 +57,7 @@ struct RightPane: View {
         case .ddl:
             switch app.selectedTab {
             case .table(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.object)
-            case .design(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.tableObject)
+            case .design(let model): DDLPane(context: model.connectionID.flatMap { app.sessions[$0]?.context(model.databaseName) }, object: model.tableObject, revision: model.revision)
             default: InfoContent()
             }
         case .field:

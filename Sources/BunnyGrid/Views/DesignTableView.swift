@@ -73,9 +73,8 @@ struct DesignTableView: View {
                     .disabled(model.indexSelection.flatMap { id in model.indexDesigns.first { $0.id == id } }.map { model.isPrimaryIndex($0) } ?? true)
             case .foreignKeys:
                 ToolIconButton(systemImage: "plus.circle", help: "Add Foreign Key", tint: .green) { model.addForeignKey() }
-                    .disabled(!model.canEditForeignKeys)
                 ToolIconButton(systemImage: "minus.circle", help: "Delete Foreign Key", tint: .red) { model.deleteForeignKey() }
-                    .disabled(!model.canEditForeignKeys || model.foreignKeySelection == nil)
+                    .disabled(model.foreignKeySelection == nil)
             case .triggers:
                 ToolIconButton(systemImage: "plus.circle", help: "Add Trigger", tint: .green) { model.addTrigger() }
                 ToolIconButton(systemImage: "minus.circle", help: "Delete Trigger", tint: .red) {
@@ -124,56 +123,150 @@ struct DesignTableView: View {
 
     // MARK: Foreign Keys
 
-    private func keyBinding<Value>(_ id: TableForeignKey.ID, _ keyPath: WritableKeyPath<TableForeignKey, Value>, fallback: Value) -> Binding<Value> {
+    private func keyBinding<Value>(_ id: ForeignKeyDesign.ID, _ keyPath: WritableKeyPath<TableForeignKey, Value>, fallback: Value) -> Binding<Value> {
         Binding(
-            get: { model.foreignKeyDesigns.first { $0.id == id }?[keyPath: keyPath] ?? fallback },
+            get: { model.foreignKeyDesigns.first { $0.id == id }?.key[keyPath: keyPath] ?? fallback },
             set: { value in
-                if let index = model.foreignKeyDesigns.firstIndex(where: { $0.id == id }) { model.foreignKeyDesigns[index][keyPath: keyPath] = value }
+                if let index = model.foreignKeyDesigns.firstIndex(where: { $0.id == id }) { model.foreignKeyDesigns[index].key[keyPath: keyPath] = value }
             }
         )
     }
 
+    /// A list of field names picked from a menu (checkmarks), as in the Indexes tab.
+    private func fieldsMenu(_ selected: [String], choices: [String], placeholder: String, set: @escaping ([String]) -> Void) -> some View {
+        Menu {
+            ForEach(choices, id: \.self) { column in
+                Button {
+                    var columns = selected
+                    if let position = columns.firstIndex(of: column) { columns.remove(at: position) } else { columns.append(column) }
+                    set(columns)
+                } label: {
+                    if selected.contains(column) { Label(column, systemImage: "checkmark") } else { Text(column) }
+                }
+            }
+            if choices.isEmpty { Text("No fields") }
+        } label: {
+            Text(selected.isEmpty ? placeholder : selected.joined(separator: ", "))
+                .foregroundStyle(selected.isEmpty ? .secondary : .primary)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+    }
+
     private var foreignKeysView: some View {
-        let editable = model.canEditForeignKeys
-        return Table(model.foreignKeyDesigns, selection: $model.foreignKeySelection) {
-            TableColumn("Name") { key in
-                TextField("", text: keyBinding(key.id, \.name, fallback: "")).textFieldStyle(.plain).disabled(!editable)
+        Table(model.foreignKeyDesigns, selection: $model.foreignKeySelection) {
+            TableColumn("Name") { row in
+                if model.foreignKeysHaveNames {
+                    TextField("", text: keyBinding(row.id, \.name, fallback: "")).textFieldStyle(.plain)
+                } else {
+                    Text("(unnamed)").foregroundStyle(.tertiary).help("SQLite doesn't keep foreign key names.")
+                }
             }
-            .width(min: 120, ideal: 160)
-            TableColumn("Fields") { key in
-                TextField("", text: Binding(
-                    get: { key.columns.joined(separator: ", ") },
-                    set: { keyBinding(key.id, \.columns, fallback: []).wrappedValue = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
-                )).textFieldStyle(.plain).disabled(!editable)
+            .width(min: 80, ideal: 130)
+            TableColumn("Fields") { row in
+                fieldsMenu(row.key.columns, choices: model.columns.map(\.name), placeholder: "Choose fields") {
+                    keyBinding(row.id, \.columns, fallback: []).wrappedValue = $0
+                }
             }
-            TableColumn("Referenced Table") { key in
-                TextField("", text: keyBinding(key.id, \.referencedTable, fallback: "")).textFieldStyle(.plain).disabled(!editable)
+            .width(min: 80, ideal: 110)
+            // SQLite keys can only point inside the same database file.
+            TableColumn(model.kind == .postgresql ? "Referenced Schema" : "Referenced Database") { row in
+                if model.kind == .sqlite {
+                    Text("main").foregroundStyle(.secondary)
+                } else {
+                    Menu {
+                        ForEach(model.referenceSchemas, id: \.self) { schema in
+                            Button(schema) {
+                                guard schema != row.key.referencedSchema else { return }
+                                keyBinding(row.id, \.referencedSchema, fallback: nil).wrappedValue = schema
+                                keyBinding(row.id, \.referencedTable, fallback: "").wrappedValue = ""
+                                keyBinding(row.id, \.referencedColumns, fallback: []).wrappedValue = []
+                                Task { await model.loadReferenceTables(schema: schema) }
+                            }
+                        }
+                    } label: {
+                        Text(row.key.referencedSchema ?? model.defaultReferenceSchema ?? "")
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                }
             }
-            TableColumn("Referenced Fields") { key in
-                TextField("", text: Binding(
-                    get: { key.referencedColumns.joined(separator: ", ") },
-                    set: { keyBinding(key.id, \.referencedColumns, fallback: []).wrappedValue = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
-                )).textFieldStyle(.plain).disabled(!editable)
+            .width(min: 60, ideal: 90)
+            TableColumn("Referenced Table") { row in
+                let schema = row.key.referencedSchema ?? model.defaultReferenceSchema
+                Menu {
+                    ForEach(model.tables(in: schema), id: \.self) { table in
+                        Button(table) {
+                            guard table != row.key.referencedTable else { return }
+                            keyBinding(row.id, \.referencedTable, fallback: "").wrappedValue = table
+                            // Point at the parent's primary key when it has a single-field one, as Navicat does.
+                            Task {
+                                await model.loadReferenceColumns(table: table, schema: schema)
+                                let fields = model.columns(of: table, in: schema)
+                                let guess = fields.contains("id") ? ["id"] : Array(fields.prefix(1))
+                                keyBinding(row.id, \.referencedColumns, fallback: []).wrappedValue = Array(guess.prefix(max(row.key.columns.count, 1)))
+                            }
+                        }
+                    }
+                } label: {
+                    Text(row.key.referencedTable.isEmpty ? "Choose table" : row.key.referencedTable)
+                        .foregroundStyle(row.key.referencedTable.isEmpty ? .secondary : .primary)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .task(id: schema ?? "") { await model.loadReferenceTables(schema: schema) }
             }
-            TableColumn("On Delete") { key in
-                Picker("", selection: keyBinding(key.id, \.onDelete, fallback: "NO ACTION")) {
+            .width(min: 80, ideal: 120)
+            TableColumn("Referenced Fields") { row in
+                let schema = row.key.referencedSchema ?? model.defaultReferenceSchema
+                fieldsMenu(row.key.referencedColumns, choices: model.columns(of: row.key.referencedTable, in: schema),
+                           placeholder: model.kind == .sqlite ? "Primary key" : "Choose fields") {
+                    keyBinding(row.id, \.referencedColumns, fallback: []).wrappedValue = $0
+                }
+                .disabled(row.key.referencedTable.isEmpty)
+                .task(id: (schema ?? "") + "." + row.key.referencedTable) {
+                    await model.loadReferenceColumns(table: row.key.referencedTable, schema: schema)
+                }
+            }
+            .width(min: 80, ideal: 110)
+            TableColumn("On Delete") { row in
+                Picker("", selection: keyBinding(row.id, \.onDelete, fallback: "NO ACTION")) {
                     ForEach(TableForeignKey.actions, id: \.self) { Text($0).tag($0) }
                 }
-                .labelsHidden().disabled(!editable)
+                .labelsHidden()
             }
-            .width(110)
-            TableColumn("On Update") { key in
-                Picker("", selection: keyBinding(key.id, \.onUpdate, fallback: "NO ACTION")) {
+            .width(min: 90, ideal: 105)
+            TableColumn("On Update") { row in
+                Picker("", selection: keyBinding(row.id, \.onUpdate, fallback: "NO ACTION")) {
                     ForEach(TableForeignKey.actions, id: \.self) { Text($0).tag($0) }
                 }
-                .labelsHidden().disabled(!editable)
+                .labelsHidden()
             }
-            .width(110)
+            .width(min: 90, ideal: 105)
+            TableColumn("") { row in
+                if row.isNew {
+                    Text("new").font(.system(size: 10)).foregroundStyle(.green)
+                } else if row.isChanged {
+                    Text("changed").font(.system(size: 10)).foregroundStyle(.orange)
+                }
+            }
+            .width(50)
         }
         .overlay {
             if model.foreignKeyDesigns.isEmpty {
-                Text(editable ? "No foreign keys. Use Add Foreign Key to create one." : "No foreign keys. SQLite can only define them in CREATE TABLE.")
-                    .foregroundStyle(.tertiary)
+                Text("No foreign keys. Use Add Foreign Key to create one.").foregroundStyle(.tertiary)
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.kind == .sqlite, !model.isNew, model.foreignKeysChanged {
+                Label("SQLite can't alter foreign keys in place: saving rebuilds the table (new table, copy rows, drop, rename) and recreates its indexes and triggers. See SQL Preview.",
+                      systemImage: "info.circle")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.bar)
             }
         }
     }
