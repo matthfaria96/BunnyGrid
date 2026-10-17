@@ -342,7 +342,13 @@ final class DatabaseContext: Identifiable {
     // MARK: - Autocomplete
 
     var completionCatalog: CompletionCatalog {
-        CompletionCatalog(schemas: schemas, tables: objectsBySchema.values.flatMap { $0 }, columns: columnCache)
+        let catalog = CompletionCatalog(schemas: schemas, tables: objectsBySchema.values.flatMap { $0 }, columns: columnCache)
+        return AppOptions.shared.values.includeSystemObjectsInCompletion ? catalog : catalog.withoutSystemObjects()
+    }
+
+    /// Options › Code Completion › Clear Code Completion Info: forget cached columns (they load again on use).
+    func clearCompletionInfo() {
+        columnCache = [:]
     }
 
     func cachedColumns(for table: String) -> [String]? {
@@ -351,6 +357,7 @@ final class DatabaseContext: Identifiable {
 
     /// Loads, in the background, the columns of tables referenced in `sql`.
     func prefetchColumns(for sql: String) {
+        guard AppOptions.shared.values.autoUpdateCompletionInfo else { return }
         for reference in SQLCompletion.tableReferences(in: sql) {
             let key = reference.table.lowercased()
             guard columnCache[key] == nil, !columnLoads.contains(key) else { continue }

@@ -59,6 +59,9 @@ final class TableDesignModel: Identifiable {
     var comment = ""
     private(set) var originalEngine = ""
     var engine = ""
+    /// SQLite Options tab: Primary Key ON CONFLICT, AUTOINCREMENT, WITHOUT ROWID (read from the stored CREATE TABLE).
+    private(set) var originalSQLiteOptions = SQLiteTableOptions()
+    var sqliteOptions = SQLiteTableOptions()
     private(set) var isLoading = false
     private(set) var isSaving = false
     var saveError: String?
@@ -115,6 +118,8 @@ final class TableDesignModel: Identifiable {
         foreignKeys = (try? await driver.listForeignKeys(table: originalName, schema: driverSchema)) ?? []
         foreignKeyDesigns = foreignKeys.map(ForeignKeyDesign.init)
         originalSQL = kind == .sqlite ? try? await driver.storedTableSQL(originalName) : nil
+        originalSQLiteOptions = originalSQL.map(SQLiteTableOptions.init(sql:)) ?? SQLiteTableOptions()
+        sqliteOptions = originalSQLiteOptions
         #if DEBUG
         // --demo-fk: a pending foreign key change, to see the Foreign Keys tab and SQL Preview with an edit.
         if CommandLine.arguments.contains("--demo-fk"), !foreignKeyDesigns.isEmpty {
@@ -211,7 +216,8 @@ final class TableDesignModel: Identifiable {
     var plan: Result<[String], any Error> {
         Result {
             if isNew {
-                return [try dialect.createTable(name: tableName, schema: driverSchema, columns: columns, foreignKeys: foreignKeyDesigns.map(\.key))]
+                return [try dialect.createTable(name: tableName, schema: driverSchema, columns: columns, foreignKeys: foreignKeyDesigns.map(\.key),
+                                                sqliteOptions: kind == .sqlite ? sqliteOptions : nil)]
                     + (try dialect.alterIndexes(table: tableName, schema: driverSchema, original: [], design: indexDesigns))
             }
             let currentName = originalName ?? tableName
@@ -223,14 +229,16 @@ final class TableDesignModel: Identifiable {
                     : "ALTER TABLE \(dialect.qualifiedName(table: originalName, schema: driverSchema)) RENAME TO \(dialect.quoteIdentifier(tableName))"
             }()
             var statements: [String]
-            if kind == .sqlite, SQLiteTableRebuild.isNeeded(originalColumns: originalColumns, columns: columns, originalIndexes: indexes,
-                                                             originalForeignKeys: foreignKeys, foreignKeys: foreignKeyDesigns) {
+            if kind == .sqlite, sqliteOptions != originalSQLiteOptions
+                || SQLiteTableRebuild.isNeeded(originalColumns: originalColumns, columns: columns, originalIndexes: indexes,
+                                               originalForeignKeys: foreignKeys, foreignKeys: foreignKeyDesigns) {
                 // SQLite: rebuild under the current name (indexes, kept triggers and keys included), then rename natively.
                 let rebuild = SQLiteTableRebuild(
                     table: currentName, originalSQL: originalSQL, originalColumns: originalColumns, columns: columns,
                     originalIndexes: indexes, indexes: indexDesigns, foreignKeys: foreignKeyDesigns.map(\.key),
                     triggers: triggers.filter { !droppedTriggers.contains($0.name) }.map(\.definition),
-                    checkForeignKeys: SQLDialect.foreignKeysChanged(original: foreignKeys, design: foreignKeyDesigns))
+                    checkForeignKeys: SQLDialect.foreignKeysChanged(original: foreignKeys, design: foreignKeyDesigns),
+                    options: sqliteOptions)
                 statements = try rebuild.statements()
                 if let rename { statements.append(rename) }
             } else {
