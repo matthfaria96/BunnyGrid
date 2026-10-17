@@ -91,9 +91,7 @@ struct MainToolbar: View {
                     AppIcon(name: "model", size: 32, isEnabled: modelContext != nil)
                 }
                 }
-                ChromeButton(title: "BI", comingSoon: "Charts and dashboards built from your queries.") {} glyph: {
-                    AppIcon(name: "bi", size: 32)
-                }
+                BIToolbarMenu()
 
                 Spacer(minLength: 16)
 
@@ -297,6 +295,32 @@ private struct WindowTitleRow: View {
         .padding(.leading, 82)
         .padding(.trailing, 16)
         .frame(height: 28)
+    }
+}
+
+/// Main toolbar "BI": a new workspace on the current database, or a saved one.
+private struct BIToolbarMenu: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        Menu {
+            Button("New BI Workspace") { app.newBIWorkspace(in: app.currentContext?.isOpen == true ? app.currentContext : nil) }
+            let saved = app.biWorkspaces
+            if !saved.isEmpty {
+                Section("Open Workspace") {
+                    ForEach(saved) { workspace in Button(workspace.name) { app.openBIWorkspace(workspace) } }
+                }
+            }
+        } label: {
+            ChromeLabel(title: "BI") {
+                AppIcon(name: "bi", size: 32)
+            }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Charts and dashboards built from your tables and queries")
     }
 }
 

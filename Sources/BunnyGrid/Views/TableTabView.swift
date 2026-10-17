@@ -150,8 +150,9 @@ struct TableTabView: View {
                     showingMasking = true
                 }
                 .popover(isPresented: $showingMasking, arrowEdge: .bottom) { DataMaskingPopover(model: model) }
-                ToolbarChip(title: "Create BI Workspace", systemImage: "chart.pie", tint: .pink,
-                            comingSoon: "Turn this table into charts and dashboards.", icon: "tb-bi-workspace")
+                ToolbarChip(title: "Create BI Workspace", systemImage: "chart.pie", tint: .pink, icon: "tb-bi-workspace") {
+                    app.newBIWorkspace(in: app.currentContextFor(model), table: model.object)
+                }
     }
 
     private var moreButtons: some View {
