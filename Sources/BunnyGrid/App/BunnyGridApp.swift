@@ -34,7 +34,7 @@ struct BunnyGridApp: App {
         Window("BunnyGrid", id: "main") {
             ContentView()
                 .environment(model)
-                .frame(minWidth: 1100, minHeight: 680)
+                .frame(minWidth: 960, minHeight: 600)
                 .onAppear { AppearancePreference(rawValue: appearance)?.apply() }
                 .onChange(of: appearance) { _, value in AppearancePreference(rawValue: value)?.apply() }
         }
@@ -160,6 +160,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Needed when launched as a bare SwiftPM executable (`swift run`) rather than a bundled .app.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        #if DEBUG
+        // `--window-size 1037x695` sizes the main window like a reference capture (visual checks).
+        if let index = CommandLine.arguments.firstIndex(of: "--window-size"), CommandLine.arguments.indices.contains(index + 1) {
+            let parts = CommandLine.arguments[index + 1].split(separator: "x").compactMap { Double($0) }
+            if parts.count == 2 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    for window in NSApp.windows where window.isVisible && window.identifier?.rawValue.hasPrefix("main") == true {
+                        window.minSize = NSSize(width: 600, height: 400)
+                        window.contentMinSize = NSSize(width: 600, height: 400)
+                        window.setFrame(NSRect(x: 80, y: 120, width: parts[0], height: parts[1]), display: true)
+                    }
+                }
+            }
+        }
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

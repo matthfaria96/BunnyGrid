@@ -1,3 +1,4 @@
+import AppKit
 import BunnyGridCore
 import SwiftUI
 
@@ -69,6 +70,16 @@ struct ContentView: View {
         #if DEBUG
         .task {
             if CommandLine.arguments.contains("--settings") { openSettings() }
+            // `--window-size 1037x695` matches the window to a reference capture.
+            if let index = CommandLine.arguments.firstIndex(of: "--window-size"), CommandLine.arguments.indices.contains(index + 1) {
+                let parts = CommandLine.arguments[index + 1].split(separator: "x").compactMap { Double($0) }
+                if parts.count == 2, let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) {
+                    var frame = window.frame
+                    frame.origin.y += frame.height - parts[1]
+                    frame.size = CGSize(width: parts[0], height: parts[1])
+                    window.setFrame(frame, display: true)
+                }
+            }
         }
         #endif
     }
@@ -81,17 +92,12 @@ struct StatusBar: View {
     var body: some View {
         if app.selectedTab == nil {
             // Objects tab: a single centered summary, as Navicat shows it.
-            ZStack {
-                Text(summary)
-                HStack {
-                    Spacer()
-                    paneToggles
-                }
-            }
-            .font(.system(size: 11.5))
-            .foregroundStyle(.secondary)
-            .frame(height: 24)
-            .background(.bar)
+            Text(summary)
+                .font(.system(size: 12))
+                .foregroundStyle(.primary.opacity(0.85))
+                .frame(maxWidth: .infinity)
+                .frame(height: 24)
+                .background(.bar)
         } else {
             segments
         }
@@ -133,7 +139,8 @@ struct StatusBar: View {
             let count = app.objectCategory == .indexes || app.objectCategory == .triggers
                 ? app.listedItemCount
                 : context.objects(in: schema, category: app.objectCategory)?.count ?? 0
-            return "\(plural(count, app.objectCategory.noun)) in \(place)"
+            // Navicat: "2 tables".
+            return place.isEmpty ? "" : plural(count, app.objectCategory.noun).lowercased()
         default:
             return app.connections.isEmpty ? "" : "\(plural(app.connections.count, "Connection")) in My Connections"
         }
@@ -142,22 +149,20 @@ struct StatusBar: View {
     /// Centered "a | b | c" like Navicat's status bar, with a warning icon when something failed.
     private var segments: some View {
         ZStack {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
-                    if index > 0 { Text("|").foregroundStyle(.tertiary) }
+                    if index > 0 { Text("|").foregroundStyle(.secondary) }
                     Text(part).lineLimit(1)
                 }
                 if let warning {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow).help(warning)
                 }
             }
-            HStack {
-                Spacer()
-                paneToggles
-            }
         }
-        .font(.system(size: 11.5))
-        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .font(.system(size: 12))
+        .foregroundStyle(.primary.opacity(0.85))
+        .frame(maxWidth: .infinity)
         .frame(height: 24)
         .background(.bar)
     }
@@ -223,7 +228,7 @@ struct StatusBar: View {
     private var lastRefresh: String {
         guard case .table(let model) = app.selectedTab, let date = model.lastRefresh else { return "" }
         let minutes = Int(Date().timeIntervalSince(date) / 60)
-        if minutes < 1 { return "Last Refresh: now" }
+        if minutes < 1 { return "Last Refresh: <1m" }
         if minutes < 60 { return "Last Refresh: \(minutes)m" }
         return "Last Refresh: \(minutes / 60)h"
     }

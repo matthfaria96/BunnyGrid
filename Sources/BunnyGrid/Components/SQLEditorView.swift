@@ -254,9 +254,9 @@ enum SQLHighlighter {
         let limit = max(options.disableHighlightAboveMB, 1) * 1_000_000
         if options.useSyntaxHighlighting, storage.length * 2 <= limit {
             let rules: [(NSRegularExpression, NSColor)] = [
-                (keywordRule, NSColor(hex: colors.keyword) ?? .systemPink),
+                (keywordRule, NSColor(hex: colors.keyword) ?? .navicatKeyword),
                 (numberRule, NSColor(hex: colors.number) ?? .systemBlue),
-                (stringRule, NSColor(hex: colors.string) ?? .systemRed),
+                (stringRule, NSColor(hex: colors.string) ?? .navicatString),
                 (commentRule, NSColor(hex: colors.comment) ?? .secondaryLabelColor),
             ]
             // Later rules win, so strings and comments override keywords inside them.
