@@ -15,7 +15,7 @@ public enum ConnectionURI {
         public var errorDescription: String? {
             switch self {
             case .invalid: "That doesn't look like a connection URI."
-            case .unsupportedScheme(let scheme): "“\(scheme)” connections aren't supported yet. Use postgresql://, mysql://, mariadb://, sqlserver:// or sqlite://."
+            case .unsupportedScheme(let scheme): "“\(scheme)” connections aren't supported yet. Use postgresql://, mysql://, mariadb://, sqlserver://, mongodb:// or sqlite://."
             }
         }
     }
@@ -24,6 +24,7 @@ public enum ConnectionURI {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let schemeEnd = trimmed.range(of: "://") else { throw ParseError.invalid }
         let scheme = trimmed[..<schemeEnd.lowerBound].lowercased()
+        if scheme == "mongodb" || scheme == "mongodb+srv" { return try MongoConnectionString.parse(trimmed) }
 
         let kind: DatabaseKind
         switch scheme {
@@ -91,6 +92,7 @@ public enum ConnectionURI {
     /// The connection as a URI (without the password unless one is given), for the URI button.
     /// SSH settings have no URI form and are left out.
     public static func string(for config: ConnectionConfig, password: String? = nil) -> String {
+        if config.kind == .mongodb { return MongoConnectionString.string(for: config, password: password) }
         if config.kind == .sqlite {
             return "sqlite://" + (config.filePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? config.filePath)
         }

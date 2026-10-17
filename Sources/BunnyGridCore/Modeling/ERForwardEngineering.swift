@@ -166,8 +166,9 @@ extension ERModel {
             case "smallint", "int2", "smallserial", "serial2": return "smallint"
             case "tinyint": return params == "(1)" ? "bool" : "smallint"
             case "bool", "boolean", "bit" where params.isEmpty || params == "(1)": return "bool"
-            case "money", "smallmoney": return "decimal"
-            case "ntext", "xml", "sysname": return "text"
+            case "money" where source == .sqlserver, "smallmoney": return "decimal"
+            case "ntext", "sysname": return "text"
+            case "xml" where source == .sqlserver: return "text"
             case "image": return "blob"
             case "datetime2", "smalldatetime", "datetimeoffset": return "timestamp"
             case "uniqueidentifier": return "uuid"
@@ -193,6 +194,8 @@ extension ERModel {
         let precision = ["timestamp", "time"].contains(kind) ? params : ""
 
         switch target {
+        case .mongodb:
+            return trimmed
         case .sqlite:
             switch kind {
             case "int", "bigint", "smallint", "bool": return "INTEGER"

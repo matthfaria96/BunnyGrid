@@ -14,7 +14,7 @@ public struct SQLDialect: Sendable {
             "`" + name.replacingOccurrences(of: "`", with: "``") + "`"
         case .sqlserver:
             "[" + name.replacingOccurrences(of: "]", with: "]]") + "]"
-        case .postgresql, .sqlite:
+        case .postgresql, .sqlite, .mongodb:
             "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
     }
@@ -133,6 +133,7 @@ public struct SQLDialect: Sendable {
         case .sqlite: "EXPLAIN QUERY PLAN " + statement
         case .postgresql: "EXPLAIN (FORMAT JSON) " + statement
         case .mysql, .mariadb: "EXPLAIN FORMAT=JSON " + statement
+        case .mongodb: statement
         }
     }
 

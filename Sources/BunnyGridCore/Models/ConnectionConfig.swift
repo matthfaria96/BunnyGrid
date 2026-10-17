@@ -7,6 +7,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
     case mysql
     case mariadb
     case sqlserver
+    case mongodb
 
     public var id: String { rawValue }
 
@@ -17,6 +18,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .mysql: "MySQL"
         case .mariadb: "MariaDB"
         case .sqlserver: "SQL Server"
+        case .mongodb: "MongoDB"
         }
     }
 
@@ -26,6 +28,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .postgresql: 5432
         case .mysql, .mariadb: 3306
         case .sqlserver: 1433
+        case .mongodb: 27017
         }
     }
 
@@ -55,6 +58,10 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         default: nil
         }
     }
+
+    /// Document stores (MongoDB): collections of documents instead of SQL tables; the driver also
+    /// implements `DocumentDatabaseDriver`.
+    public var isDocumentStore: Bool { self == .mongodb }
 }
 
 /// SSL modes, named after libpq's `sslmode` (MySQL's `ssl-mode` maps onto the same five).
@@ -210,6 +217,8 @@ public struct ConnectionConfig: Codable, Hashable, Identifiable, Sendable {
     public var ssh: SSHTunnelConfig?
     /// Unix domain socket (Advanced tab, "Use socket file"). When set, `host` and `port` are ignored.
     public var socketPath: String?
+    /// MongoDB: SRV, auth source and mechanism, replica set (nil for other engines).
+    public var mongo: MongoOptions?
 
     public init(
         id: UUID = UUID(),

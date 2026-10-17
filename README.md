@@ -1,7 +1,7 @@
 # BunnyGrid
 
 Cliente de bancos de dados nativo para macOS, em Swift e SwiftUI.
-Conecta em **SQLite, PostgreSQL, MySQL e MariaDB**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
+Conecta em **SQLite, PostgreSQL, MySQL, MariaDB, SQL Server (e Azure SQL) e MongoDB**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
 
 Referências:
 - **Beekeeper Studio**: arquitetura (contrato de driver, fluxo conexão → árvore → abas). Usado só como referência; nenhum código foi copiado (veja [Licenças](#licenças)).
@@ -67,9 +67,54 @@ BUNNYGRID_MYSQL_PORT=3306 BUNNYGRID_MYSQL_USER=root BUNNYGRID_MYSQL_PASSWORD=…
 # MariaDB: acrescente BUNNYGRID_MYSQL_KIND=mariadb
 ```
 
-O usuário precisa de CREATE/DROP DATABASE: cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MYSQL_PORT` esses testes são pulados.
+O usuário precisa de CREATE/DROP DATABASE e CREATE USER: cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MYSQL_PORT` esses testes são pulados.
+
+Um MySQL descartável do Homebrew (`brew install mysql`), sem mexer no `my.cnf` nem nos dados do sistema (`--no-defaults`; dados, socket, pid, log e certificados ficam numa pasta só):
+
+```sh
+scripts/test-servers/mysql.sh start /tmp/bg-mysql   # inicializa na primeira vez, porta 33071 (BUNNYGRID_MYSQL_PORT muda)
+eval "$(scripts/test-servers/mysql.sh env /tmp/bg-mysql)"
+swift test --filter MySQL
+scripts/test-servers/mysql.sh stop /tmp/bg-mysql
+```
+
+O script cria uma CA e certificados de servidor e de cliente, sobe o servidor com SSL (sem `require_secure_transport`, para testar com e sem SSL) e os usuários `bunny` / `bunnypass`, `certuser` (`REQUIRE X509`) e `nopass` (sem senha, útil para abrir o app sem Keychain). O `env` exporta também `BUNNYGRID_MYSQL_SSL_CA`, `_SSL_CERT`, `_SSL_KEY`, `_SSL_USER` e `BUNNYGRID_MYSQL_SOCKET`; se o caminho do socket passar do limite de 104 bytes, ele fica num link curto em `$TMPDIR`. Para o caso do túnel, acrescente `BUNNYGRID_SSH_PORT`, `_USER` e `_KEYS` (um `sshd -f <config>` do usuário com a chave `user_ecdsa` serve).
+
+MariaDB pelo Docker (colima):
+
+```sh
+docker run -d --name bg-mariadb -p 127.0.0.1:33081:3306 -e MARIADB_ROOT_PASSWORD=bunnypass mariadb:11
+BUNNYGRID_MYSQL_KIND=mariadb BUNNYGRID_MYSQL_PORT=33081 BUNNYGRID_MYSQL_USER=root BUNNYGRID_MYSQL_PASSWORD=bunnypass swift test --filter MySQL
+docker rm -f bg-mariadb
+```
 
 Os testes de SSL, socket e túnel SSH (`ConnectivityIntegrationTests.swift`) usam outras variáveis: `BUNNYGRID_TLS_PG_PORT`, `BUNNYGRID_TLS_PG_USER` e `BUNNYGRID_TLS_PG_CERTS` (PostgreSQL com `ssl = on` e uma CA própria), `BUNNYGRID_PG_SOCKET_DIR`, e `BUNNYGRID_SSH_PORT`, `BUNNYGRID_SSH_USER` e `BUNNYGRID_SSH_KEYS` (um `sshd` com chaves de teste). O comentário no topo do arquivo descreve os arquivos esperados. Com o Remote Login desligado, um `sshd -D -f <config>` do próprio usuário numa porta alta serve.
+
+### Testes de integração com SQL Server
+
+Com um SQL Server acessível. Num Mac com Apple Silicon, o contêiner oficial roda sob Rosetta (colima ou Docker Desktop):
+
+```sh
+docker run -d --name bg-mssql --platform linux/amd64 -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD='…' -p 14331:1433 mcr.microsoft.com/mssql/server:2022-latest
+BUNNYGRID_MSSQL_PORT=14331 BUNNYGRID_MSSQL_PASSWORD='…' swift test --filter SQLServer
+docker rm -f bg-mssql
+```
+
+`BUNNYGRID_MSSQL_HOST` e `BUNNYGRID_MSSQL_USER` (padrão `sa`) mudam o destino. O login precisa de CREATE DATABASE: cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MSSQL_PORT` esses testes são pulados; os testes do protocolo (`TDSProtocolTests`) rodam sempre, com bytes de exemplo.
+
+### Testes de integração com MongoDB
+
+Com um `mongod` acessível (ex.: `brew install mongodb-community`). No macOS o `--fork` não é aceito; rode em segundo plano:
+
+```sh
+mongod --dbpath /tmp/bg-mongo --port 27071 --bind_ip 127.0.0.1 --logpath /tmp/bg-mongo.log &
+BUNNYGRID_MONGO_PORT=27071 swift test --filter Mongo
+# Com autenticação (mongod --auth e um usuário root em admin; opcionalmente outro criado com mechanisms: ["SCRAM-SHA-1"]):
+BUNNYGRID_MONGO_PORT=27071 BUNNYGRID_MONGO_USER=bunny BUNNYGRID_MONGO_PASSWORD=… \
+  BUNNYGRID_MONGO_SHA1_USER=sha1user BUNNYGRID_MONGO_SHA1_PASSWORD=… swift test --filter Mongo
+```
+
+Cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MONGO_PORT` esses testes são pulados. No build de debug, com `--connect-first` numa conexão MongoDB: `--open-collection NOME [--mongo-view grid|tree|json] [--mongo-filter '{…}'] [--edit-document]` abre o visualizador de coleção e `--mongo-shell 'db.c.find()' [--explain]` abre uma aba de shell e executa.
 
 No build de debug, `--edit-connection` abre o editor da primeira conexão salva (`-connectionTab ssl|ssh|advanced` escolhe a aba) e `--test-connection` roda o Test Connection ao abrir.
 
@@ -79,10 +124,14 @@ No build de debug, `--edit-connection` abre o editor da primeira conexão salva 
 Sources/
   BunnyGridCore/          núcleo sem UI (testável)
     Models/               ConnectionConfig, objetos, colunas, CellValue, QueryResult
-    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO)
+    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO), SQL Server (cliente TDS próprio em `Drivers/TDS`), MongoDB (cliente próprio)
+    Mongo/                BSON, OP_MSG sobre SwiftNIO, SCRAM, mongodb+srv (dnssd), parser do shell, DocumentDatabaseDriver, achatamento para o grid
     SQL/                  SQLDialect (aspas, SELECT paginado, EXPLAIN), SQLSplitter (divide scripts, comando sob o cursor) e QueryPlan (árvore do plano)
     Network/              túnel SSH (Citadel), host keys, configuração SSL e endpoint (TCP, socket ou túnel) usado pelos drivers
     Transfer/             zip e Excel (.xlsx), leitura de JSON para importar, execução de scripts .sql com progresso
+    Sync/                 Data Transfer entre motores, Structure Synchronization (diff + script) e Data Synchronization
+    Backup/               formato .bgbackup, BackupStore (pasta por conexão/banco/schema), criar, restaurar e extrair SQL; cópia de arquivo SQLite (sqlite3_backup)
+    Automation/           BatchJob, JobSchedule (cron, próximas execuções, StartCalendarInterval), JobRunner, launch agents, runner headless
     Storage/              ConnectionStore (JSON em Application Support) e KeychainStore (senhas)
   BunnyGrid/              app SwiftUI
     App/                  BunnyGridApp, AppModel (conexões e sessões), Session (árvore e abas)
@@ -102,13 +151,16 @@ Dados do usuário:
 - chaves de API: Keychain, serviços `app.bunnygrid.anthropic` (Claude) e `app.bunnygrid.openai` (ChatGPT)
 - foto de perfil escolhida no app: `profile-photo.png` na mesma pasta (sem ela, usa a foto da conta do macOS)
 - senhas: Keychain, serviço `app.bunnygrid.connections` (conta `<id>` para o banco, `<id>.ssh` para a senha SSH ou passphrase da chave, `<id>.ssl-key` para a passphrase da chave do certificado de cliente)
+- backups: `backups/<id da conexão>/<banco>/<schema ou _>/<aaaaMMddHHmmss>.bgbackup`
+- jobs: `automation/jobs.json`; cada execução em `automation/runs/<id>.json` (com o log) e cópia em texto em `automation/logs/`; saída do launchd em `automation/logs/launchd-<id do job>.log`
+- agendamentos: `~/Library/LaunchAgents/app.bunnygrid.job.<id>.plist`, só para jobs com agendamento ativo salvo
 - host keys SSH aceitas no primeiro uso: `~/Library/Application Support/BunnyGrid/ssh-known-hosts.json`
 
 ## O que já funciona (v0.7)
 
 A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nada da arte do Navicat é usado):
 
-- **Barra principal**: Connection (menu de tipos), New Query, Table, View, Materialized View, Function, Role, Others, Query, Backup, Automation, Model, BI, Sobre, AI Assistant e conta. Os botões de tipo de objeto mostram aquela categoria na aba Objects. Role, Automation e BI estão desativados ("em breve").
+- **Barra principal**: Connection (menu de tipos), New Query, Table, View, Materialized View, Function, Role, Others, Query, Backup, Automation, Model, BI, Sobre, AI Assistant e conta. Os botões de tipo de objeto mostram aquela categoria na aba Objects. Role e BI estão desativados ("em breve"); Automation abre a janela de jobs e Backup mostra a pasta Backups.
 - **Painel de navegação**: BunnyGrid Cloud (em breve) → My Connections → grupos (pastas) → conexões → bancos → schemas (PostgreSQL) → Tables / Views / Materialized Views / Functions / Queries / Backups → objetos. Abrir um nó conecta ou abre o banco; no PostgreSQL cada banco tem sua própria conexão. No rodapé: busca, localizar o objeto da aba aberta e recolher tudo.
 - **Abas**: "Objects" fixa e abas como `payment @dvdrental.public (PostgreSQL)`. O título da janela segue o Navicat (`… - Table - BunnyGrid`).
 - **Aba Objects**: Open / Design / New / Delete, Import / Export Wizard e busca; lista os objetos da pasta selecionada ou os bancos da conexão.
@@ -143,6 +195,9 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
 - **Import Wizard**: importa CSV/TSV ou JSON (array de objetos, objeto com um array, JSON Lines; números, booleanos e NULL mantêm o tipo) numa tabela, com detecção do delimitador, linha de cabeçalho, vazio → NULL, prévia e mapeamento automático por nome, tudo numa transação; ou roda um arquivo .sql no banco.
 - **Export Wizard**: várias tabelas e views de uma vez, em CSV (delimitador, cabeçalho), JSON (chaves na ordem das colunas), SQL (CREATE e DROP opcionais, INSERT com N linhas por comando) ou Excel .xlsx (um arquivo por objeto ou uma pasta de trabalho com uma planilha por objeto). O .xlsx é escrito por código próprio (`Sources/BunnyGridCore/Transfer`), sem dependências. O menu Export do grid também grava Excel.
 - **Execute SQL File** (menu da conexão ou do banco): divide o arquivo em comandos (inclusive `DELIMITER` do mysqldump), mostra o progresso, para no primeiro erro ou continua e lista os erros, e pode rodar tudo numa transação. **Dump SQL File** desliga a checagem de chaves estrangeiras no MySQL, usa nomes sem o banco (restaura em qualquer banco) e recria as sequências `serial` do PostgreSQL.
+- **Data Transfer** (menu Tools ou menu de contexto do banco/schema): copia tabelas escolhidas (estrutura e/ou registros) de uma conexão/banco/schema para outra, entre SQLite, PostgreSQL e MySQL/MariaDB em qualquer direção, ou grava um arquivo .sql no dialeto escolhido. Tipos traduzidos entre motores (reaproveita a tradução do Model, com reserva pela categoria do valor), colunas auto-numeradas viram `serial` / `AUTO_INCREMENT` / `INTEGER PRIMARY KEY` (e a sequência do PostgreSQL avança depois da cópia), índices e chaves estrangeiras depois dos dados. Opções: criar tabelas, apagar as do destino antes, copiar registros, índices, chaves, continuar no erro (o lote que falha é refeito linha a linha) e linhas por lote; INSERTs com vários registros e parâmetros tipados, progresso, log e Stop.
+- **Structure Synchronization**: compara dois schemas (tabelas, colunas, tipo, nulo, default, auto incremento, chave primária, índices, chaves estrangeiras e, entre motores iguais, views), lista o que criar, modificar e apagar com caixas por objeto, mostra o script de deploy e o executa (numa transação no PostgreSQL e no SQLite; no SQLite, o que o ALTER TABLE não faz vira a reconstrução da tabela do designer).
+- **Data Synchronization**: compara tabelas com a mesma chave primária (valores comparados pelo significado: `1`/`true`, `12.5`/`"12.50"`), mostra inserções, atualizações e exclusões com caixas por tipo e por linha, copia o script e aplica numa transação com parâmetros tipados.
 - **Favorites**: favoritar tabelas/views (menu de contexto ou ⌘D), menu Favorites para abrir, e a estrela no rodapé do painel de navegação mostra só os favoritos.
 - **⌘S** salva o que a aba atual tiver: edições do grid, consulta ou design.
 - **Barra de status**: SQL da aba, alerta, "Record 5 of 1000 in page 1", "Last Refresh", e botões para mostrar/ocultar os painéis.
@@ -152,9 +207,23 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - **Fix with AI** e **Ask AI** (explicar o erro) aparecem quando uma consulta falha, usando a instrução que falhou e a mensagem do banco.
   - **Opções** (Settings › AI Assistant): por plataforma, Max Tokens, Effort (Low/Medium/High; os modelos atuais não aceitam temperature) e Instruction; Action for Enter key, Enable Compare with Other Assistants e Show AI features.
 - **Model** (barra principal ou "Reverse Database to Model" no menu de contexto do banco/schema): aba com o diagrama ER do banco ou schema, lido do catálogo (tabelas, colunas, chaves primárias e estrangeiras). Layout automático em camadas (tabelas referenciadas à esquerda, relacionadas próximas), arrastar cartões, zoom (⌘+ / ⌘-, pinça, ajustar), clicar destaca as relações; linhas com pés de galinha (1:N, 1:1, opcional). As posições ficam em `model-layouts.json` por conexão, banco e schema. Exporta PNG/PDF e **Generate SQL** gera CREATE TABLE + chaves estrangeiras para SQLite, PostgreSQL, MySQL ou MariaDB (com tradução de tipos), para copiar, salvar ou abrir numa consulta. Flags de debug: `--open-model`, `--model-select TABELA`, `--model-export arquivo.png|pdf`, `--model-sql`.
+- **SQL Server e Azure SQL** (cliente TDS 7.4 próprio em Swift sobre SwiftNIO, `Sources/BunnyGridCore/Drivers/TDS`, escrito a partir da especificação pública [MS-TDS]; sem FreeTDS): PRELOGIN, TLS 1.2 dentro de pacotes PRELOGIN (como o TDS 7.x exige) e depois na conexão inteira, LOGIN7 com SQL Server Authentication, SQLBatch, RPC `sp_executesql` com parâmetros tipados (`@p1…`, bigint/float/bit/varbinary/nvarchar), ATTENTION. Tipos: int/bigint/smallint/tinyint, bit, decimal/numeric, money/smallmoney, float/real, char/varchar/nchar/nvarchar (inclusive `max`, por PLP), text/ntext/image, binary/varbinary, date/time/datetime/datetime2/datetimeoffset/smalldatetime, uniqueidentifier, xml, sql_variant e tipos CLR (como bytes); varchar decodificado pela página de código da collation (e UTF-8 nas collations `_UTF8`).
+  - **New Connection**: SQL Server, Azure SQL Database e os serviços SQL Server de AWS, Google Cloud, Alibaba, Huawei e Tencent funcionam (porta 1433). Authentication mostra só SQL Server Authentication (Windows/Entra ainda não). SSL: Disabled não pede criptografia (o servidor pode exigir), Prefer usa TLS quando o servidor oferece, Require exige sem checar o certificado, Verify CA / Verify Full checam a CA e o nome. Túnel SSH pelo mesmo `ConnectionEndpoint`; SQL Server não aceita socket Unix. `sqlserver://` e `mssql://` no New Connection with URI (`?encrypt=true|false|strict`).
+  - **Navegação** como no Navicat for SQL Server: conexão → bancos → schemas (`dbo` aberto) → Tables / Views / Functions (procedures e funções) / Queries / Backups; cada banco tem a sua conexão.
+  - Catálogo `sys.*`: colunas (tipos como `nvarchar(50)`, `decimal(10,2)`), índices, chaves estrangeiras, triggers, estatísticas (linhas, tamanho, MS_Description, datas) e DDL montado como o SSMS (IDENTITY, colunas computadas, defaults nomeados, PK/UNIQUE CLUSTERED/NONCLUSTERED, CHECK, índices com INCLUDE e filtro, triggers, chaves no fim); views, procedures e funções mostram `OBJECT_DEFINITION`.
+  - Grid paginado com `OFFSET … FETCH`, edições como parâmetros tipados (NULL vai literal), transações (`BEGIN TRANSACTION`, o descritor acompanha o ENVCHANGE), Design Table (`sp_rename`, `ALTER COLUMN`, defaults como constraints), renomear/duplicar/truncar, Dump SQL (com `SET IDENTITY_INSERT`), Explain pelo `SET SHOWPLAN_XML` (árvore de operadores com custo e linhas), Stop pelo ATTENTION na própria conexão, limite de linhas que para o servidor (ATTENTION) em vez de descartar, logins no User (sysadmin/dbcreator), Others (procedures, triggers, sequences, synonyms, types, índices, schemas). O divisor de scripts entende `GO`, `[identificadores]` e os `BEGIN … END` de procedures e funções.
+- **MongoDB** (cliente próprio em Swift sobre SwiftNIO, sem dependências novas): BSON completo (inclusive Decimal128), OP_MSG, `hello`, SCRAM-SHA-256 e SCRAM-SHA-1, TLS pela aba SSL, túnel SSH e socket pelo mesmo `ConnectionEndpoint`, `mongodb://` com vários hosts (conecta no primário do replica set) e `mongodb+srv://` (registros SRV/TXT via dnssd, TLS ligado). New Connection com MongoDB e MongoDB Atlas; o formulário ganha Connection Type (Standalone/Replica Set ou SRV), outros hosts, Replica Set, Auth Database e Auth Mechanism, e New Connection with URI aceita `mongodb://` e `mongodb+srv://`.
+  - **Navegação**: conexão → bancos → Collections / Views / GridFS / Indexes / Queries. O driver implementa `DatabaseDriver` (coleções como tabelas com a união das chaves de primeiro nível, aninhados como JSON) e `DocumentDatabaseDriver` (find, aggregate, insert, update, delete, runCommand, explain, índices, `$collStats`). Os drivers SQL não mudaram.
+  - **Visualizador de coleção**: Grid View (cabeçalho com o tipo BSON de cada campo), Tree View e JSON View; barra Filter / Sort / Projection com a sintaxe do shell; paginação com o total; clicar no cabeçalho ordena; edições de célula pendentes com Apply/Discard (`$set` por `_id`, preservando o tipo do campo); Add / Edit / Duplicate / Delete abrem um editor JSON com Beautify e Validate (`ObjectId("…")`, `ISODate("…")`, `NumberLong`…); Import (JSON, JSON Lines, CSV) e Export (JSON em Extended JSON relaxado, JSON Lines, CSV); estatísticas (documentos, tamanho, índices); GridFS: Save File remonta o arquivo dos chunks.
+  - **Shell** (New Query numa conexão MongoDB): `db.coll.find({…}).sort({…}).skip(n).limit(n)`, `findOne`, `aggregate([…])`, `countDocuments`, `estimatedDocumentCount`, `distinct`, `insertOne/Many`, `updateOne/Many`, `replaceOne`, `deleteOne/Many`, `createIndex`, `dropIndex`, `getIndexes`, `drop`, `stats`, `renameCollection`, `db.runCommand`, `db.adminCommand`, `db.createCollection`, `db.createView`, `show dbs|collections|users`, `use`, `db.getSiblingDB(…)`, `db.getCollection(…)`. O parser aceita chaves sem aspas, aspas simples, vírgula final, comentários, regex `/…/i`, `ObjectId`, `ISODate`, `new Date`, `NumberLong`, `NumberInt`, `NumberDecimal`, `Timestamp`, `BinData`, `UUID`, `MinKey/MaxKey` e Extended JSON. Um resultado por comando, em Grid/Tree/JSON; **Explain** mostra a árvore do plano vencedor (COLLSCAN, IXSCAN, FETCH… com nReturned e documentos examinados); **Stop** acha a operação pelo `comment` e roda `killOp` por uma segunda conexão.
+- **Backup** (botão Backup da barra principal, pasta Backups da aba Objects ou Tools › New Backup…): backup do banco ou schema com comentário, escolha de objetos, estrutura e/ou dados; no SQLite também cópia do arquivo inteiro pela API `sqlite3_backup`. A lista mostra data, tamanho, objetos, linhas, tipo e comentário; **Restore** no mesmo banco ou em outro banco aberto do mesmo motor (Drop existing, Continue on error, transação única, com progresso e erros), **Extract SQL** para um .sql, editar comentário, mostrar no Finder, apagar (vai para o Lixo).
+  - Formato `.bgbackup` (versão 1): `BGBACKUP` + versão (UInt32 LE) + tamanho do manifesto (UInt32 LE) + manifesto JSON (conexão, banco, schema, data, comentário, objetos, linhas) + o script SQL (ou o arquivo SQLite) comprimido em DEFLATE puro (`COMPRESSION_ZLIB` da Apple; `zlib.decompress(dados, -15)` no Python). O script vem do Dump SQL, com DROP … IF EXISTS e INSERTs de 100 linhas.
+- **Automation** (botão Automation, Tools › Automation ⇧⌘J): janela com os batch jobs. Cada job tem passos em ordem (Run Saved Query, Run SQL, Execute SQL File, Backup, Export com as opções do Export Wizard e pasta de saída, opcionalmente datada, Data Transfer entre duas conexões), "continuar quando um passo falha", agendamento (manual, uma vez, de hora em hora, diário, semanal, mensal ou cron de 5 campos com as próximas 5 execuções), notificações de sucesso e falha, e o histórico com status, duração e log de cada execução. Start roda na hora, dentro do app.
+  - Agendamentos rodam com o app fechado: salvar um agendamento ativo grava `~/Library/LaunchAgents/app.bunnygrid.job.<id>.plist` (`StartCalendarInterval`) e carrega com `launchctl bootstrap`; desligar o agendamento ou apagar o job faz `bootout` e remove o plist. O launchd executa `BunnyGrid --run-job <id> --scheduled`, modo headless do mesmo executável: lê conexões, consultas e jobs da pasta de dados, as senhas do Keychain, conecta pelo mesmo caminho (SSH, SSL, socket, Initial Queries), grava a execução e notifica. `SMAppService.agent` não foi usado porque só registra plists fixos dentro do bundle, sem horário por job.
+  - Para testar sem tocar em `~/Library/LaunchAgents`: `BUNNYGRID_LAUNCH_AGENTS_DIR=<pasta>` grava os plists ali e não chama o launchctl. Rodar um job à mão: `BUNNYGRID_DATA_DIR=<pasta> build/BunnyGrid.app/Contents/MacOS/BunnyGrid --run-job <id>` (saída 0 = sucesso, 1 = falhou, 2 = job não encontrado). Flag de debug: `-automationPane steps|schedule|history`.
 - **Menus**: File, View (painéis), Table, Favorites (em breve), Tools.
 
 ## Licenças
 
 - **Beekeeper Studio Community** é GPL-3 (e `src-commercial/` tem licença comercial). Copiar ou traduzir o código dele para Swift faz do BunnyGrid uma obra derivada sob GPL-3. Até que se decida isso, o Beekeeper serve só como referência de arquitetura e comportamento.
-- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema.
+- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O MongoDB não usa o MongoKitten: o cliente é próprio (BSON + OP_MSG + SCRAM, ~2 mil linhas), sem pacotes novos, testado contra o MongoDB 9.0 (wire version 29). O SQL Server também usa um cliente próprio (TDS 7.4 sobre SwiftNIO; só acrescenta o produto NIOTLS do swift-nio), testado contra o SQL Server 2022 (16.0).

@@ -47,6 +47,10 @@ struct OptionsValues: Codable, Equatable {
     // Code Completion
     var useCodeCompletion = true
     var autoSelectFirstSuggestion = false
+    /// Load the columns of tables named in the editor in the background.
+    var autoUpdateCompletionInfo = true
+    /// Offer pg_catalog / information_schema / sqlite_* objects in completion.
+    var includeSystemObjectsInCompletion = true
 
     // Editor
     var disableHighlightAboveMB = 10
@@ -65,6 +69,7 @@ struct OptionsValues: Codable, Equatable {
     var autoBeginTransaction = false
     var gridFont: FontSpec?
     var rowShading: RowShading = .everyThirdRow
+    var profilingColors = ProfilingColors()
 
     // Auto Recovery
     var autosaveQueries: Autosave = .seconds30
@@ -74,6 +79,13 @@ struct OptionsValues: Codable, Equatable {
 
     // Advanced
     var diagnosticLogging = false
+}
+
+/// Records › Data Profiling Colors: frequency bars, the highlighted value, and the Not Null / valid meter.
+struct ProfilingColors: Codable, Equatable {
+    var bar = "#1FB5C9"
+    var spotlight = "#E58FE3"
+    var valid = "#5AC8FA"
 }
 
 /// A font chosen in Options; nil anywhere means "Use default font".
@@ -103,11 +115,21 @@ final class AppOptions {
     private(set) var values: OptionsValues
 
     private init() {
-        if let data = UserDefaults.standard.data(forKey: "appOptions"), let saved = try? JSONDecoder().decode(OptionsValues.self, from: data) {
+        if let data = UserDefaults.standard.data(forKey: "appOptions"), let saved = Self.decode(data) {
             values = saved
         } else {
             values = OptionsValues()
         }
+    }
+
+    /// Saved options over the defaults, so options added in a later version don't reset the user's others.
+    static func decode(_ data: Data) -> OptionsValues? {
+        if let values = try? JSONDecoder().decode(OptionsValues.self, from: data) { return values }
+        guard let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let defaults = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(OptionsValues())) as? [String: Any],
+              let merged = try? JSONSerialization.data(withJSONObject: defaults.merging(saved) { _, new in new })
+        else { return nil }
+        return try? JSONDecoder().decode(OptionsValues.self, from: merged)
     }
 
     func save(_ newValues: OptionsValues) {
@@ -123,6 +145,19 @@ extension Notification.Name {
 }
 
 extension NSColor {
+    /// Default SQL keyword color, as in Navicat's editor: light blue in dark mode, blue in light mode.
+    static let navicatKeyword = NSColor(name: "navicatKeyword") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.42, green: 0.71, blue: 1.0, alpha: 1)
+            : NSColor(srgbRed: 0.0, green: 0.33, blue: 0.85, alpha: 1)
+    }
+    /// Default SQL string color: pink in dark mode, red in light mode.
+    static let navicatString = NSColor(name: "navicatString") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 1.0, green: 0.42, blue: 0.53, alpha: 1)
+            : NSColor(srgbRed: 0.77, green: 0.10, blue: 0.16, alpha: 1)
+    }
+
     convenience init?(hex: String?) {
         guard var hex, !hex.isEmpty else { return nil }
         if hex.hasPrefix("#") { hex.removeFirst() }

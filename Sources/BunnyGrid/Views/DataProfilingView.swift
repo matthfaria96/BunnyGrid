@@ -89,7 +89,7 @@ private struct ProfileCard: View {
                                 .help(item.value)
                             GeometryReader { proxy in
                                 RoundedRectangle(cornerRadius: 3)
-                                    .fill(Color.accentColor.gradient)
+                                    .fill(Color(nsColor: NSColor(hex: AppOptions.shared.values.profilingColors.bar) ?? .controlAccentColor).gradient)
                                     .frame(width: max(3, proxy.size.width * Double(item.count) / Double(largest)))
                             }
                             .frame(height: 12)
@@ -128,7 +128,7 @@ private struct FillMeter: View {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.08))
-                    Capsule().fill(filled < 0.5 ? Color.orange : Color.green)
+                    Capsule().fill(filled < 0.5 ? Color(nsColor: NSColor(hex: AppOptions.shared.values.profilingColors.spotlight) ?? .systemOrange) : Color(nsColor: NSColor(hex: AppOptions.shared.values.profilingColors.valid) ?? .systemGreen))
                         .frame(width: max(0, proxy.size.width * filled))
                 }
             }

@@ -24,7 +24,16 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
     }
 }
 
+/// Starts the headless job runner for `--run-job`, otherwise the app.
 @main
+@MainActor
+enum AppEntry {
+    static func main() {
+        HeadlessEntry.runIfRequested()
+        BunnyGridApp.main()
+    }
+}
+
 struct BunnyGridApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
@@ -34,7 +43,7 @@ struct BunnyGridApp: App {
         Window("BunnyGrid", id: "main") {
             ContentView()
                 .environment(model)
-                .frame(minWidth: 1100, minHeight: 680)
+                .frame(minWidth: 960, minHeight: 600)
                 .onAppear { AppearancePreference(rawValue: appearance)?.apply() }
                 .onChange(of: appearance) { _, value in AppearancePreference(rawValue: value)?.apply() }
         }
@@ -135,6 +144,11 @@ struct BunnyGridApp: App {
                 }
             }
             CommandMenu("Tools") {
+                ForEach(SyncTool.allCases) { tool in
+                    Button(tool.title + "…") { model.openSyncWizard(tool) }
+                }
+                AutomationMenuItems(model: model)
+                Divider()
                 Button("AI Assistant") { model.showAssistant = true; model.rightPane = .ai }
                 Button("AI Platform…") { model.showingAccountMenu = true }
                 Button("Query History") {
@@ -143,6 +157,13 @@ struct BunnyGridApp: App {
                 .disabled(model.currentContext == nil)
             }
         }
+
+        Window("Automation", id: "automation") {
+            AutomationView()
+                .environment(model)
+                .frame(minWidth: 900, minHeight: 560)
+        }
+        .defaultSize(width: 1100, height: 700)
 
         Settings {
             SettingsView()
@@ -156,6 +177,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Needed when launched as a bare SwiftPM executable (`swift run`) rather than a bundled .app.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        #if DEBUG
+        // `--window-size 1037x695` sizes the main window like a reference capture (visual checks).
+        if let index = CommandLine.arguments.firstIndex(of: "--window-size"), CommandLine.arguments.indices.contains(index + 1) {
+            let parts = CommandLine.arguments[index + 1].split(separator: "x").compactMap { Double($0) }
+            if parts.count == 2 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    for window in NSApp.windows where window.isVisible && window.identifier?.rawValue.hasPrefix("main") == true {
+                        window.minSize = NSSize(width: 600, height: 400)
+                        window.contentMinSize = NSSize(width: 600, height: 400)
+                        window.setFrame(NSRect(x: 80, y: 120, width: parts[0], height: parts[1]), display: true)
+                    }
+                }
+            }
+        }
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

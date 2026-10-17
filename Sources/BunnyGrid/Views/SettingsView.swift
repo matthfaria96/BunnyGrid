@@ -91,6 +91,8 @@ struct SettingsView: View {
         case "completion":
             draft.useCodeCompletion = defaults.useCodeCompletion
             draft.autoSelectFirstSuggestion = defaults.autoSelectFirstSuggestion
+            draft.autoUpdateCompletionInfo = defaults.autoUpdateCompletionInfo
+            draft.includeSystemObjectsInCompletion = defaults.includeSystemObjectsInCompletion
         case "editor":
             draft.disableHighlightAboveMB = defaults.disableHighlightAboveMB
             draft.showLineNumbers = defaults.showLineNumbers
@@ -107,6 +109,7 @@ struct SettingsView: View {
             draft.autoBeginTransaction = defaults.autoBeginTransaction
             draft.gridFont = nil
             draft.rowShading = defaults.rowShading
+            draft.profilingColors = defaults.profilingColors
         case "recovery":
             draft.autosaveQueries = defaults.autosaveQueries
         case "advanced":
@@ -237,7 +240,7 @@ private struct GeneralPane: View {
             OptionRow(label: "Confirm Dialog") {
                 Toggle("Use safe confirm dialog", isOn: $draft.useSafeConfirmDialog)
                     .help("Deleting objects asks you to type the object's name to confirm.")
-                Toggle("Ask to save new queries before closing", isOn: $draft.askToSaveNewQueries)
+                Toggle("Ask to save new queries/profiles before closing", isOn: $draft.askToSaveNewQueries)
             }
         }
     }
@@ -274,14 +277,28 @@ private struct TabsPane: View {
 }
 
 private struct CodeCompletionPane: View {
+    @Environment(AppModel.self) private var app
     @Binding var draft: OptionsValues
+    @State private var cleared = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             OptionRow(label: "Code Completion") {
-                Toggle("Use code completion", isOn: $draft.useCodeCompletion)
-                Toggle("Auto select first suggestion", isOn: $draft.autoSelectFirstSuggestion)
-                    .disabled(!draft.useCodeCompletion)
+                HStack(spacing: 10) {
+                    Toggle("Use code completion", isOn: $draft.useCodeCompletion)
+                    Button(cleared ? "Cleared" : "Clear Code Completion Info") {
+                        for session in app.sessions.values { for context in session.contexts.values { context.clearCompletionInfo() } }
+                        cleared = true
+                    }
+                    .help("Forget the cached columns of every open database; they load again as you type")
+                }
+                Group {
+                    Toggle("Auto update code completion info", isOn: $draft.autoUpdateCompletionInfo)
+                    Toggle("Include system objects when updating code completion info", isOn: $draft.includeSystemObjectsInCompletion)
+                    Toggle("Auto select first suggestion", isOn: $draft.autoSelectFirstSuggestion)
+                }
+                .padding(.leading, 18)
+                .disabled(!draft.useCodeCompletion)
             }
         }
     }
@@ -335,9 +352,9 @@ private struct SyntaxColorGroup: View {
             Text("Syntax Colors").font(.system(size: 11)).foregroundStyle(.secondary)
             HStack(spacing: 18) {
                 swatch("Common", \.common, .labelColor)
-                swatch("Keyword", \.keyword, .systemPink)
+                swatch("Keyword", \.keyword, .navicatKeyword)
                 swatch("Comment", \.comment, .secondaryLabelColor)
-                swatch("String", \.string, .systemRed)
+                swatch("String", \.string, .navicatString)
                 swatch("Number", \.number, .systemBlue)
                 swatch("Background", \.background, .textBackgroundColor)
             }
@@ -381,6 +398,17 @@ private struct EditorPreview: NSViewRepresentable {
 private struct RecordsPane: View {
     @Binding var draft: OptionsValues
 
+    private func colorSwatch(_ title: String, _ key: WritableKeyPath<ProfilingColors, String>) -> some View {
+        VStack(spacing: 4) {
+            ColorPicker("", selection: Binding(
+                get: { Color(nsColor: NSColor(hex: draft.profilingColors[keyPath: key]) ?? .systemTeal) },
+                set: { draft.profilingColors[keyPath: key] = NSColor($0).hexString }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            Text(title).font(.system(size: 11))
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             OptionRow(label: "Records") {
@@ -403,6 +431,19 @@ private struct RecordsPane: View {
                     }
                     .labelsHidden()
                     .frame(width: 170)
+                }
+            }
+            OptionRow(label: "Data Profiling") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Data Profiling Colors").font(.system(size: 11)).foregroundStyle(.secondary)
+                    HStack(spacing: 18) {
+                        colorSwatch("Bar", \.bar)
+                        colorSwatch("Spotlight", \.spotlight)
+                        colorSwatch("Not Null / Valid", \.valid)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: 420, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
                 }
             }
         }
@@ -441,38 +482,42 @@ private struct AdvancedPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             OptionRow(label: "Logs Location") {
-                HStack {
+                HStack(spacing: 4) {
                     Text(AppModel.dataDirectory.appending(path: "Logs").path)
-                        .font(.system(size: 11.5)).lineLimit(1).truncationMode(.middle)
+                        .font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
                         .textSelection(.enabled)
-                    Button("Show in Finder") {
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .frame(width: 300, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color(nsColor: .textBackgroundColor)))
+                    Button("…") {
                         let url = AppModel.dataDirectory.appending(path: "Logs")
                         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
+                    .help("Show in Finder")
                 }
                 Toggle("Enable diagnostic logging", isOn: $draft.diagnosticLogging)
             }
+            SectionHeader(title: "Connectivity")
+            Text("This option only applies to BunnyGrid's AI assistants (Claude and ChatGPT).")
+                .font(.system(size: 12))
             OptionRow(label: "Connectivity Diagnosis") {
+                Button(testing ? "Testing…" : "Test Connectivity") { test() }
+                    .disabled(testing)
+                    .frame(width: 200)
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(targets, id: \.0) { name, _ in
                         HStack(spacing: 6) {
                             switch results[name] ?? nil {
                             case .some(true): Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                             case .some(false): Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
-                            case .none: Image(systemName: "circle.dotted").foregroundStyle(.secondary)
+                            case .none: Image(systemName: "questionmark.circle.fill").foregroundStyle(.secondary)
                             }
                             Text(name)
                         }
                     }
                 }
-                .padding(10)
-                .frame(width: 300, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
-                Button(testing ? "Testing…" : "Test Connectivity") { test() }
-                    .disabled(testing)
-                Text("Checks that BunnyGrid can reach the web and the Claude and ChatGPT APIs.")
-                    .font(.caption).foregroundStyle(.secondary)
+                .padding(.leading, 10)
             }
         }
     }

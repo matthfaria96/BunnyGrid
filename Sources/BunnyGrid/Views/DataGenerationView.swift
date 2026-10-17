@@ -116,7 +116,7 @@ struct DataGenerationView: View {
     private var driverSchema: String? {
         switch target.context.kind {
         case .postgresql, .sqlserver: target.object.schema
-        case .mysql, .mariadb: target.context.name
+        case .mysql, .mariadb, .mongodb: target.context.name
         case .sqlite: nil
         }
     }

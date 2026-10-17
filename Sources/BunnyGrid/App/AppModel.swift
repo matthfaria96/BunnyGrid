@@ -64,6 +64,8 @@ final class AppModel {
     var exportTarget: ExportTarget?
     /// Database the Execute SQL File sheet runs against.
     var sqlFileTarget: SQLFileTarget?
+    /// Data Transfer / Data Synchronization / Structure Synchronization sheet.
+    var syncWizard: SyncWizardRequest?
     /// Server whose User manager sheet is open.
     var usersSession: Session?
 
@@ -91,6 +93,8 @@ final class AppModel {
 
     let assistant: AssistantModel
     let profile = ProfileModel(directory: AppModel.dataDirectory)
+    /// Batch jobs, schedules and backups (AutomationCenter.swift).
+    let automation = AutomationCenter(dataDirectory: AppModel.dataDirectory)
 
     @ObservationIgnored private let store: ConnectionStore
     @ObservationIgnored private let historyStore: QueryHistoryStore
@@ -433,6 +437,7 @@ final class AppModel {
     // MARK: - Tabs
 
     func openTable(_ object: DatabaseObject, in context: DatabaseContext) {
+        if context.kind.isDocumentStore { return openCollection(object, in: context) }
         // Options › Tabs › "Allow opening multiple forms for same object".
         if !AppOptions.shared.values.allowMultipleForms, let existing = tabs.first(where: {
             if case .table(let model) = $0 {
@@ -454,6 +459,7 @@ final class AppModel {
             alertMessage = "Open a connection and a database first."
             return
         }
+        if context.kind.isDocumentStore { return openMongoShell(text: text, in: context) }
         queryCounter += 1
         let tab = WorkspaceTab.query(QueryTabModel(title: "Query \(queryCounter)", text: text, context: context))
         tabs.append(tab)
@@ -508,6 +514,12 @@ final class AppModel {
         selectedTabID = tab.id
     }
 
+    /// Adds and selects a tab (for tab kinds opened from extensions, e.g. MongoDB's).
+    func appendTab(_ tab: WorkspaceTab) {
+        tabs.append(tab)
+        selectedTabID = tab.id
+    }
+
     // MARK: - Save (⌘S)
 
     /// Saves whatever the selected tab holds: grid edits, the query, or the table design.
@@ -526,6 +538,8 @@ final class AppModel {
             }
         case .model(let model):
             model.savePositions()
+        case .document(let tab):
+            tab.save()
         case nil:
             break
         }
@@ -537,6 +551,7 @@ final class AppModel {
         case .query(let model): !model.text.isEmpty
         case .design(let model): model.hasChanges
         case .model: false
+        case .document(let tab): tab.canSave
         case nil: false
         }
     }
@@ -758,7 +773,7 @@ final class AppModel {
             case "--open-table" where !arguments.isEmpty: tableName = arguments.removeFirst()
             case "--query" where !arguments.isEmpty: query = arguments.removeFirst()
             // Their file arguments are not databases to open (handled after connecting / by the Import Wizard).
-            case "--execute-sql" where !arguments.isEmpty: arguments.removeFirst()
+            case "--execute-sql" where !arguments.isEmpty, "--sync-target" where !arguments.isEmpty: arguments.removeFirst()
             case "--import-wizard":
                 if let kind = arguments.first, ImportSourceKind(rawValue: kind) != nil {
                     arguments.removeFirst()
@@ -819,6 +834,9 @@ final class AppModel {
             }
         }
         #endif
+        #if DEBUG
+        runSyncDebugFlags(opened: opened)
+        #endif
         if CommandLine.arguments.contains("--open-model"), let id = opened {
             Task {
                 while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
@@ -835,6 +853,14 @@ final class AppModel {
                    let category = ObjectCategory.allCases.first(where: { $0.rawValue.lowercased() == CommandLine.arguments[index + 1] }) {
                     showCategory(category)
                 }
+            }
+        }
+        #endif
+        #if DEBUG
+        if let id = opened, CommandLine.arguments.contains(where: { $0 == "--open-collection" || $0 == "--mongo-shell" }) {
+            Task {
+                while sessions[id]?.contexts.values.first(where: \.isOpen) == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                if let context = sessions[id]?.contexts.values.first(where: \.isOpen) { openMongoLaunchArguments(context: context) }
             }
         }
         #endif

@@ -44,14 +44,19 @@ public struct TableColumn: Hashable, Identifiable, Sendable {
     public var defaultValue: String?
     public var isPrimaryKey: Bool
     public var ordinal: Int
+    /// MySQL / MariaDB: column attributes past type, NULL and DEFAULT that `MODIFY COLUMN` would otherwise drop,
+    /// as SQL (`AUTO_INCREMENT`, `ON UPDATE CURRENT_TIMESTAMP`, `COMMENT '…'`). nil elsewhere.
+    public var extra: String?
 
-    public init(name: String, dataType: String, nullable: Bool, defaultValue: String? = nil, isPrimaryKey: Bool = false, ordinal: Int) {
+    public init(name: String, dataType: String, nullable: Bool, defaultValue: String? = nil, isPrimaryKey: Bool = false, ordinal: Int,
+                extra: String? = nil) {
         self.name = name
         self.dataType = dataType
         self.nullable = nullable
         self.defaultValue = defaultValue
         self.isPrimaryKey = isPrimaryKey
         self.ordinal = ordinal
+        self.extra = extra
     }
 
     public var id: String { name }
