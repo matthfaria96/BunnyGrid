@@ -515,6 +515,8 @@ final class AssistantModel {
                 content = "ER model of \(model.displayName):\n" + model.generateSQL(for: model.kind, selectedOnly: false, includeDrop: false)
             case .redis(let model):
                 content = "Redis \(model.kindName.lowercased()): \(model.title)\n\(model.statusText)"
+            case .automation:
+                content = "Automation batch jobs"
             }
             attachments.removeAll { $0.kind == .tab && $0.name == tab.title }
             attachments.append(AIAttachment(kind: .tab, name: tab.title, content: content))

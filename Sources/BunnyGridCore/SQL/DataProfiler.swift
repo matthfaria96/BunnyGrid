@@ -39,6 +39,10 @@ public struct TableStatistics: Sendable, Equatable {
     public var rootPage: Int?
     public var hasIndexes: Bool?
     public var hasTriggers: Bool?
+    /// MongoDB collection stats (Navicat's Objects columns): storage size, index count and average document size.
+    public var storageBytes: Int?
+    public var indexCount: Int?
+    public var averageObjectBytes: Int?
 
     public init(rows: Int? = nil, sizeBytes: Int? = nil, comment: String? = nil, engine: String? = nil, created: String? = nil, modified: String? = nil,
                 collation: String? = nil) {

@@ -87,11 +87,29 @@ final class AppModel {
     private var queryCounter = 0
 
     // Panes (remembered between launches)
-    var showNavigator = UserDefaults.standard.object(forKey: "showNavigator") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(showNavigator, forKey: "showNavigator") }
+    var showNavigator = AppModel.savedPane("showNavigator") {
+        didSet { AppModel.savePane(showNavigator, "showNavigator") }
     }
-    var showAssistant = UserDefaults.standard.object(forKey: "showAssistant") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(showAssistant, forKey: "showAssistant") }
+    var showAssistant = AppModel.savedPane("showAssistant") {
+        didSet { AppModel.savePane(showAssistant, "showAssistant") }
+    }
+
+    /// Debug captures (`--window-size`) neither read nor write the remembered panes, so one capture can't hide
+    /// the panes of the next, nor change what the user's own launches restore.
+    private static var panesArePersisted: Bool {
+        #if DEBUG
+        !CommandLine.arguments.contains("--window-size")
+        #else
+        true
+        #endif
+    }
+
+    private static func savedPane(_ key: String) -> Bool {
+        panesArePersisted ? UserDefaults.standard.object(forKey: key) as? Bool ?? true : true
+    }
+
+    private static func savePane(_ value: Bool, _ key: String) {
+        if panesArePersisted { UserDefaults.standard.set(value, forKey: key) }
     }
 
     let assistant: AssistantModel
@@ -553,7 +571,7 @@ final class AppModel {
             if case .key(let key) = model.content, key.hasUnsavedText { Task { await key.saveText() } }
         case .document(let tab):
             tab.save()
-        case nil:
+        case .automation, nil:
             break
         }
     }
@@ -566,7 +584,7 @@ final class AppModel {
         case .model: false
         case .redis(let model): model.hasUnsavedChanges
         case .document(let tab): tab.canSave
-        case nil: false
+        case .automation, nil: false
         }
     }
 
@@ -773,6 +791,22 @@ final class AppModel {
 
     // MARK: - Launch arguments
 
+    /// Debug: `--attach FILE` once main is open; returns the database and table names for "alias.table".
+    private func resolveAttachedTable(_ name: String?, connection id: UUID, database: String) async -> (database: String, table: String?) {
+        guard let index = CommandLine.arguments.firstIndex(of: "--attach"), CommandLine.arguments.indices.contains(index + 1),
+              let session = sessions[id] else { return (database, name) }
+        let url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+        let alias = url.deletingPathExtension().lastPathComponent
+        while session.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
+        if !session.databases.contains(alias) {
+            do { try await session.attachSQLiteDatabase(path: url.path, alias: alias) } catch { alertMessage = error.localizedDescription }
+        }
+        expanded.insert(.database(id, alias))
+        session.openDatabase(alias)
+        guard let name, name.hasPrefix(alias + ".") else { return (database, name) }
+        return (alias, String(name.dropFirst(alias.count + 1)))
+    }
+
     /// Opens SQLite files passed on the command line (`BunnyGrid path/to/db.sqlite`).
     /// For development and screenshots, `--open-table NAME` and `--query SQL` open tabs once connected.
     private func openLaunchArguments() {
@@ -785,9 +819,12 @@ final class AppModel {
             arguments.removeFirst()
             switch flag {
             case "--open-table" where !arguments.isEmpty: tableName = arguments.removeFirst()
+            // `--attach FILE` attaches another SQLite file (alias = file name); `--open-table alias.table` / `--design alias.table`.
+            case "--attach" where !arguments.isEmpty: arguments.removeFirst()
             case "--query" where !arguments.isEmpty: query = arguments.removeFirst()
             // Their file arguments are not databases to open (handled after connecting / by the Import Wizard).
             case "--execute-sql" where !arguments.isEmpty, "--sync-target" where !arguments.isEmpty: arguments.removeFirst()
+            case "--bi-export" where !arguments.isEmpty, "--bi-chart" where !arguments.isEmpty, "--bi-filter" where !arguments.isEmpty: arguments.removeFirst()
             // Benchmark options (Benchmarks.swift) take values that may be file paths.
             case "--bench", "--bench-script", "--bench-table", "--bench-rows":
                 if !arguments.isEmpty { arguments.removeFirst() }
@@ -812,8 +849,9 @@ final class AppModel {
         #if DEBUG
         if let flagIndex = CommandLine.arguments.firstIndex(where: { $0 == "--design" || $0 == "--new-table" }), let id = opened {
             let args = CommandLine.arguments
-            let tableName = args[flagIndex] == "--design" && args.indices.contains(flagIndex + 1) ? args[flagIndex + 1] : nil
+            let requested = args[flagIndex] == "--design" && args.indices.contains(flagIndex + 1) ? args[flagIndex + 1] : nil
             Task {
+                let (database, tableName) = await resolveAttachedTable(requested, connection: id, database: database)
                 while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
                 guard let context = sessions[id]?.context(database) else { return }
                 let object = tableName.flatMap { name in context.objects(in: context.defaultSchema)?.first { $0.name == name } }
@@ -822,6 +860,10 @@ final class AppModel {
                     try? await Task.sleep(for: .milliseconds(300))
                     model.addField()
                     model.columns[1].name = "full_name"
+                    // `--save-design` saves it, to check ALTER paths end to end.
+                    if CommandLine.arguments.contains("--save-design") {
+                        if await model.save() == false { alertMessage = model.saveError ?? "Design not saved" }
+                    }
                 }
             }
         }
@@ -853,6 +895,7 @@ final class AppModel {
         #endif
         #if DEBUG
         runSyncDebugFlags(opened: opened)
+        runBIDebugFlags(opened: opened, database: database)
         #endif
         if CommandLine.arguments.contains("--open-model"), let id = opened {
             Task {
@@ -883,6 +926,7 @@ final class AppModel {
         #endif
         guard tableName != nil || query != nil, let id = opened else { return }
         Task {
+            let (database, tableName) = await resolveAttachedTable(tableName, connection: id, database: database)
             while sessions[id]?.context(database)?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
             guard let context = sessions[id]?.context(database) else { return }
             if let query {
@@ -925,6 +969,11 @@ final class AppModel {
                         tab.addRow()
                         tab.setValue(.text("New customer"), row: tab.page?.rows.count ?? 0, column: 1)
                         tab.scroll(toRow: 0)
+                        // `--apply-edits` applies them, to check UPDATE / DELETE / INSERT paths end to end.
+                        if CommandLine.arguments.contains("--apply-edits") {
+                            await tab.applyChanges()
+                            if let error = tab.saveError { alertMessage = error }
+                        }
                     }
                     if CommandLine.arguments.contains("--begin-transaction") {
                         await tab.beginTransaction(session: sessions[id])

@@ -100,6 +100,8 @@ public struct SQLiteTableRebuild: Sendable {
     public var checkForeignKeys: Bool
     /// The table options to rebuild with; nil keeps the ones in `originalSQL`.
     public var options: SQLiteTableOptions?
+    /// An attached database's alias; nil (or "main") for the main database.
+    public var schema: String?
 
     public init(table: String, originalSQL: String?, originalColumns: [TableColumn], columns: [ColumnDesign],
                 originalIndexes: [TableIndex], indexes: [IndexDesign], foreignKeys: [TableForeignKey],
@@ -186,8 +188,10 @@ public struct SQLiteTableRebuild: Sendable {
             }
         }
 
-        let quotedTable = d.quoteIdentifier(table)
-        let temporary = d.quoteIdentifier(temporaryName)
+        // In an attached database every statement names `alias.table`, except the RENAME target (always unqualified).
+        let attached = schema.flatMap { $0.isEmpty || $0 == "main" ? nil : $0 }
+        let quotedTable = d.qualifiedName(table: table, schema: attached)
+        let temporary = d.qualifiedName(table: temporaryName, schema: attached)
 
         // Columns and key with the table options (AUTOINCREMENT, ON CONFLICT, WITHOUT ROWID), kept from the stored SQL by default.
         let tableOptions = options ?? originalSQL.map(SQLiteTableOptions.init(sql:)) ?? SQLiteTableOptions()
@@ -225,14 +229,23 @@ public struct SQLiteTableRebuild: Sendable {
         }
         statements += [
             "DROP TABLE \(quotedTable)",
-            "ALTER TABLE \(temporary) RENAME TO \(quotedTable)",
+            "ALTER TABLE \(temporary) RENAME TO \(d.quoteIdentifier(table))",
             "PRAGMA legacy_alter_table = OFF",
         ]
         for index in liveIndexes where !index.name.hasPrefix("sqlite_autoindex_") {
-            statements.append(try d.createIndex(index, table: table, schema: nil))
+            statements.append(try d.createIndex(index, table: table, schema: attached))
         }
-        statements += triggers.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        if checkForeignKeys { statements.append("PRAGMA foreign_key_check(\(quotedTable))") }
+        statements += triggers.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.map { trigger in
+            // An unqualified CREATE TRIGGER lands in main; name the attached database so it stays with its table.
+            guard let attached else { return trigger }
+            return trigger.replacing(/^(?i)(CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TRIGGER\s+(?:IF\s+NOT\s+EXISTS\s+)?)/, maxReplacements: 1) { match in
+                String(match.output.1) + d.quoteIdentifier(attached) + "."
+            }
+        }
+        if checkForeignKeys {
+            let prefix = attached.map { d.quoteIdentifier($0) + "." } ?? ""
+            statements.append("PRAGMA \(prefix)foreign_key_check(\(d.quoteIdentifier(table)))")
+        }
         return statements
     }
 
@@ -244,10 +257,11 @@ public struct SQLiteTableRebuild: Sendable {
 
 extension DatabaseDriver {
     /// SQLite: the table's CREATE TABLE as stored in sqlite_master (nil on other engines).
-    public func storedTableSQL(_ table: String) async throws -> String? {
+    public func storedTableSQL(_ table: String, schema: String? = nil) async throws -> String? {
         guard config.kind == .sqlite else { return nil }
+        let master = schema.map { $0.isEmpty || $0 == "main" ? "sqlite_master" : dialect.quoteIdentifier($0) + ".sqlite_master" } ?? "sqlite_master"
         let result = try await executeStatement(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = \(dialect.quoteLiteral(table))")
+            "SELECT sql FROM \(master) WHERE type = 'table' AND name = \(dialect.quoteLiteral(table))")
         guard let value = result.rows.first?.first, !value.isNull else { return nil }
         return value.displayString
     }

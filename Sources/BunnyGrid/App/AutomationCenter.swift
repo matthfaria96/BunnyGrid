@@ -204,3 +204,21 @@ enum HeadlessEntry {
         dispatchMain()
     }
 }
+
+
+/// The Automation workspace tab. Its state (jobs, runs) lives in `AutomationCenter`; the tab only needs an identity.
+@MainActor @Observable
+final class AutomationTabModel {
+    nonisolated let id = UUID()
+}
+
+extension AppModel {
+    /// Shows the Automation tab, opening it the first time (⇧⌘J, the toolbar button, Tools › Automation).
+    func openAutomation() {
+        if let existing = tabs.first(where: { if case .automation = $0 { true } else { false } }) {
+            selectedTabID = existing.id
+        } else {
+            appendTab(.automation(AutomationTabModel()))
+        }
+    }
+}

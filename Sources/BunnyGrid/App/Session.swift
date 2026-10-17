@@ -39,7 +39,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
         case .backups: "Backup"
         case .indexes: "Index"
         case .triggers: "Trigger"
-        case .gridFS: "Bucket"
+        case .gridFS: "GridFS"
         }
     }
 
@@ -58,6 +58,7 @@ enum ObjectCategory: String, CaseIterable, Hashable {
         switch kind {
         case .sqlite: [.tables, .views, .indexes, .triggers]
         case .redis: []
+        case .mongodb: [.tables, .views, .gridFS, .indexes]
         case .postgresql: [.tables, .views, .materializedViews, .functions]
         default: [.tables, .views, .functions]
         }
@@ -414,9 +415,12 @@ enum WorkspaceTab: Identifiable {
     case model(ModelTabModel)
     case redis(RedisTabModel)
     case document(any DocumentTab)
+    /// Navicat's Automation, as a workspace tab (one at most).
+    case automation(AutomationTabModel)
 
     var id: UUID {
         switch self {
+        case .automation(let model): model.id
         case .redis(let model): model.id
         case .table(let model): model.id
         case .query(let model): model.id
@@ -435,6 +439,7 @@ enum WorkspaceTab: Identifiable {
         case .model(let model): "Model \(model.location)"
         case .redis(let model): model.title
         case .document(let tab): tab.title
+        case .automation: "Automation"
         }
     }
 
@@ -447,6 +452,7 @@ enum WorkspaceTab: Identifiable {
         case .model: "Model"
         case .redis(let model): model.kindName
         case .document(let tab): tab.kindName
+        case .automation: "Automation"
         }
     }
 
@@ -459,6 +465,7 @@ enum WorkspaceTab: Identifiable {
         case .model: "model"
         case .redis(let model): model.iconName
         case .document(let tab): tab.systemImage
+        case .automation: "automation"
         }
     }
 
@@ -470,6 +477,7 @@ enum WorkspaceTab: Identifiable {
         case .model(let model): model.connectionID
         case .redis(let model): model.connectionID
         case .document(let tab): tab.connectionID
+        case .automation: nil
         }
     }
 
@@ -482,6 +490,7 @@ enum WorkspaceTab: Identifiable {
         case .model: false
         case .redis(let model): model.hasUnsavedChanges
         case .document(let tab): tab.hasUnsavedChanges
+        case .automation: false
         }
     }
 
@@ -496,6 +505,7 @@ enum WorkspaceTab: Identifiable {
         case .design, .model: break
         case .redis(let model): model.close()
         case .document(let tab): tab.cancel()
+        case .automation: break
         }
     }
 }

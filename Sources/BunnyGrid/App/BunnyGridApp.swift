@@ -53,13 +53,6 @@ struct BunnyGridApp: App {
         // tab switch re-evaluate the whole scene (window included).
         .commands { MainCommands(model: model) }
 
-        Window("Automation", id: "automation") {
-            AutomationView()
-                .environment(model)
-                .frame(minWidth: 900, minHeight: 560)
-        }
-        .defaultSize(width: 1100, height: 700)
-
         Settings {
             SettingsView()
                 .environment(model)
@@ -76,6 +69,7 @@ struct MainCommands: Commands {
             Button("New Connection…") { model.newConnection() }
                 .keyboardShortcut("n")
             Button("New Query") { model.openQuery() }
+            Button("New BI Workspace") { model.newBIWorkspace(in: model.currentContext) }
                 .keyboardShortcut("t")
                 .disabled(model.currentContext == nil)
             Divider()

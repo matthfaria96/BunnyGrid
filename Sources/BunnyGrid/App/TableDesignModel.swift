@@ -98,7 +98,8 @@ final class TableDesignModel: Identifiable {
         switch kind {
         case .postgresql, .sqlserver: schema
         case .mysql, .mariadb, .mongodb: databaseName
-        case .sqlite: nil
+        // An attached SQLite database is addressed as `alias.table`; main stays unqualified.
+        case .sqlite: databaseName == "main" ? nil : databaseName
         case .redis: nil
         }
     }
@@ -120,7 +121,7 @@ final class TableDesignModel: Identifiable {
         indexDesigns = indexes.map(IndexDesign.init)
         foreignKeys = (try? await driver.listForeignKeys(table: originalName, schema: driverSchema)) ?? []
         foreignKeyDesigns = foreignKeys.map(ForeignKeyDesign.init)
-        originalSQL = kind == .sqlite ? try? await driver.storedTableSQL(originalName) : nil
+        originalSQL = kind == .sqlite ? try? await driver.storedTableSQL(originalName, schema: driverSchema) : nil
         originalSQLiteOptions = originalSQL.map(SQLiteTableOptions.init(sql:)) ?? SQLiteTableOptions()
         sqliteOptions = originalSQLiteOptions
         #if DEBUG
@@ -242,12 +243,13 @@ final class TableDesignModel: Identifiable {
                 || SQLiteTableRebuild.isNeeded(originalColumns: originalColumns, columns: columns, originalIndexes: indexes,
                                                originalForeignKeys: foreignKeys, foreignKeys: foreignKeyDesigns) {
                 // SQLite: rebuild under the current name (indexes, kept triggers and keys included), then rename natively.
-                let rebuild = SQLiteTableRebuild(
+                var rebuild = SQLiteTableRebuild(
                     table: currentName, originalSQL: originalSQL, originalColumns: originalColumns, columns: columns,
                     originalIndexes: indexes, indexes: indexDesigns, foreignKeys: foreignKeyDesigns.map(\.key),
                     triggers: triggers.filter { !droppedTriggers.contains($0.name) }.map(\.definition),
                     checkForeignKeys: SQLDialect.foreignKeysChanged(original: foreignKeys, design: foreignKeyDesigns),
                     options: sqliteOptions)
+                rebuild.schema = driverSchema
                 statements = try rebuild.statements()
                 if let rename { statements.append(rename) }
             } else {

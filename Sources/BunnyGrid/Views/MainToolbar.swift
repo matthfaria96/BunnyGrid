@@ -30,6 +30,9 @@ struct MainToolbar: View {
                 .fixedSize()
                 .help("New Connection (⌘N). Hold for database types.")
 
+                if engine == .redis {
+                    redisButtons
+                } else {
                 ChromeButton(title: "New Query", isEnabled: app.currentContext != nil, help: "New Query (⌘T)") {
                     app.openQuery()
                 } glyph: {
@@ -38,16 +41,18 @@ struct MainToolbar: View {
 
                 // Engine-specific object buttons, as Navicat shows them (SQLite: Index and Trigger).
                 ForEach(ObjectCategory.toolbarCategories(for: app.currentContext?.kind), id: \.self) { category in
-                    objectButton(category, category.noun, category.iconName)
+                    objectButton(category, isDocumentStore && category == .tables ? "Collection" : category.noun, category.iconName)
                 }
                 let server = app.currentSession
+                if !isDocumentStore {
                 ChromeButton(title: "User", isEnabled: server?.state == .connected && server?.config.kind != .sqlite,
                              help: "Users and roles of the server") {
                     app.usersSession = server
                 } glyph: {
                     AppIcon(name: "user", size: 32, isEnabled: server?.state == .connected && server?.config.kind != .sqlite)
                 }
-                if let context = app.currentContext, context.kind != .sqlite {
+                }
+                if let context = app.currentContext, context.kind != .sqlite, !isDocumentStore {
                     Menu {
                         ForEach(context.driver.dialect.otherObjectQueries, id: \.title) { item in
                             Button(item.title) {
@@ -71,21 +76,22 @@ struct MainToolbar: View {
                     .help("Sequences, types, triggers, indexes and other objects")
                 }
                 objectButton(.queries, "Query", "query")
-                objectButton(.backups, "Backup", "backup")
+                if !isDocumentStore { objectButton(.backups, "Backup", "backup") }
+                }
                 ChromeButton(title: "Automation", help: "Batch jobs that run queries, exports and backups on a schedule") {
-                    openWindow(id: "automation")
+                    app.openAutomation()
                 } glyph: {
                     AppIcon(name: "automation", size: 32)
                 }
-                let modelContext = app.currentContext?.isOpen == true ? app.currentContext : nil
+                let modelContext = app.currentContext?.isOpen == true && !isDocumentStore ? app.currentContext : nil
+                if engine != .redis && !isDocumentStore {
                 ChromeButton(title: "Model", isEnabled: modelContext != nil, help: "Reverse the database to an ER model") {
                     if let modelContext { app.openModel(in: modelContext, schema: app.currentSchema) }
                 } glyph: {
                     AppIcon(name: "model", size: 32, isEnabled: modelContext != nil)
                 }
-                ChromeButton(title: "BI", comingSoon: "Charts and dashboards built from your queries.") {} glyph: {
-                    AppIcon(name: "bi", size: 32)
                 }
+                BIToolbarMenu()
 
                 Spacer(minLength: 16)
 
@@ -102,8 +108,47 @@ struct MainToolbar: View {
         .background(ChromeBackground())
     }
 
+    /// The engine of the selected connection: the toolbar shows only what applies to it, as Navicat does.
+    private var engine: DatabaseKind? { app.currentSession?.config.kind ?? app.currentContext?.kind }
+    private var isDocumentStore: Bool { engine?.isDocumentStore == true }
+
+    /// Navicat's Redis toolbar: Key, Console and Server Monitor.
+    @ViewBuilder
+    private var redisButtons: some View {
+        let session = app.currentSession
+        let connected = session?.state == .connected
+        ChromeButton(title: "Key", isEnabled: connected && session?.config.readOnly != true, help: "New Key") {
+            if let session { app.redisNewKey = RedisNewKeyTarget(connectionID: session.id, database: app.redisSelection?.database ?? 0) }
+        } glyph: {
+            SymbolGlyph(systemImage: "key.horizontal.fill", tint: .orange, isEnabled: connected)
+        }
+        ChromeButton(title: "Console", isEnabled: connected, help: "Redis Console") {
+            if let session { app.openRedisConsole(connectionID: session.id) }
+        } glyph: {
+            SymbolGlyph(systemImage: "apple.terminal.fill", tint: .gray, isEnabled: connected)
+        }
+        ChromeButton(title: "Server Monitor", isEnabled: connected, help: "Server info, clients and memory") {
+            if let session { app.openRedisServerMonitor(connectionID: session.id) }
+        } glyph: {
+            SymbolGlyph(systemImage: "gauge.with.dots.needle.67percent", tint: .green, isEnabled: connected)
+        }
+    }
+
+    /// The object type the toolbar highlights: the Objects tab's category, or the kind of the open tab
+    /// (a table or design → Table, a view → View, a query → Query); none for other tabs (BI, Automation, …).
+    private var highlightedCategory: ObjectCategory? {
+        switch app.selectedTab {
+        case nil: app.objectCategory
+        case .table(let model): model.object.kind == .view ? .views : .tables
+        case .design: .tables
+        case .query: .queries
+        case .document(let tab) where tab is CollectionTabModel: .tables
+        default: nil
+        }
+    }
+
     private func objectButton(_ category: ObjectCategory, _ title: String, _ icon: String) -> some View {
-        ChromeButton(title: title, isSelected: app.objectCategory == category, help: "Show \(category.rawValue)") {
+        ChromeButton(title: title, isSelected: highlightedCategory == category, help: "Show \(category.rawValue)") {
             app.showCategory(category)
         } glyph: {
             AppIcon(name: icon, size: 32)
@@ -263,5 +308,47 @@ private struct WindowTitleRow: View {
         .padding(.leading, 82)
         .padding(.trailing, 16)
         .frame(height: 28)
+    }
+}
+
+/// Main toolbar "BI": a new workspace on the current database, or a saved one.
+private struct BIToolbarMenu: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        Menu {
+            Button("New BI Workspace") { app.newBIWorkspace(in: app.currentContext?.isOpen == true ? app.currentContext : nil) }
+            let saved = app.biWorkspaces
+            if !saved.isEmpty {
+                Section("Open Workspace") {
+                    ForEach(saved) { workspace in Button(workspace.name) { app.openBIWorkspace(workspace) } }
+                }
+            }
+        } label: {
+            ChromeLabel(title: "BI") {
+                AppIcon(name: "bi", size: 32)
+            }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Charts and dashboards built from your tables and queries")
+    }
+}
+
+/// An SF Symbol drawn at the toolbar's 32 pt icon size, for buttons without an illustrated icon.
+private struct SymbolGlyph: View {
+    let systemImage: String
+    var tint: Color = .accentColor
+    var isEnabled = true
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .symbolRenderingMode(.hierarchical)
+            .font(.system(size: 22, weight: .regular))
+            .foregroundStyle(tint)
+            .frame(width: 32, height: 32)
+            .opacity(isEnabled ? 1 : 0.45)
     }
 }

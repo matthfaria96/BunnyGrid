@@ -77,7 +77,8 @@ final class CollectionTabModel: DocumentTab {
 
     // MARK: DocumentTab
 
-    var title: String { "\(isGridFS ? object.name : collection) @\(databaseName) (MongoDB)" }
+    /// "customers@shop (My Mongo)", like every other tab.
+    var title: String { "\(isGridFS ? object.name : collection)@\(databaseName) (\(context?.session?.config.displayName ?? "MongoDB"))" }
     var kindName: String { isView ? "View" : "Collection" }
     nonisolated var systemImage: String { "table" }
     var hasUnsavedChanges: Bool { hasChanges }

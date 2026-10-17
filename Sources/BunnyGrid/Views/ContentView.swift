@@ -12,19 +12,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             MainToolbar()
             Divider()
-            HSplitView {
-                if app.showNavigator {
-                    NavigatorView()
-                        .frame(minWidth: 200, idealWidth: 240, maxWidth: 480)
-                }
-                WorkspaceView()
-                    .frame(minWidth: 360, maxWidth: .infinity)
-                    .layoutPriority(1)
-                if app.showAssistant {
-                    RightPane()
-                        .frame(minWidth: app.assistant.isExpanded ? 560 : 345, idealWidth: app.assistant.isExpanded ? 560 : 345, maxWidth: app.assistant.isExpanded ? 900 : 600)
-                }
-            }
+            MainSplitView()
             Divider()
             StatusBar()
         }
@@ -73,6 +61,7 @@ struct ContentView: View {
         #if DEBUG
         .task {
             if CommandLine.arguments.contains("--settings") { openSettings() }
+            DebugMenus.popConnectionMenuIfRequested()
             // `--window-size 1037x695` matches the window to a reference capture.
             if let index = CommandLine.arguments.firstIndex(of: "--window-size"), CommandLine.arguments.indices.contains(index + 1) {
                 let parts = CommandLine.arguments[index + 1].split(separator: "x").compactMap { Double($0) }
@@ -143,7 +132,8 @@ struct StatusBar: View {
                 ? app.listedItemCount
                 : context.objects(in: schema, category: app.objectCategory)?.count ?? 0
             // Navicat: "2 tables".
-            return place.isEmpty ? "" : plural(count, app.objectCategory.noun).lowercased()
+            let noun = context.kind.isDocumentStore && app.objectCategory == .tables ? "Collection" : app.objectCategory.noun
+            return place.isEmpty ? "" : plural(count, noun).lowercased()
         default:
             return app.connections.isEmpty ? "" : "\(plural(app.connections.count, "Connection")) in My Connections"
         }
@@ -189,7 +179,7 @@ struct StatusBar: View {
         case .redis(let model): return [model.statusText].filter { !$0.isEmpty }
         case .document(let tab):
             return [tab.recordText]
-        case nil:
+        case .automation, nil:
             return []
         }
     }
@@ -209,7 +199,7 @@ struct StatusBar: View {
         case .model: ""
         case .redis: ""
         case .document(let tab): tab.lastStatement
-        case nil: ""
+        case .automation, nil: ""
         }
     }
 
@@ -221,7 +211,7 @@ struct StatusBar: View {
         case .model(let model): model.error
         case .redis(let model): model.error
         case .document(let tab): tab.warning
-        case nil: nil
+        case .automation, nil: nil
         }
     }
 
@@ -233,6 +223,7 @@ struct StatusBar: View {
         case .model(let model): model.summary
         case .redis(let model): model.statusText
         case .document(let tab): tab.recordText
+        case .automation: "\(app.automation.jobs.count) batch jobs"
         case nil: app.currentContext.map { "\($0.objects(in: app.currentSchema, category: app.objectCategory)?.count ?? 0) \(app.objectCategory.rawValue.lowercased())" } ?? ""
         }
     }

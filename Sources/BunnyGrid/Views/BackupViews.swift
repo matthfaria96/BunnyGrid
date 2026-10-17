@@ -16,7 +16,7 @@ struct BackupSheets: ViewModifier {
             // `--automation` opens the Automation window for screenshots.
             // `--backup-wizard` / `--restore-backup` open those sheets on the current database once it is open.
             .task {
-                if CommandLine.arguments.contains("--automation") { openWindow(id: "automation") }
+                if CommandLine.arguments.contains("--automation") { app.openAutomation() }
                 guard CommandLine.arguments.contains("--backup-wizard") || CommandLine.arguments.contains("--restore-backup") else { return }
                 for _ in 0..<200 where app.currentContext?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
                 guard let context = app.currentContext else { return }

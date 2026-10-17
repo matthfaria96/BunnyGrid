@@ -5,10 +5,9 @@ import SwiftUI
 /// Tools menu entries for Automation.
 struct AutomationMenuItems: View {
     let model: AppModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Automation") { openWindow(id: "automation") }
+        Button("Automation") { model.openAutomation() }
             .keyboardShortcut("j", modifiers: [.command, .shift])
         Button("New Backup…") {
             if let context = model.currentContext { model.automation.backupTarget = BackupTarget(context: context, schema: model.currentSchema) }
@@ -34,14 +33,14 @@ struct AutomationView: View {
 
     var body: some View {
         HSplitView {
-            jobList.frame(minWidth: 220, idealWidth: 260, maxWidth: 360)
+            jobList.frame(minWidth: 180, idealWidth: 220, maxWidth: 360)
             Group {
                 if draft != nil { editor } else {
                     ContentUnavailableView("No Batch Job", systemImage: "gearshape.2",
                                            description: Text("Create a batch job to run queries, SQL files, backups and exports, by hand or on a schedule — also while BunnyGrid is closed."))
                 }
             }
-            .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("Automation")
         .onAppear {
@@ -209,7 +208,7 @@ private struct StepsEditor: View {
                 .buttonStyle(.borderless)
                 .padding(6)
             }
-            .frame(minWidth: 240, idealWidth: 300)
+            .frame(minWidth: 180, idealWidth: 260)
             Group {
                 if let index = job.steps.firstIndex(where: { $0.id == selection }) {
                     ScrollView { StepForm(action: $job.steps[index].action).padding(16) }
@@ -222,7 +221,7 @@ private struct StepsEditor: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
-            .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
