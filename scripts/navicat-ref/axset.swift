@@ -24,6 +24,13 @@ if args[1] == "clickat", let x = Double(args[2]), let y = Double(args[3]) {
     CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)!.post(tap: .cghidEventTap)
     print("ok"); exit(0)
 }
+// "hover" mode: swift axset.swift hover X Y — moves the pointer there (reveals hover-only buttons).
+if args[1] == "hover", let x = Double(args[2]), let y = Double(args[3]) {
+    CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: x - 2, y: y - 2), mouseButton: .left)!.post(tap: .cghidEventTap)
+    usleep(60_000)
+    CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: x, y: y), mouseButton: .left)!.post(tap: .cghidEventTap)
+    print("ok"); exit(0)
+}
 // "type" mode: swift axset.swift type "text" — types into the focused control; "key" mode: key code + modifiers.
 if args[1] == "type" {
     for scalar in args[2].unicodeScalars {
@@ -177,7 +184,8 @@ case "click", "dblclick", "rightclick":
     var pos = CGPoint.zero, size = CGSize.zero
     if let p = attr(node, kAXPositionAttribute) { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
     if let z = attr(node, kAXSizeAttribute) { AXValueGetValue(z as! AXValue, .cgSize, &size) }
-    let point = CGPoint(x: pos.x + min(size.width / 2, 60), y: pos.y + size.height / 2)
+    var point = CGPoint(x: pos.x + min(size.width / 2, 60), y: pos.y + size.height / 2)
+    if args.count > 4, args[4] == "right" { point.x = pos.x + size.width - 4 }
     let right = args[3] == "rightclick"
     let clicks = args[3] == "dblclick" ? 2 : 1
     for n in 1...clicks {

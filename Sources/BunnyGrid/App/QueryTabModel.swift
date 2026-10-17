@@ -92,8 +92,10 @@ final class QueryTabModel: Identifiable {
     @ObservationIgnored weak var textView: NSTextView?
     /// The Ask AI answer being shown for this editor.
     var aiRun: AskAIRun?
-    /// The Ask AI custom actions sheet.
+    /// The Ask AI card (compose state).
     var showingAskAICustom = false
+    /// The last custom question, so Back and reopening restore it.
+    var lastCustomAction: AIAction?
     @ObservationIgnored private var driver: any DatabaseDriver
     private(set) var location: String
     private(set) var connectionID: UUID?

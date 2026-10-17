@@ -27,6 +27,9 @@ struct AIMessage: Codable, Identifiable, Hashable {
     var typedText: String?
     /// Answers to the same question from the other assistants ("Compare with Other Assistants").
     var alternates: [AIAlternate]?
+    /// Another assistant's answer stacked after the original by Compare; shown, never sent back to the API.
+    var isComparison: Bool?
+    var createdAt: Date?
 }
 
 /// Another assistant's answer to the same question; display only, never sent back to the API.
@@ -311,6 +314,21 @@ final class AssistantModel {
         }
     }
 
+    /// Test Connection in Settings › AI: checks an unsaved assistant with the key typed in the form.
+    func test(_ assistant: AIAssistantConfig, key: String) async -> Result<Void, any Error> {
+        let key = key.isEmpty ? (ProcessInfo.processInfo.environment[assistant.provider.environmentKey] ?? "") : key
+        let url = Self.baseURL(for: assistant)
+        do {
+            switch assistant.provider {
+            case .claude: _ = try await AnthropicClient(apiKey: key, baseURL: url).listModels()
+            case .chatGPT: _ = try await OpenAIClient(apiKey: key, baseURL: url).listModels()
+            }
+            return .success(())
+        } catch {
+            return .failure(error)
+        }
+    }
+
     func verifyIfNeeded(_ assistant: AIAssistantConfig) {
         guard hasAPIKey(for: assistant), (verification[assistant.id] ?? .unknown) == .unknown else { return }
         verify(assistant)
@@ -523,7 +541,7 @@ final class AssistantModel {
         }
         apiText += text
         let display = attachments.isEmpty ? text : text + "\n📎 " + attachments.map(\.name).joined(separator: ", ")
-        let message = AIMessage(role: .user, text: display, apiContent: [.object(["type": .string("text"), "text": .string(apiText)])], typedText: text)
+        let message = AIMessage(role: .user, text: display, apiContent: [.object(["type": .string("text"), "text": .string(apiText)])], typedText: text, createdAt: Date())
 
         if currentChatID == nil {
             let chat = AIChat(title: String(text.prefix(40)))
@@ -563,7 +581,11 @@ final class AssistantModel {
                         // A refused turn with no content can't be echoed back; keep it out of the API history.
                         let content = turn.echoContent.isEmpty ? [JSONValue.object(["type": .string("text"), "text": .string(turn.text.isEmpty ? "(no answer)" : turn.text)])] : turn.echoContent
                         append(AIMessage(role: .assistant, text: turn.text, apiContent: content, model: turn.model, note: note,
-                                         provider: provider, assistantName: assistant.name), to: chatID)
+                                         provider: provider, assistantName: assistant.name, createdAt: Date()), to: chatID)
+                        if let chat = chats.first(where: { $0.id == chatID }), chat.messages.filter({ $0.role == .assistant }).count == 1,
+                           let question = chat.messages.first(where: { $0.role == .user }) {
+                            generateTitle(chatID: chatID, question: question.typedText ?? question.text, using: assistant)
+                        }
                     }
                 }
             } catch is CancellationError {
@@ -587,7 +609,43 @@ final class AssistantModel {
     }
 
     private func apiHistory(_ messages: [AIMessage]) -> [JSONValue] {
-        messages.map { .object(["role": .string($0.role.rawValue), "content": .array($0.apiContent)]) }
+        messages.filter { $0.isComparison != true }.map { .object(["role": .string($0.role.rawValue), "content": .array($0.apiContent)]) }
+    }
+
+    /// Assistants (with a key) that haven't answered the chat's last question yet, for "You can compare this answer with…".
+    var compareCandidates: [AIAssistantConfig] {
+        guard compareEnabled, let messages = currentChat?.messages, let lastUser = messages.lastIndex(where: { $0.role == .user }) else { return [] }
+        let answered = Set(messages[lastUser...].filter { $0.role == .assistant }.compactMap(\.assistantName))
+        guard !answered.isEmpty else { return [] }
+        return assistants.filter { hasAPIKey(for: $0) && !answered.contains($0.name) }
+    }
+
+    /// Chat text size (More Chat Actions › Zoom).
+    var chatZoom: Double = UserDefaults.standard.object(forKey: "aiChatZoom") as? Double ?? 1 {
+        didSet { UserDefaults.standard.set(chatZoom, forKey: "aiChatZoom") }
+    }
+
+    func clearChat(_ id: UUID) {
+        guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
+        if id == currentChatID { cancel() }
+        chats[index].messages = []
+        save()
+    }
+
+    /// Asks the assistant for a short title once the first answer arrives (as Navicat does).
+    private func generateTitle(chatID: UUID, question: String, using assistant: AIAssistantConfig) {
+        let messages: [JSONValue] = [.object(["role": .string("user"), "content": .string(question)])]
+        let stream = stream(assistant, messages: messages,
+                            system: "Write a title of at most six words for a conversation that starts with the user's message. Reply with the title only, without quotes or punctuation at the end.")
+        Task {
+            var title = ""
+            for try await event in stream { if case .textDelta(let piece) = event { title += piece } }
+            title = title.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'#*.")))
+            guard !title.isEmpty, title.count <= 80, !title.contains("\n"),
+                  let index = chats.firstIndex(where: { $0.id == chatID }) else { return }
+            chats[index].title = title
+            save()
+        }
     }
 
     /// Asks again for the last answer, with the current platform and model.
@@ -625,8 +683,8 @@ final class AssistantModel {
     /// Gets another platform's answer to the question before `messageID`, shown alongside the original.
     func compare(_ messageID: UUID, with other: AIAssistantConfig) {
         guard comparingMessageID == nil, let chatID = currentChatID, let chat = currentChat,
-              let index = chat.messages.firstIndex(where: { $0.id == messageID }), index > 0 else { return }
-        let history = apiHistory(Array(chat.messages[..<index]))
+              let lastUser = chat.messages.lastIndex(where: { $0.role == .user }) else { return }
+        let history = apiHistory(Array(chat.messages[...lastUser]))
         let stream = stream(other, messages: history)
         comparingAssistantID = other.id
         comparingMessageID = messageID
@@ -643,11 +701,9 @@ final class AssistantModel {
                     case .textDelta(let piece): compareText += piece
                     case .fallback: break
                     case .finished(let turn):
-                        let alternate = AIAlternate(provider: other.provider, assistantName: other.name, model: turn.model, text: turn.text,
-                                                    note: Self.note(for: turn, provider: other.provider))
-                        updateMessage(messageID, in: chatID) { message in
-                            message.alternates = (message.alternates ?? []).filter { $0.assistantName != other.name } + [alternate]
-                        }
+                        append(AIMessage(role: .assistant, text: turn.text, apiContent: [.object(["type": .string("text"), "text": .string(turn.text)])],
+                                         model: turn.model, note: Self.note(for: turn, provider: other.provider), provider: other.provider,
+                                         assistantName: other.name, isComparison: true, createdAt: Date()), to: chatID)
                     }
                 }
             } catch is CancellationError {

@@ -629,6 +629,7 @@ private struct AIPane: View {
             }
         }
         .onAppear { selection = selection ?? app.assistant.active?.id ?? ai.assistants.first?.id }
+        .overlay(alignment: .bottom) { AITestBannerView().offset(y: 34) }
     }
 
     private func add(_ provider: AIProvider) {
@@ -655,6 +656,7 @@ private struct AssistantForm: View {
     @Environment(AppModel.self) private var app
     @Binding var assistant: AIAssistantConfig
     @Binding var key: String
+    @State private var testing = false
 
     var body: some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 9) {
@@ -666,6 +668,11 @@ private struct AssistantForm: View {
                 }
             }
             row("API Host") { TextField("", text: $assistant.apiHost, prompt: Text(assistant.provider.defaultHost)) }
+            row("API Endpoint") {
+                Text(assistant.baseURL.appending(path: assistant.provider == .claude ? "v1/messages" : "v1/responses").absoluteString)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
             row("API Key") {
                 VStack(alignment: .leading, spacing: 3) {
                     SecureField("", text: $key, prompt: Text(assistant.provider.keyPlaceholder))
@@ -680,7 +687,7 @@ private struct AssistantForm: View {
                             Button(option.name) { assistant.model = option.id }
                         }
                     } label: {
-                        Text("Browse")
+                        Text("…")
                     }
                     .fixedSize()
                     .help("Choose a chat model")
@@ -698,7 +705,7 @@ private struct AssistantForm: View {
                 .labelsHidden()
                 .frame(width: 220)
             }
-            row("Instruction") {
+            row("Instructions") {
                 TextEditor(text: $assistant.instruction)
                     .font(.system(size: 12))
                     .frame(height: 70)
@@ -706,6 +713,22 @@ private struct AssistantForm: View {
                     .padding(4)
                     .background(RoundedRectangle(cornerRadius: 5).fill(Color(nsColor: .textBackgroundColor)))
                     .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color(nsColor: .separatorColor)))
+            }
+            GridRow {
+                Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                Button(testing ? "Testing…" : "Test Connection") {
+                    testing = true
+                    let config = assistant, typed = key
+                    Task {
+                        let result = await app.assistant.test(config, key: typed)
+                        testing = false
+                        switch result {
+                        case .success: AITestBanner.shared.show(nil)
+                        case .failure(let error): AITestBanner.shared.show(error.localizedDescription)
+                        }
+                    }
+                }
+                .disabled(testing)
             }
             GridRow {
                 Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
@@ -721,6 +744,49 @@ private struct AssistantForm: View {
         GridRow {
             Text(label + ":").gridColumnAlignment(.trailing)
             content()
+        }
+    }
+}
+
+/// The green "Connection Successful" (or red error) strip Navicat shows after Test Connection.
+@MainActor
+@Observable
+final class AITestBanner {
+    static let shared = AITestBanner()
+    /// nil while hidden; "" for success, otherwise the error.
+    private(set) var message: String?
+    @ObservationIgnored private var hideTask: Task<Void, Never>?
+
+    func show(_ error: String?) {
+        message = error ?? ""
+        hideTask?.cancel()
+        hideTask = Task {
+            try? await Task.sleep(for: .seconds(error == nil ? 4 : 8))
+            if !Task.isCancelled { message = nil }
+        }
+    }
+
+    func hide() { message = nil }
+}
+
+private struct AITestBannerView: View {
+    private var banner = AITestBanner.shared
+
+    var body: some View {
+        if let message = banner.message {
+            let success = message.isEmpty
+            HStack(spacing: 8) {
+                Image(systemName: success ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                Text(success ? "Connection Successful" : message).lineLimit(2)
+                Spacer()
+                Button { banner.hide() } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+            }
+            .font(.system(size: 12.5))
+            .foregroundStyle(success ? Color.green : Color.red)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background((success ? Color.green : Color.red).opacity(0.18))
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 }

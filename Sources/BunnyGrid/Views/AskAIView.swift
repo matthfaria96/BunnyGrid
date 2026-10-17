@@ -14,6 +14,11 @@ final class AskAIRun: Identifiable {
     /// What the user asked, for "Continue in New Chat".
     let question: String
     let prompt: String
+    /// The saved/custom action behind this run (nil for the built-in actions), for Back and Save AI Action.
+    var customAction: AIAction?
+    var builtin: AIBuiltinAction?
+    /// What was attached ("All Text", "Server Version"…), shown as chips over the answer.
+    var attached: [String] = []
     let assistantConfig: AIAssistantConfig
     var provider: AIProvider { assistantConfig.provider }
     private(set) var model: String?
@@ -93,7 +98,10 @@ enum AskAI {
             var title = action.title
             if action == .convert { title = "Convert SQL to \([targetEngine, targetVersion].filter { !$0.isEmpty }.joined(separator: " "))" }
             let question = action == .explainError ? "Explain this error: \(query.failureMessage ?? "")" : "\(title):\n\(original)"
-            present(AskAIRun(title: title, format: action.format, originalSQL: original, question: question, prompt: withLanguage(prompt), assistant: app.assistant), on: query)
+            let run = AskAIRun(title: title, format: action.format, originalSQL: original, question: question, prompt: withLanguage(prompt), assistant: app.assistant)
+            run.builtin = action
+            run.attached = ["Selected Text", "Server Version", "Current Schema"]
+            present(run, on: query)
         }
     }
 
@@ -104,6 +112,9 @@ enum AskAI {
             let original = action.context.contains(.selectedText) && query.hasSelection ? query.selectedText : query.text
             let run = AskAIRun(title: action.title, format: action.format, originalSQL: original, question: action.prompt,
                                prompt: withLanguage(AIPrompts.custom(action, context: context)), assistant: app.assistant)
+            run.customAction = action
+            run.attached = [(AIContextOptions.selectedText, "Selected Text"), (.allText, "All Text"), (.currentSchema, "Current Schema"), (.serverVersion, "Server Version")]
+                .filter { action.context.contains($0.0) }.map(\.1)
             present(run, on: query)
         }
     }
@@ -115,6 +126,7 @@ enum AskAI {
     }
 
     private static func present(_ run: AskAIRun, on query: QueryTabModel) {
+        query.showingAskAICustom = false
         query.aiRun = run
         run.start()
     }
@@ -128,7 +140,8 @@ enum AskAI {
     }
 }
 
-/// The editor toolbar's Ask AI button: click for custom actions, hold for the default and pinned ones.
+/// The editor toolbar's Ask AI button: click to ask, the arrow for Navicat's menu
+/// (Ask AI, Change AI Assistant, Explain / Beautify / Optimize / Convert, pinned actions).
 struct AskAIButton: View {
     @Environment(AppModel.self) private var app
     @Bindable var query: QueryTabModel
@@ -136,362 +149,449 @@ struct AskAIButton: View {
 
     var body: some View {
         Menu {
-            Section("Ask \(app.assistant.provider.displayName)") {
-                ForEach([AIBuiltinAction.explain, .optimize, .beautify]) { action in
-                    Button(action.title) { AskAI.run(action, on: query, app: app) }
-                }
-                Button("Convert SQL to Another Database Type…") { showingConvert = true }
-            }
-            if !app.assistant.pinnedActions.isEmpty {
-                Section("Pinned") {
-                    ForEach(app.assistant.pinnedActions) { action in
-                        Button(action.title) { AskAI.run(action, on: query, app: app) }
+            Button("Ask AI") { query.showingAskAICustom = true }
+            Menu("Change AI Assistant (\(app.assistant.active?.name ?? "None"))") {
+                ForEach(app.assistant.assistants) { assistant in
+                    Button {
+                        app.assistant.activate(assistant.id)
+                    } label: {
+                        if app.assistant.active?.id == assistant.id { Label(assistant.name, systemImage: "checkmark") } else { Text(assistant.name) }
                     }
                 }
             }
             Divider()
-            Button("Custom Actions…") { query.showingAskAICustom = true }
-        } label: {
-            Label {
-                Text("Ask AI")
-            } icon: {
-                if let icon = IconLibrary.image(app.assistant.provider.iconName, size: 14) { Image(nsImage: icon) }
+            ForEach([AIBuiltinAction.explain, .beautify, .optimize]) { action in
+                Button(action.title) { AskAI.run(action, on: query, app: app) }
             }
-            .labelStyle(.titleAndIcon)
+            Button("Convert SQL to Another Database Type") { showingConvert = true }
+            if !app.assistant.pinnedActions.isEmpty {
+                Divider()
+                ForEach(app.assistant.pinnedActions) { action in
+                    Button(action.title) { AskAI.run(action, on: query, app: app) }
+                }
+            }
+        } label: {
+            if let icon = IconLibrary.image(app.assistant.provider.iconName, size: 15) {
+                Image(nsImage: icon)
+            } else {
+                Image(systemName: "sparkles")
+            }
         } primaryAction: {
             query.showingAskAICustom = true
         }
         .menuStyle(.button)
+        .buttonStyle(.borderless)
         .fixedSize()
         .disabled(query.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .help("Ask AI: click for custom actions, hold for Explain, Optimize, Beautify and Convert")
-        .sheet(isPresented: $query.showingAskAICustom) {
-            AskAICustomSheet(query: query)
-        }
+        .help("Ask AI")
         .sheet(isPresented: $showingConvert) {
             ConvertSQLSheet(query: query)
         }
     }
 }
 
-/// The answer pane: diff-highlighted code with the editor insert options, or prose with Continue in New Chat.
-struct AskAIResultView: View {
-    @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
-    let run: AskAIRun
-    let query: QueryTabModel
-    @AppStorage("askAIShowDiff") private var showDiff = true
+/// The Ask AI card floating over the query tab: compose a question, then review the answer.
+struct AskAIOverlay: View {
+    @Bindable var query: QueryTabModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ScrollView {
+        ZStack {
+            if let run = query.aiRun {
+                Color.black.opacity(0.18).ignoresSafeArea().onTapGesture {}
+                AskAIResultCard(run: run, query: query)
+                    .transition(.scale(scale: 0.97).combined(with: .opacity))
+            } else if query.showingAskAICustom {
+                Color.black.opacity(0.18).ignoresSafeArea().onTapGesture {}
+                AskAIComposeCard(query: query)
+                    .transition(.scale(scale: 0.97).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: query.aiRun?.id)
+        .animation(.easeOut(duration: 0.18), value: query.showingAskAICustom)
+    }
+}
+
+/// The card's frame: rounded, bordered, with a shadow, like Navicat's floating Ask AI panel.
+private struct AskAICard<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(18)
+            .frame(minWidth: 560, idealWidth: 720, maxWidth: 760, minHeight: 300, idealHeight: 340, maxHeight: 520)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(nsColor: .windowBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color(nsColor: .separatorColor)))
+            .shadow(color: .black.opacity(0.35), radius: 24, y: 8)
+            .padding(30)
+    }
+}
+
+/// "Ask AI:" — the question, AI Response (Code / Natural Language), what to attach, saved actions and Ask AI.
+private struct AskAIComposeCard: View {
+    @Environment(AppModel.self) private var app
+    @Bindable var query: QueryTabModel
+    @AppStorage("askAIDraftFormat") private var formatRaw = AIResponseFormat.code.rawValue
+    @AppStorage("askAIDraftContext") private var contextRaw = AIContextOptions([.allText, .serverVersion]).rawValue
+    @State private var prompt = ""
+    @State private var showingSaved = false
+    @State private var editingID: UUID?
+
+    private var format: AIResponseFormat { AIResponseFormat(rawValue: formatRaw) ?? .code }
+    private var context: AIContextOptions { AIContextOptions(rawValue: contextRaw) }
+    private var action: AIAction {
+        AIAction(id: editingID ?? UUID(), prompt: prompt, format: format, context: context,
+                 isPinned: app.assistant.actions.first { $0.id == editingID }?.isPinned ?? false)
+    }
+
+    var body: some View {
+        AskAICard {
+            HStack(spacing: 14) {
+                if showingSaved {
+                    savedList.frame(width: 200)
+                    Divider()
+                }
                 VStack(alignment: .leading, spacing: 10) {
-                    content
-                    if let note = run.note {
-                        Label(note, systemImage: "info.circle").font(.system(size: 11)).foregroundStyle(.orange)
+                    HStack {
+                        Text("Ask AI:").font(.system(size: 13, weight: .medium))
+                        Spacer()
+                        AssistantMenu()
                     }
-                    if let error = run.error {
-                        Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled)
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $prompt)
+                            .font(.system(size: 13))
+                            .scrollContentBackground(.hidden)
+                            .padding(4)
+                        if prompt.isEmpty {
+                            Text("You can ask AI a question...")
+                                .font(.system(size: 13)).foregroundStyle(.tertiary)
+                                .padding(.horizontal, 9).padding(.vertical, 4)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+                    HStack(spacing: 8) {
+                        Text("AI Response:").font(.system(size: 12.5))
+                        Picker("", selection: $formatRaw) {
+                            ForEach(AIResponseFormat.allCases) { Text($0.title).tag($0.rawValue) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 150)
+                        Image(systemName: "info.circle.fill").foregroundStyle(Color.accentColor)
+                            .help("Code returns only SQL you can apply to the editor; Natural Language returns an explanation.")
+                    }
+                    Text("You will attach:").font(.system(size: 12.5))
+                    HStack(spacing: 8) {
+                        pill("Selected Text", .selectedText).disabled(!query.hasSelection)
+                        pill("All Text", .allText)
+                        pill("Current Schema", .currentSchema)
+                        pill("Server Version", .serverVersion)
+                    }
+                    Spacer(minLength: 4)
+                    HStack(spacing: 8) {
+                        Button { showingSaved.toggle() } label: { Image(systemName: "sidebar.left") }
+                            .help(showingSaved ? "Hide Saved AI Actions" : "Show Saved AI Actions")
+                        Menu("Save AI Action") {
+                            Button("Save AI Action") { editingID = app.assistant.saveAction(action).id }
+                            Button("Save and Pin to Menu") {
+                                var pinned = action
+                                pinned.isPinned = true
+                                editingID = app.assistant.saveAction(pinned).id
+                            }
+                        }
+                        .fixedSize()
+                        .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Spacer()
+                        Button("Close") { query.showingAskAICustom = false }
+                            .keyboardShortcut(.cancelAction)
+                        Button("Ask AI") { AskAI.run(action, on: query, app: app) }
+                            .keyboardShortcut(.return, modifiers: .command)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .contextMenu {
-                if run.format == .code { Toggle("Show Diff", isOn: $showDiff) }
-                Button("Copy") { copy(run.format == .code ? run.code : run.text) }
-            }
-            Divider()
-            footer
         }
-        .frame(minWidth: 680, idealWidth: 760, minHeight: 460, idealHeight: 560)
-        .onDisappear { run.stop() }
+        .onAppear {
+            if let last = query.lastCustomAction {
+                prompt = last.prompt
+                formatRaw = last.format.rawValue
+                contextRaw = last.context.rawValue
+                editingID = app.assistant.actions.contains { $0.id == last.id } ? last.id : nil
+            }
+        }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            AppIcon(name: run.provider.iconName, size: 24)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(run.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
-                Text([run.assistantConfig.name, run.model ?? app.assistant.modelName(for: run.assistantConfig)].joined(separator: " · "))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if run.format == .code {
-                Toggle("Show Diff", isOn: $showDiff).toggleStyle(.switch).controlSize(.mini).font(.system(size: 11))
-            }
-            if run.isRunning {
-                ProgressView().controlSize(.small)
-                Button("Stop") { run.stop() }
-            } else {
-                Button { run.start() } label: { Label("Regenerate", systemImage: "arrow.clockwise") }
-            }
+    /// Navicat's attach toggles: outlined pills, filled blue when on.
+    private func pill(_ title: String, _ option: AIContextOptions) -> some View {
+        let on = context.contains(option)
+        return Button {
+            var value = context
+            if on { value.remove(option) } else { value.insert(option) }
+            contextRaw = value.rawValue
+        } label: {
+            Text(title)
+                .font(.system(size: 12.5))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(on ? Color.accentColor.opacity(0.28) : Color.clear))
+                .overlay(Capsule().strokeBorder(on ? Color.accentColor : Color.secondary.opacity(0.6), lineWidth: 1))
+                .contentShape(Capsule())
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private var content: some View {
-        if run.text.isEmpty && run.isRunning {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("\(run.provider.displayName) is working on it…").foregroundStyle(.secondary)
+    private var savedList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Saved AI Actions").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+            if app.assistant.actions.isEmpty {
+                Text("Save a question to reuse it. Pinned actions appear in the Ask AI menu.")
+                    .font(.system(size: 11.5)).foregroundStyle(.tertiary)
             }
-            .font(.system(size: 12))
-        } else if run.format == .code {
-            let original = run.originalSQL.trimmingCharacters(in: .whitespacesAndNewlines)
-            if showDiff && !original.isEmpty && !run.code.isEmpty {
-                DiffView(lines: LineDiff.diff(old: original, new: run.code))
-            } else {
-                Text(SQLSyntax.highlight(run.code))
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(app.assistant.actions) { saved in
+                        HStack(spacing: 6) {
+                            Image(systemName: saved.format == .code ? "chevron.left.forwardslash.chevron.right" : "text.bubble")
+                                .font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 14)
+                            Text(saved.title).font(.system(size: 12)).lineLimit(2)
+                            Spacer(minLength: 0)
+                            Button { app.assistant.togglePin(saved.id) } label: {
+                                Image(systemName: saved.isPinned ? "pin.fill" : "pin").font(.system(size: 10))
+                                    .foregroundStyle(saved.isPinned ? Color.accentColor : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help(saved.isPinned ? "Unpin from Menu" : "Pin to Menu")
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 5)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(editingID == saved.id ? Color.accentColor.opacity(0.18) : .clear))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            editingID = saved.id
+                            prompt = saved.prompt
+                            formatRaw = saved.format.rawValue
+                            contextRaw = saved.context.rawValue
+                        }
+                        .contextMenu {
+                            Button(saved.isPinned ? "Unpin from Menu" : "Pin to Menu") { app.assistant.togglePin(saved.id) }
+                            Button("Delete", role: .destructive) { app.assistant.deleteAction(saved.id) }
+                        }
+                    }
+                }
             }
-        } else {
-            MarkdownView(text: run.text)
         }
+    }
+}
+
+/// Assistant name and model with a menu to switch, at the card's top right.
+private struct AssistantMenu: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        Menu {
+            ForEach(app.assistant.assistants) { assistant in
+                Button("\(assistant.name) (\(app.assistant.modelName(for: assistant)))") { app.assistant.activate(assistant.id) }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                AppIcon(name: app.assistant.provider.iconName, size: 14)
+                Text(app.assistant.active?.name ?? "").fontWeight(.semibold)
+                Text("(\(app.assistant.activeModelName))").foregroundStyle(.secondary)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .font(.system(size: 12.5))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+}
+
+/// The answer: for code, Perform Action and Original / AI Suggested Text side by side; for prose, the explanation.
+struct AskAIResultCard: View {
+    @Environment(AppModel.self) private var app
+    let run: AskAIRun
+    let query: QueryTabModel
+    @State private var mode: EditorInsertMode = .append
+    @AppStorage("askAISideBySide") private var sideBySide = true
+
+    private var modes: [EditorInsertMode] {
+        var list: [EditorInsertMode] = [.append, .replaceAll]
+        if query.hasSelection { list.insert(.replaceSelection, at: 0) }
+        if run.customAction != nil { list.append(.atCursor) }
+        return list
+    }
+
+    private var actionLabel: String {
+        switch mode {
+        case .append: "Append"
+        case .replaceAll, .replaceSelection: "Replace"
+        case .atCursor: "Insert"
+        }
+    }
+
+    var body: some View {
+        AskAICard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(run.customAction != nil ? "New AI Action" : run.title).font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    HStack(spacing: 5) {
+                        AppIcon(name: run.provider.iconName, size: 14)
+                        Text(run.assistantConfig.name).fontWeight(.semibold)
+                        Text("(\(run.model ?? app.assistant.modelName(for: run.assistantConfig)))").foregroundStyle(.secondary)
+                    }
+                    .font(.system(size: 12.5))
+                }
+                if run.customAction != nil {
+                    HStack(spacing: 8) {
+                        Text(run.question).font(.system(size: 12.5)).lineLimit(2)
+                        ForEach(run.attached, id: \.self) { chip in
+                            Text(chip).font(.system(size: 12))
+                                .padding(.horizontal, 9).padding(.vertical, 4)
+                                .background(RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.25)))
+                        }
+                    }
+                }
+                Divider()
+                if run.format == .code {
+                    HStack(spacing: 8) {
+                        Text("Perform Action:").font(.system(size: 12.5))
+                        Picker("", selection: $mode) {
+                            ForEach(modes) { Text($0.title).tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 210)
+                        if run.isRunning { ProgressView().controlSize(.small) }
+                    }
+                    codeComparison
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if run.text.isEmpty && run.isRunning {
+                                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("\(run.assistantConfig.name) is working on it…").foregroundStyle(.secondary) }
+                            }
+                            MarkdownView(text: run.text)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+                }
+                if let note = run.note { Label(note, systemImage: "info.circle").font(.system(size: 11)).foregroundStyle(.orange) }
+                if let error = run.error { Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled) }
+                footer
+            }
+        }
+        .onAppear { mode = defaultMode }
+        .onChange(of: query.hasSelection) { _, _ in if !modes.contains(mode) { mode = defaultMode } }
+    }
+
+    /// Built-in actions replace what they worked on (the selection, else everything); custom actions append.
+    private var defaultMode: EditorInsertMode {
+        guard run.builtin != nil else { return .append }
+        return query.hasSelection ? .replaceSelection : .replaceAll
+    }
+
+    private var codeComparison: some View {
+        let lines = LineDiff.diff(old: run.originalSQL, new: run.code)
+        let left = lines.filter { $0.kind != .added }
+        let right = lines.filter { $0.kind != .removed }
+        return HStack(spacing: 10) {
+            if sideBySide {
+                CodeColumn(title: "Original Text:", titleColor: .primary, lines: left, highlight: .removed)
+            }
+            CodeColumn(title: "AI Suggested Text:", titleColor: .green, lines: sideBySide ? right : lines, highlight: .added)
+        }
+        .frame(minHeight: 130)
     }
 
     private var footer: some View {
         HStack(spacing: 8) {
             if run.format == .code {
-                ForEach(EditorInsertMode.allCases.reversed()) { mode in
-                    Button(mode.shortTitle) {
-                        query.insert(run.code, mode: mode)
-                        dismiss()
+                Button { sideBySide.toggle() } label: { Image(systemName: sideBySide ? "rectangle.split.2x1" : "rectangle") }
+                    .help(sideBySide ? "Show only the AI Suggested Text" : "Show Original and AI Suggested Text")
+            }
+            if let action = run.customAction {
+                Menu("Save AI Action") {
+                    Button("Save AI Action") { query.lastCustomAction = app.assistant.saveAction(action) }
+                    Button("Save and Pin to Menu") {
+                        var pinned = action
+                        pinned.isPinned = true
+                        query.lastCustomAction = app.assistant.saveAction(pinned)
                     }
-                    .help(mode.title)
-                    .disabled(run.isRunning || run.code.isEmpty || !query.canInsert(mode))
                 }
-                Spacer()
-                Button("New Query") {
-                    app.openQuery(text: run.code, in: query.context)
-                    dismiss()
-                }
-                .disabled(run.isRunning || run.code.isEmpty)
-            } else {
+                .fixedSize()
+            }
+            Spacer()
+            if run.format == .naturalLanguage {
                 Button {
                     app.assistant.continueInNewChat(question: run.question, apiPrompt: run.prompt, answer: run.text, provider: run.provider,
-                                                           assistantName: run.assistantConfig.name, model: run.model)
-                    dismiss()
-                } label: {
-                    Label("Continue in New Chat", systemImage: "bubble.left.and.bubble.right")
-                }
+                                                    assistantName: run.assistantConfig.name, model: run.model)
+                    close()
+                } label: { Label("Continue in New Chat", systemImage: "bubble.left.and.bubble.right") }
                 .disabled(run.isRunning || run.text.isEmpty)
-                Spacer()
-                Button("Copy") { copy(run.text) }.disabled(run.text.isEmpty)
             }
-            Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+            Button("Cancel") { close() }
+                .keyboardShortcut(.cancelAction)
+            if let action = run.customAction {
+                Button("Back") {
+                    query.lastCustomAction = action
+                    run.stop()
+                    query.aiRun = nil
+                    query.showingAskAICustom = true
+                }
+            }
+            if run.format == .code {
+                Button(actionLabel) {
+                    query.insert(run.code, mode: mode)
+                    close()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(run.isRunning || run.code.isEmpty || !query.canInsert(mode))
+            }
         }
-        .controlSize(.regular)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
-    private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+    private func close() {
+        run.stop()
+        query.aiRun = nil
     }
 }
 
-/// Lines added by the AI in green, removed lines in red, like Navicat's highlighted differences.
-struct DiffView: View {
+/// One side of the comparison: line numbers and code, changed lines tinted.
+private struct CodeColumn: View {
+    let title: String
+    let titleColor: Color
     let lines: [LineDiff.Line]
+    let highlight: LineDiff.Kind
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                HStack(alignment: .top, spacing: 0) {
-                    Text(symbol(line.kind))
-                        .foregroundStyle(color(line.kind))
-                        .frame(width: 18, alignment: .center)
-                    Text(line.kind == .removed ? AttributedString(line.text.isEmpty ? " " : line.text) : SQLSyntax.highlight(line.text.isEmpty ? " " : line.text))
-                        .strikethrough(line.kind == .removed, color: .red.opacity(0.6))
-                        .foregroundStyle(line.kind == .removed ? Color.secondary : Color.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .font(.system(size: 12.5, design: .monospaced))
-                .padding(.vertical, 1)
-                .background(color(line.kind).opacity(line.kind == .same ? 0 : 0.13))
-            }
-        }
-        .textSelection(.enabled)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-    }
-
-    private func symbol(_ kind: LineDiff.Kind) -> String {
-        switch kind {
-        case .same: " "
-        case .added: "+"
-        case .removed: "−"
-        }
-    }
-
-    private func color(_ kind: LineDiff.Kind) -> Color {
-        switch kind {
-        case .same: .clear
-        case .added: .green
-        case .removed: .red
-        }
-    }
-}
-
-/// Custom Ask AI actions: saved actions on the left (pin them to the menu), the question and its context on the right.
-struct AskAICustomSheet: View {
-    @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
-    let query: QueryTabModel
-    @State private var editing = AIAction(prompt: "")
-    @State private var hovered: UUID?
-
-    var body: some View {
-        HStack(spacing: 0) {
-            savedList
-                .frame(width: 230)
-            Divider()
-            editor
-        }
-        .frame(width: 760, height: 470)
-    }
-
-    private var savedList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Saved Actions").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                Spacer()
-                IconButton(systemImage: "plus", help: "New Action", tint: .accentColor) { editing = AIAction(prompt: "") }
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 36)
-            Divider()
-            if app.assistant.actions.isEmpty {
-                Text("Save a question to reuse it. Pinned actions appear in the Ask AI menu.")
-                    .font(.system(size: 11.5)).foregroundStyle(.tertiary)
-                    .padding(12)
-                Spacer()
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(app.assistant.actions) { action in actionRow(action) }
-                    }
-                    .padding(6)
-                }
-            }
-        }
-        .background(VisualEffectBackground(material: .sidebar, blending: .withinWindow))
-    }
-
-    private func actionRow(_ action: AIAction) -> some View {
-        let selected = editing.id == action.id
-        return HStack(spacing: 7) {
-            Image(systemName: action.format == .code ? "chevron.left.forwardslash.chevron.right" : "text.bubble")
-                .font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 16)
-            Text(action.title).font(.system(size: 12)).lineLimit(2)
-            Spacer(minLength: 0)
-            if action.isPinned || hovered == action.id {
-                Button { app.assistant.togglePin(action.id) } label: {
-                    Image(systemName: action.isPinned ? "pin.fill" : "pin").font(.system(size: 11))
-                        .foregroundStyle(action.isPinned ? Color.accentColor : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help(action.isPinned ? "Unpin from Menu" : "Pin to Menu")
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accentColor.opacity(0.18) : .clear))
-        .contentShape(Rectangle())
-        .onTapGesture { editing = action }
-        .onHover { hovered = $0 ? action.id : (hovered == action.id ? nil : hovered) }
-        .contextMenu {
-            Button(action.isPinned ? "Unpin from Menu" : "Pin to Menu") { app.assistant.togglePin(action.id) }
-            Button("Delete", role: .destructive) {
-                app.assistant.deleteAction(action.id)
-                if editing.id == action.id { editing = AIAction(prompt: "") }
-            }
-        }
-    }
-
-    private var editor: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                AppIcon(name: app.assistant.provider.iconName, size: 20)
-                Text("Ask \(app.assistant.provider.displayName)").font(.system(size: 15, weight: .semibold))
-                Spacer()
-                Text(app.assistant.activeModelName).font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $editing.prompt)
-                    .font(.system(size: 13))
-                    .scrollContentBackground(.hidden)
-                    .padding(6)
-                if editing.prompt.isEmpty {
-                    Text("Ask anything about this query, e.g. “Add pagination with LIMIT/OFFSET” or “Rewrite with a CTE”.")
-                        .font(.system(size: 13)).foregroundStyle(.tertiary)
-                        .padding(.horizontal, 11).padding(.vertical, 6)
-                        .allowsHitTesting(false)
-                }
-            }
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: .separatorColor)))
-
-            HStack {
-                Text("Response Format").font(.system(size: 12))
-                Picker("", selection: $editing.format) {
-                    ForEach(AIResponseFormat.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 240)
-                Spacer()
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Attach").font(.system(size: 12))
-                HStack(spacing: 16) {
-                    contextToggle("Selected Text", .selectedText).disabled(!query.hasSelection)
-                    contextToggle("All Text", .allText)
-                    contextToggle("Current Schema", .currentSchema)
-                    contextToggle("Server Version", .serverVersion)
-                }
-                .font(.system(size: 12))
-            }
-
-            HStack {
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Save Action") {
-                    editing = app.assistant.saveAction(editing)
-                }
-                .disabled(isEmpty)
-                Button("Ask AI") {
-                    let action = editing
-                    dismiss()
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(250))
-                        AskAI.run(action, on: query, app: app)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(titleColor)
+            ScrollView([.vertical, .horizontal]) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                        HStack(spacing: 0) {
+                            Text("\(index + 1)").foregroundStyle(.tertiary).frame(width: 30, alignment: .trailing).padding(.trailing, 8)
+                            Text(SQLSyntax.highlight(line.text.isEmpty ? " " : line.text))
+                                .fixedSize()
+                            Spacer(minLength: 0)
+                        }
+                        .font(.system(size: 12, design: .monospaced))
+                        .padding(.vertical, 1)
+                        .background(line.kind == highlight ? (highlight == .added ? Color.green : Color.red).opacity(0.18) : Color.clear)
                     }
                 }
-                .keyboardShortcut(.return, modifiers: .command)
-                .buttonStyle(.borderedProminent)
-                .disabled(isEmpty)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color(nsColor: .textBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color(nsColor: .separatorColor)))
         }
-        .padding(18)
-    }
-
-    private var isEmpty: Bool { editing.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-    private func contextToggle(_ title: String, _ option: AIContextOptions) -> some View {
-        Toggle(title, isOn: Binding(
-            get: { editing.context.contains(option) },
-            set: { on in if on { editing.context.insert(option) } else { editing.context.remove(option) } }
-        ))
-        .toggleStyle(.checkbox)
+        .frame(maxWidth: .infinity)
     }
 }
 

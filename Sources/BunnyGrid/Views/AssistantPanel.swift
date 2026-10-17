@@ -5,16 +5,18 @@ import SwiftUI
 /// The right pane's AI tab: chat with Claude or ChatGPT about the current database.
 struct AssistantPanel: View {
     @Environment(AppModel.self) private var app
+    @State private var showingChatList = false
 
     private var assistant: AssistantModel { app.assistant }
 
     var body: some View {
         if assistant.active == nil {
             AIDisabledState()
+        } else if showingChatList {
+            ManageChatsView { showingChatList = false }
         } else {
             VStack(spacing: 0) {
-                AssistantHeader()
-                Divider()
+                AssistantHeader { showingChatList = true }
                 messages
                 Composer()
                     .padding(8)
@@ -25,11 +27,11 @@ struct AssistantPanel: View {
     private var messages: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
+                LazyVStack(alignment: .leading, spacing: 14) {
                     if !assistant.hasAPIKey {
                         APIKeyBanner()
                     }
-                    if let chat = assistant.currentChat {
+                    if let chat = assistant.currentChat, !chat.messages.isEmpty {
                         ForEach(chat.messages) { message in
                             MessageView(message: message, isLast: message.id == chat.messages.last?.id)
                                 .id(message.id)
@@ -40,20 +42,40 @@ struct AssistantPanel: View {
                     if assistant.isStreaming {
                         StreamingReply(provider: assistant.provider, name: assistant.active?.name, text: assistant.streamingText)
                     }
+                    if let comparing = assistant.assistants.first(where: { $0.id == assistant.comparingAssistantID }) {
+                        StreamingReply(provider: comparing.provider, name: comparing.name, text: assistant.compareText)
+                    }
+                    if !assistant.isStreaming, assistant.comparingAssistantID == nil, !assistant.compareCandidates.isEmpty {
+                        CompareOffer(candidates: assistant.compareCandidates)
+                    }
                     if let error = assistant.error {
                         ErrorNote(message: error)
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 12)
+                .environment(\.aiZoom, assistant.chatZoom)
             }
             .onChange(of: assistant.streamingText) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
+            .onChange(of: assistant.compareText) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
             .onChange(of: assistant.currentChat?.messages.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             .onChange(of: assistant.currentChatID) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
         }
+    }
+}
+
+private struct AIZoomKey: EnvironmentKey {
+    static let defaultValue: Double = 1
+}
+
+extension EnvironmentValues {
+    /// More Chat Actions › Zoom.
+    var aiZoom: Double {
+        get { self[AIZoomKey.self] }
+        set { self[AIZoomKey.self] = newValue }
     }
 }
 
@@ -109,64 +131,101 @@ struct AIMark: View {
 
 // MARK: - Header
 
+/// ≡ · assistant · chat title ⌄ · New Chat · More Chat Actions, as in Navicat's AI pane.
 private struct AssistantHeader: View {
     @Environment(AppModel.self) private var app
-    @State private var showingHistory = false
+    @Environment(\.openSettings) private var openSettings
+    let showChatList: () -> Void
+    @State private var renaming = false
+    @State private var newTitle = ""
+    @State private var showingInstructions = false
 
     var body: some View {
         let assistant = app.assistant
-        HStack(spacing: 6) {
-            Button { showingHistory.toggle() } label: {
-                Image(systemName: "clock.arrow.circlepath").font(.system(size: 13)).foregroundStyle(Color.accentColor)
-                    .frame(width: 24, height: 22).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Chat History")
-            .popover(isPresented: $showingHistory, arrowEdge: .bottom) {
-                ChatHistoryPopover { showingHistory = false }
-            }
-
-            HStack(spacing: 5) {
-                AppIcon(name: assistant.provider.iconName, size: 15)
-                Text(assistant.currentChat?.title ?? "New Chat")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-
-            Spacer(minLength: 4)
-
-            IconButton(systemImage: "square.and.pencil", help: "New Chat", tint: .accentColor) { assistant.newChat() }
+        HStack(spacing: 8) {
+            IconButton(systemImage: "line.3.horizontal", help: "Manage Chats", tint: .secondary, action: showChatList)
+            Divider().frame(height: 16)
             Menu {
-                Button("New Chat") { assistant.newChat() }
-                Button("Delete This Chat", role: .destructive) { assistant.deleteCurrentChat() }
-                    .disabled(assistant.currentChat == nil)
-                Button("Clear All Chats", role: .destructive) { assistant.clearAllChats() }
-                    .disabled(assistant.chats.isEmpty)
-                Divider()
-                Button("AI Platform…") { app.showingAccountMenu = true }
-                SettingsLink { Text("Options…") }
+                if assistant.chats.isEmpty { Text("No chats yet") }
+                ForEach(assistant.chats.prefix(20)) { chat in
+                    Button(chat.title) { assistant.open(chat) }
+                }
             } label: {
-                Image(systemName: "ellipsis.circle").font(.system(size: 13)).foregroundStyle(Color.accentColor)
+                HStack(spacing: 6) {
+                    AppIcon(name: assistant.provider.iconName, size: 16)
+                    Text(assistant.currentChat?.title ?? "New Chat")
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                }
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            Spacer(minLength: 4)
+            IconButton(systemImage: "plus.bubble", help: "New Chat", tint: .green) { assistant.newChat() }
+            Menu {
+                Button("View Instructions") { showingInstructions = true }
+                Button("Search") { showChatList() }
+                Divider()
+                Button("Rename Chat") {
+                    newTitle = assistant.currentChat?.title ?? ""
+                    renaming = true
+                }
+                .disabled(assistant.currentChat == nil)
+                Button("Clear Chat") { if let id = assistant.currentChatID { assistant.clearChat(id) } }
+                    .disabled(assistant.currentChat?.messages.isEmpty ?? true)
+                Button("Delete Chat", role: .destructive) { assistant.deleteCurrentChat() }
+                    .disabled(assistant.currentChat == nil)
+                Divider()
+                Menu("Zoom") {
+                    Button("Zoom In") { assistant.chatZoom = min(assistant.chatZoom + 0.1, 1.6) }
+                    Button("Zoom Out") { assistant.chatZoom = max(assistant.chatZoom - 0.1, 0.8) }
+                    Button("Actual Size") { assistant.chatZoom = 1 }
+                }
+                Divider()
+                Button("Settings") {
+                    UserDefaults.standard.set("ai", forKey: "settingsTab")
+                    openSettings()
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle").font(.system(size: 14)).foregroundStyle(Color.accentColor)
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("More Options")
+            .help("More Chat Actions")
         }
         .padding(.horizontal, 10)
-        .frame(height: 34)
+        .frame(height: 36)
+        .alert("Rename Chat", isPresented: $renaming) {
+            TextField("Title", text: $newTitle)
+            Button("Rename") { if let id = assistant.currentChatID { assistant.renameChat(id, to: newTitle) } }
+            Button("Cancel", role: .cancel) {}
+        }
+        .popover(isPresented: $showingInstructions, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Instructions · \(assistant.active?.name ?? "")").font(.headline)
+                Text((assistant.active?.instruction).flatMap { $0.isEmpty ? nil : $0 } ?? "No instructions. Add them in Settings › AI.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(width: 300, alignment: .leading)
+            }
+            .padding(14)
+        }
     }
 }
 
-/// Past chats, newest first, with search, rename and delete.
-private struct ChatHistoryPopover: View {
+/// Manage Chats: the chat list replaces the conversation, with search, New Chat and Edit (delete).
+private struct ManageChatsView: View {
     @Environment(AppModel.self) private var app
-    let dismiss: () -> Void
+    let close: () -> Void
     @State private var search = ""
-    @State private var renaming: UUID?
-    @State private var newTitle = ""
+    @State private var editing = false
+    @FocusState private var searchFocused: Bool
 
     private var chats: [AIChat] {
         let all = app.assistant.chats.sorted { ($0.updatedAt ?? $0.createdAt) > ($1.updatedAt ?? $1.createdAt) }
@@ -177,70 +236,70 @@ private struct ChatHistoryPopover: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search chats", text: $search).textFieldStyle(.plain)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                IconButton(systemImage: "xmark", help: "Close", tint: .secondary, action: close)
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search", text: $search).textFieldStyle(.plain).focused($searchFocused)
+                }
+                .font(.system(size: 12.5))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 8).strokeBorder(searchFocused ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: searchFocused ? 2 : 1))
+                IconButton(systemImage: "plus.bubble", help: "New Chat", tint: .green) {
+                    app.assistant.newChat()
+                    close()
+                }
             }
-            .font(.system(size: 12))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .glassBackground(in: Capsule())
             .padding(10)
-            Divider()
-            if chats.isEmpty {
-                Text(search.isEmpty ? "No chats yet" : "No matches")
-                    .font(.system(size: 12)).foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(chats) { chat in row(chat) }
-                    }
-                    .padding(6)
-                }
-            }
-        }
-        .frame(width: 320, height: 380)
-    }
-
-    @ViewBuilder
-    private func row(_ chat: AIChat) -> some View {
-        let isCurrent = chat.id == app.assistant.currentChatID
-        HStack(spacing: 8) {
-            AppIcon(name: (chat.messages.last { $0.role == .assistant }?.provider ?? .claude).iconName, size: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                if renaming == chat.id {
-                    TextField("Title", text: $newTitle)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit {
-                            app.assistant.renameChat(chat.id, to: newTitle)
-                            renaming = nil
+            Button(editing ? "Done" : "Edit") { editing.toggle() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12.5, weight: .medium))
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(chats) { chat in
+                        HStack(alignment: .top, spacing: 10) {
+                            if editing {
+                                Button { app.assistant.deleteChat(chat.id) } label: {
+                                    Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.top, 8)
+                            }
+                            AppIcon(name: (chat.messages.last { $0.role == .assistant }?.provider ?? app.assistant.provider).iconName, size: 30)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(chat.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                                    Spacer()
+                                    Text((chat.updatedAt ?? chat.createdAt).formatted(.relative(presentation: .named)))
+                                        .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                }
+                                Text(chat.messages.first?.typedText ?? chat.messages.first?.text ?? "")
+                                    .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                            }
                         }
-                } else {
-                    Text(chat.title).font(.system(size: 12.5, weight: isCurrent ? .semibold : .regular)).lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard !editing else { return }
+                            app.assistant.open(chat)
+                            close()
+                        }
+                        Divider().padding(.leading, 50)
+                    }
                 }
-                Text("\(chat.messages.count) messages · \((chat.updatedAt ?? chat.createdAt).formatted(.relative(presentation: .named)))")
-                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
             }
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 7).fill(isCurrent ? Color.accentColor.opacity(0.14) : .clear))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard renaming == nil else { return }
-            app.assistant.open(chat)
-            dismiss()
-        }
-        .contextMenu {
-            Button("Rename") {
-                newTitle = chat.title
-                renaming = chat.id
+            .overlay {
+                if chats.isEmpty {
+                    Text(search.isEmpty ? "No chats yet" : "No matches").font(.system(size: 12)).foregroundStyle(.tertiary)
+                }
             }
-            Button("Delete", role: .destructive) { app.assistant.deleteChat(chat.id) }
         }
+        .onAppear { searchFocused = true }
     }
 }
 
@@ -273,33 +332,34 @@ private struct APIKeyBanner: View {
     }
 }
 
+/// "Here are some questions you can try:" with suggestion bubbles on the right, as in Navicat.
 private struct EmptyChat: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                AppIcon(name: app.assistant.provider.iconName, size: 26)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Ask \(app.assistant.active?.name ?? app.assistant.provider.displayName)").font(.system(size: 15, weight: .semibold))
-                    Text(app.assistant.activeModelName).font(.system(size: 11)).foregroundStyle(.secondary)
+        VStack(alignment: .trailing, spacing: 10) {
+            Spacer(minLength: 60)
+            Text("Here are some questions you can try:")
+                .font(.system(size: 13, weight: .medium))
+            ForEach(suggestions, id: \.self) { suggestion in
+                SuggestionButton(text: suggestion) {
+                    app.assistant.draft = suggestion
+                    app.assistant.send()
                 }
             }
-            Text("Write, explain, optimize and fix SQL. Attach schemas or open tabs as context with the buttons below.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            ForEach(suggestions, id: \.self) { suggestion in
-                SuggestionButton(text: suggestion) { app.assistant.draft = suggestion }
-            }
         }
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private var suggestions: [String] {
         if let table = app.selectedTableTab?.object.name {
-            return ["Explain what the \(table) table stores", "Write a query to find duplicate rows in \(table)", "Suggest indexes for \(table)"]
+            return ["What does the \(table) table store, and how is it used?",
+                    "What SQL query would I use to find duplicate rows in \(table)?",
+                    "Which indexes would speed up queries on \(table)?"]
         }
-        return ["Write a query that joins two tables", "Can you explain the difference between an inner join and a left join?", "How do I find the slowest queries?"]
+        return ["How can I reduce data redundancy in my database structure?",
+                "What SQL query would I use to find customers who haven't placed an order in the last year?",
+                "What are some common pitfalls to avoid when simplifying a database structure?"]
     }
 }
 
@@ -310,40 +370,39 @@ private struct SuggestionButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkle").font(.system(size: 10)).foregroundStyle(Color.accentColor)
-                Text(text).font(.system(size: 12)).multilineTextAlignment(.leading)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(isHovering ? 0.07 : 0.035)))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color(nsColor: .separatorColor).opacity(0.7)))
-            .contentShape(Rectangle())
+            Text(text)
+                .font(.system(size: 12.5))
+                .multilineTextAlignment(.leading)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .frame(maxWidth: 280, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.accentColor.opacity(isHovering ? 0.12 : 0.04)))
+                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.accentColor, lineWidth: 1.2))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
     }
 }
 
+/// A user message (blue bubble on the right) or an answer (assistant header, then a gray bubble).
 private struct MessageView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.aiZoom) private var zoom
     let message: AIMessage
     let isLast: Bool
     @State private var isHovering = false
-    /// Which answer is shown when the message has alternates (nil: the original).
-    @State private var shownAlternate: String?
 
     var body: some View {
         switch message.role {
         case .user: userBubble
-        case .assistant: assistantReply
+        case .assistant: answer
         }
     }
 
     private var userBubble: some View {
         HStack(alignment: .bottom, spacing: 4) {
-            Spacer(minLength: 24)
+            Spacer(minLength: 30)
             HStack(spacing: 0) {
                 IconButton(systemImage: "doc.on.doc", help: "Copy", tint: .secondary) { copy(message.typedText ?? message.text) }
                 if isLastQuestion {
@@ -352,11 +411,12 @@ private struct MessageView: View {
             }
             .opacity(isHovering ? 1 : 0)
             Text(message.text)
-                .font(.system(size: 12.5))
+                .font(.system(size: 12.5 * zoom))
+                .foregroundStyle(.white)
                 .textSelection(.enabled)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 7)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.accentColor.opacity(0.16)))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.accentColor))
         }
         .onHover { isHovering = $0 }
     }
@@ -366,75 +426,39 @@ private struct MessageView: View {
         return messages.last(where: { $0.role == .user })?.id == message.id && !app.assistant.isStreaming
     }
 
-    /// The original answer and those from other assistants, keyed by assistant name.
-    private var answers: [Answer] {
-        let mine = message.provider ?? .claude
-        return [Answer(name: message.assistantName ?? mine.displayName, provider: mine, model: message.model, text: message.text, note: message.note)]
-            + (message.alternates ?? []).map {
-                Answer(name: $0.assistantName ?? $0.provider.displayName, provider: $0.provider, model: $0.model, text: $0.text, note: $0.note)
+    private var answer: some View {
+        let provider = message.provider ?? .claude
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                AppIcon(name: provider.iconName, size: 16)
+                Text(message.assistantName ?? provider.displayName).font(.system(size: 12.5, weight: .semibold))
+                if let date = message.createdAt {
+                    TimelineView(.periodic(from: .now, by: 30)) { _ in
+                        Text(date.timeIntervalSinceNow > -60 ? "Just now" : date.formatted(.relative(presentation: .named)))
+                    }
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                }
+                if isHovering, let model = message.model {
+                    Text(model).font(.system(size: 11.5)).foregroundStyle(.tertiary).lineLimit(1)
+                }
             }
-    }
-
-    private var assistantReply: some View {
-        let assistant = app.assistant
-        let all = answers
-        let comparing = assistant.comparingMessageID == message.id
-        let comparingWith = assistant.assistants.first { $0.id == assistant.comparingAssistantID }
-        let current = all.first { $0.name == shownAlternate } ?? all[0]
-        let showingCompare = comparing && shownAlternate == comparingWith?.name
-        return VStack(alignment: .leading, spacing: 8) {
-            if all.count > 1 || comparing {
-                AnswerTabs(answers: all, comparing: comparing ? comparingWith : nil, selection: Binding(
-                    get: { shownAlternate ?? all[0].name },
-                    set: { shownAlternate = $0 }
-                ))
-            }
-            if showingCompare, let comparingWith {
-                StreamingReply(provider: comparingWith.provider, name: comparingWith.name, text: assistant.compareText, showsAvatar: false)
-            } else {
-                MarkdownView(text: current.text)
-                if let note = current.note {
+            VStack(alignment: .leading, spacing: 8) {
+                MarkdownView(text: message.text, fontSize: 12.5 * zoom)
+                if let note = message.note {
                     Label(note, systemImage: "info.circle").font(.system(size: 11)).foregroundStyle(.orange)
                 }
             }
-            actionRow(current: current, all: all, comparing: comparing)
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.08)))
+            HStack(spacing: 2) {
+                IconButton(systemImage: "doc.on.doc", help: "Copy Raw Message", tint: .accentColor) { copy(message.text) }
+                if isLast && app.assistant.canRegenerate && message.isComparison != true {
+                    IconButton(systemImage: "arrow.clockwise", help: "Regenerate", tint: .accentColor) { app.assistant.regenerate() }
+                }
+            }
+            .opacity(isHovering ? 1 : 0)
         }
         .onHover { isHovering = $0 }
-    }
-
-    private func actionRow(current: Answer, all: [Answer], comparing: Bool) -> some View {
-        let assistant = app.assistant
-        let candidates = assistant.compareEnabled ? assistant.assistants.filter { config in
-            assistant.hasAPIKey(for: config) && !all.contains { $0.name == config.name }
-        } : []
-        return HStack(spacing: 2) {
-            IconButton(systemImage: "doc.on.doc", help: "Copy Answer", tint: .accentColor) { copy(current.text) }
-            IconButton(systemImage: "plus.rectangle.on.rectangle", help: "Copy SQL to New Query", tint: .accentColor,
-                       isEnabled: !MarkdownParser.sqlBlocks(in: current.text).isEmpty) {
-                app.openQuery(text: MarkdownParser.sqlBlocks(in: current.text).joined(separator: "\n\n"))
-            }
-            if isLast && assistant.canRegenerate {
-                IconButton(systemImage: "arrow.clockwise", help: "Regenerate with \(assistant.active?.name ?? "the assistant")", tint: .accentColor) {
-                    assistant.regenerate()
-                }
-            }
-            if !candidates.isEmpty && !comparing {
-                CompareMenu(candidates: candidates) { other in
-                    shownAlternate = other.name
-                    assistant.compare(message.id, with: other)
-                }
-            }
-            Spacer()
-            if let model = current.model {
-                HStack(spacing: 3) {
-                    AppIcon(name: current.provider.iconName, size: 10)
-                    Text(model)
-                }
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-            }
-        }
-        .opacity(isHovering || isLast ? 1 : 0.35)
     }
 
     private func copy(_ text: String) {
@@ -443,91 +467,34 @@ private struct MessageView: View {
     }
 }
 
-/// One answer shown in a message (the original or another assistant's).
-private struct Answer {
-    let name: String
-    let provider: AIProvider
-    let model: String?
-    let text: String
-    let note: String?
-}
-
-/// "Compare with ChatGPT" (or a menu when several assistants could answer).
-private struct CompareMenu: View {
+/// "You can compare this answer with…" and a capsule per other assistant.
+private struct CompareOffer: View {
+    @Environment(AppModel.self) private var app
     let candidates: [AIAssistantConfig]
-    let compare: (AIAssistantConfig) -> Void
 
     var body: some View {
-        if candidates.count == 1, let only = candidates.first {
-            Button { compare(only) } label: { label(icon: only.provider.iconName, title: "Compare with \(only.name)") }
-                .buttonStyle(.plain)
-                .help("See how \(only.name) answers the same question")
-        } else {
-            Menu {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("You can compare this answer with...").font(.system(size: 12.5))
+            FlowLayout(spacing: 6) {
                 ForEach(candidates) { candidate in
-                    Button(candidate.name) { compare(candidate) }
-                }
-            } label: {
-                label(icon: "ai-claude", title: "Compare with Other Assistants")
-            }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-        }
-    }
-
-    private func label(icon: String, title: String) -> some View {
-        HStack(spacing: 3) {
-            AppIcon(name: icon, size: 12)
-            Text(title)
-        }
-        .font(.system(size: 10.5))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(Capsule().strokeBorder(Color(nsColor: .separatorColor)))
-        .contentShape(Capsule())
-    }
-}
-
-/// "Claude | ChatGPT" switch above an answer that has been compared.
-private struct AnswerTabs: View {
-    let answers: [Answer]
-    let comparing: AIAssistantConfig?
-    @Binding var selection: String
-
-    private var tabs: [(name: String, provider: AIProvider, isStreaming: Bool)] {
-        var result = answers.map { (name: $0.name, provider: $0.provider, isStreaming: false) }
-        if let comparing, !answers.contains(where: { $0.name == comparing.name }) {
-            result.append((name: comparing.name, provider: comparing.provider, isStreaming: true))
-        }
-        return result
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(tabs, id: \.name) { tab in
-                Button { selection = tab.name } label: {
-                    HStack(spacing: 4) {
-                        AppIcon(name: tab.provider.iconName, size: 13)
-                        Text(tab.name)
-                        if tab.isStreaming { ProgressView().controlSize(.mini) }
-                    }
-                    .font(.system(size: 11, weight: selection == tab.name ? .semibold : .regular))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background {
-                        if selection == tab.name {
-                            Color.clear.glassBackground(in: Capsule(), interactive: true)
+                    Button {
+                        if let last = app.assistant.currentChat?.messages.last { app.assistant.compare(last.id, with: candidate) }
+                    } label: {
+                        HStack(spacing: 5) {
+                            AppIcon(name: candidate.provider.iconName, size: 14)
+                            Text(candidate.name).font(.system(size: 12, weight: .semibold))
+                            Text("(\(app.assistant.modelName(for: candidate)))").font(.system(size: 12)).foregroundStyle(.secondary)
                         }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                        .overlay(Capsule().strokeBorder(Color(nsColor: .separatorColor)))
+                        .contentShape(Capsule())
                     }
-                    .contentShape(Capsule())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
-        .padding(2)
-        .background(Capsule().fill(Color.primary.opacity(0.05)))
     }
 }
 
@@ -639,7 +606,7 @@ private struct Composer: View {
                         return .ignored
                     }
                 if assistant.draft.isEmpty {
-                    Text("Ask \(assistant.provider.displayName)…")
+                    Text("Ask AI Assistant...")
                         .font(.system(size: 12.5))
                         .foregroundStyle(.tertiary)
                         .padding(.leading, 5)
@@ -667,9 +634,14 @@ private struct Composer: View {
                 AssistantPicker()
                 Spacer()
                 Menu {
-                    Button("Attach Schemas…") { showingSchemas = true }
+                    if let context = app.currentContext {
+                        Button("Attach Database “\(context.name)”") {
+                            assistant.attachSchemas([context.usesSchemas ? (app.currentSchema ?? context.defaultSchema) : nil], in: context)
+                        }
+                    }
+                    Button("Attach Schemas") { showingSchemas = true }
                         .disabled(app.currentContext == nil)
-                    Button("Attach Tabs…") { showingTabs = true }
+                    Button("Attach Tabs") { showingTabs = true }
                         .disabled(app.tabs.isEmpty)
                     Divider()
                     Button("Attach File…") { assistant.attachFile() }
@@ -685,7 +657,7 @@ private struct Composer: View {
                 if assistant.isStreaming {
                     IconButton(systemImage: "stop.circle.fill", help: "Stop", tint: .red) { assistant.cancel() }
                 } else {
-                    IconButton(systemImage: "arrow.up.circle.fill", help: assistant.enterSends ? "Send (↩)" : "Send (⌘↩)", tint: .accentColor,
+                    IconButton(systemImage: "paperplane", help: assistant.enterSends ? "Send (↩)" : "Send (⌘↩)", tint: .accentColor,
                                isEnabled: !assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
                         assistant.send()
                     }
@@ -744,13 +716,13 @@ private struct PickerLabel: View {
 
     var body: some View {
         let assistant = app.assistant
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             AppIcon(name: assistant.provider.iconName, size: 14)
-            Text(assistant.active?.name ?? "No assistant").foregroundStyle(.primary)
-            Text(assistant.activeModelName).foregroundStyle(.secondary).lineLimit(1)
-            Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+            Text(assistant.active?.name ?? "No assistant").fontWeight(.semibold).foregroundStyle(.primary)
+            Text("(\(assistant.activeModelName))").foregroundStyle(.secondary).lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
         }
-        .font(.system(size: 11.5))
+        .font(.system(size: 12))
     }
 }
 

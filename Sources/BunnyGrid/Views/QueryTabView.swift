@@ -34,9 +34,7 @@ struct QueryTabView: View {
                 }
             }
         }
-        .sheet(item: $model.aiRun) { run in
-            AskAIResultView(run: run, query: model)
-        }
+        .overlay { AskAIOverlay(query: model) }
     }
 
     private var editor: some View {
