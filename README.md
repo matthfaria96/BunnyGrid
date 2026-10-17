@@ -81,7 +81,7 @@ Dados do usuário:
 
 A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nada da arte do Navicat é usado):
 
-- **Barra principal**: Connection (menu de tipos), New Query, Table, View, Materialized View, Function, Role, Others, Query, Backup, Automation, Model, BI, Sobre, AI Assistant e conta. Os botões de tipo de objeto mostram aquela categoria na aba Objects. Role, Others, Automation, Model e BI estão desativados ("em breve").
+- **Barra principal**: Connection (menu de tipos), New Query, Table, View, Materialized View, Function, Role, Others, Query, Backup, Automation, Model, BI, Sobre, AI Assistant e conta. Os botões de tipo de objeto mostram aquela categoria na aba Objects. Role, Automation e BI estão desativados ("em breve").
 - **Painel de navegação**: BunnyGrid Cloud (em breve) → My Connections → grupos (pastas) → conexões → bancos → schemas (PostgreSQL) → Tables / Views / Materialized Views / Functions / Queries / Backups → objetos. Abrir um nó conecta ou abre o banco; no PostgreSQL cada banco tem sua própria conexão. No rodapé: busca, localizar o objeto da aba aberta e recolher tudo.
 - **Abas**: "Objects" fixa e abas como `payment @dvdrental.public (PostgreSQL)`. O título da janela segue o Navicat (`… - Table - BunnyGrid`).
 - **Aba Objects**: Open / Design / New / Delete, Import / Export Wizard e busca; lista os objetos da pasta selecionada ou os bancos da conexão.
@@ -111,6 +111,7 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - **Ask AI** no editor de consultas: clique abre as ações personalizadas (pergunta, formato Code/Natural Language, contexto Selected Text/All Text/Current Schema/Server Version, salvar e **fixar no menu**); segurar abre **Explain SQL, Optimize SQL, Beautify SQL, Convert SQL to Another Database Type** e as ações fixadas. Respostas em código mostram o **diff** com a consulta original (Show Diff) e aplicam no editor com desfazer (Append, Replace All, Replace Selection, Insert at Cursor) ou em New Query; respostas em texto têm **Continue in New Chat**.
   - **Fix with AI** e **Ask AI** (explicar o erro) aparecem quando uma consulta falha, usando a instrução que falhou e a mensagem do banco.
   - **Opções** (Settings › AI Assistant): por plataforma, Max Tokens, Effort (Low/Medium/High; os modelos atuais não aceitam temperature) e Instruction; Action for Enter key, Enable Compare with Other Assistants e Show AI features.
+- **Model** (barra principal ou "Reverse Database to Model" no menu de contexto do banco/schema): aba com o diagrama ER do banco ou schema, lido do catálogo (tabelas, colunas, chaves primárias e estrangeiras). Layout automático em camadas (tabelas referenciadas à esquerda, relacionadas próximas), arrastar cartões, zoom (⌘+ / ⌘-, pinça, ajustar), clicar destaca as relações; linhas com pés de galinha (1:N, 1:1, opcional). As posições ficam em `model-layouts.json` por conexão, banco e schema. Exporta PNG/PDF e **Generate SQL** gera CREATE TABLE + chaves estrangeiras para SQLite, PostgreSQL, MySQL ou MariaDB (com tradução de tipos), para copiar, salvar ou abrir numa consulta. Flags de debug: `--open-model`, `--model-select TABELA`, `--model-export arquivo.png|pdf`, `--model-sql`.
 - **Menus**: File, View (painéis), Table, Favorites (em breve), Tools.
 
 ## Licenças

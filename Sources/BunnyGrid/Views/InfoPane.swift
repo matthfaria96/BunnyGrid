@@ -14,6 +14,7 @@ struct RightPane: View {
         case .table: panes += [.ddl, .field]
         case .query: panes += [.snippets, .identifiers]
         case .design: panes += [.ddl]
+        case .model: break
         case nil: break
         }
         if showAIFeatures { panes.append(.ai) }

@@ -551,5 +551,6 @@ private struct DatabaseActionItems: View {
             Button("Structure and Data…") { app.dumpDatabase(context, schema: schema, includeData: true) }
             Button("Structure Only…") { app.dumpDatabase(context, schema: schema, includeData: false) }
         }
+        Button("Reverse Database to Model") { app.openModel(in: context, schema: schema) }
     }
 }

@@ -22,14 +22,14 @@ As fases seguem o mapa de funções do Navicat (`Clones/Navicat Premium/SPEC.md`
 | 0.4 | Import/Export | CSV, JSON, SQL dump, Excel (libxlsxwriter, BSD) | Navicat Import/Export Wizard |
 | 0.5 | Mais bancos | SQL Server (FreeTDS), Redis (RediStack), MongoDB (MongoKitten) | Navicat §2 |
 | 0.6 | Transferência | Data Transfer entre bancos, comparação e sincronização de estrutura e de dados | Navicat Structure/Data Sync |
-| 0.7 | Modelagem | Diagrama ER (engenharia reversa), modelo → SQL | Navicat Modeling |
+| ✅ 0.7 | Modelagem | Diagrama ER (engenharia reversa), modelo → SQL | Navicat Modeling |
 | 0.8 | Automação | Jobs agendados (SMAppService + launchd), backup | Navicat Automation |
 | depois | BI e IA | Gráficos com Swift Charts, perfil de dados, assistente de SQL com a Claude API | Navicat BI / AI Assistant |
 
 ## Débitos técnicos conhecidos
 
 - O AI Assistant não foi testado contra a API real nesta máquina (sem chave); o protocolo está coberto por testes unitários.
-- Automation, Model, BI e Create BI Workspace aparecem na interface, mas ainda mostram "em breve". User (PostgreSQL/MySQL), Others, Export Wizard, Dump SQL e as ações de tabela (excluir, esvaziar, truncar, renomear, duplicar) já funcionam.
+- Automation, BI e Create BI Workspace aparecem na interface, mas ainda mostram "em breve". Model já funciona (diagrama ER, layout salvo, PNG/PDF e Generate SQL); falta sincronizar modelo → banco e editar o modelo (só leitura, por enquanto), e as linhas que pulam uma camada podem cruzar cartões no meio. User (PostgreSQL/MySQL), Others, Export Wizard, Dump SQL e as ações de tabela (excluir, esvaziar, truncar, renomear, duplicar) já funcionam.
 
 - Edições aplicadas enquanto outra consulta roda na mesma conexão entram na mesma transação (há uma conexão por sessão). Separar uma conexão para o editor resolve.
 - Valores editados são enviados como texto (`'42'`) e o banco converte para o tipo da coluna. Funciona em PostgreSQL, MySQL e SQLite, mas tipos exóticos podem precisar de cast.
