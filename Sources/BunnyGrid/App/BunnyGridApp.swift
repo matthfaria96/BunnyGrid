@@ -54,6 +54,7 @@ struct BunnyGridApp: App {
                 Button("New Connection…") { model.newConnection() }
                     .keyboardShortcut("n")
                 Button("New Query") { model.openQuery() }
+                Button("New BI Workspace") { model.newBIWorkspace(in: model.currentContext) }
                     .keyboardShortcut("t")
                     .disabled(model.currentContext == nil)
                 Divider()

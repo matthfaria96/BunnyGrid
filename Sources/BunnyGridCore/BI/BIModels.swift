@@ -219,7 +219,7 @@ public enum BIChartType: String, Codable, Sendable, CaseIterable {
         switch self {
         case .bar: "chart.bar.fill"
         case .stackedBar: "chart.bar.xaxis"
-        case .horizontalBar: "chart.bar.doc.horizontal"
+        case .horizontalBar: "align.horizontal.left.fill"
         case .line: "chart.xyaxis.line"
         case .area: "chart.line.uptrend.xyaxis"
         case .pie: "chart.pie.fill"

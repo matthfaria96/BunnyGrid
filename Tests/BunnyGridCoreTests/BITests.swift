@@ -23,6 +23,11 @@ import Testing
         let mysql = BIQueryBuilder.sql(spec, source: "SELECT * FROM `orders`", dialect: SQLDialect(kind: .mysql))
         #expect(mysql.hasPrefix("SELECT DATE_FORMAT(`placed_at`, '%Y-%m-01') AS `d0`, `status` AS `d1`, SUM(`total`) AS `m0`"))
         #expect(mysql.contains("WHERE `status` IN ('paid', 'shipped') AND `total` > 10"))
+        let mssql = BIQueryBuilder.sql(spec, source: "SELECT * FROM [orders]", dialect: SQLDialect(kind: .sqlserver))
+        #expect(mssql.hasPrefix("SELECT TOP 20 CONVERT(char(10), DATEFROMPARTS("))
+        #expect(mssql.contains("GROUP BY CONVERT(char(10), DATEFROMPARTS("))
+        #expect(mssql.hasSuffix("ORDER BY 3 DESC"))
+        #expect(!mssql.contains("LIMIT"))
     }
 
     @Test func dateBucketsPerDialect() {

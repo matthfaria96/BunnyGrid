@@ -12,6 +12,8 @@ struct DocumentTabView: View {
             CollectionTabView(model: viewer)
         } else if let shell = tab as? MongoShellTabModel {
             MongoShellTabView(model: shell)
+        } else if let bi = tab as? BIWorkspaceModel {
+            BIWorkspaceView(model: bi)
         }
     }
 }

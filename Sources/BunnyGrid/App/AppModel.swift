@@ -785,6 +785,7 @@ final class AppModel {
             case "--query" where !arguments.isEmpty: query = arguments.removeFirst()
             // Their file arguments are not databases to open (handled after connecting / by the Import Wizard).
             case "--execute-sql" where !arguments.isEmpty, "--sync-target" where !arguments.isEmpty: arguments.removeFirst()
+            case "--bi-export" where !arguments.isEmpty, "--bi-chart" where !arguments.isEmpty, "--bi-filter" where !arguments.isEmpty: arguments.removeFirst()
             case "--import-wizard":
                 if let kind = arguments.first, ImportSourceKind(rawValue: kind) != nil {
                     arguments.removeFirst()
@@ -847,6 +848,7 @@ final class AppModel {
         #endif
         #if DEBUG
         runSyncDebugFlags(opened: opened)
+        runBIDebugFlags(opened: opened, database: database)
         #endif
         if CommandLine.arguments.contains("--open-model"), let id = opened {
             Task {

@@ -25,6 +25,16 @@ extension SQLDialect {
             case .quarter: return "CONCAT(YEAR(\(column)), '-', LPAD((QUARTER(\(column)) - 1) * 3 + 1, 2, '0'), '-01')"
             case .year: return "DATE_FORMAT(\(column), '%Y-01-01')"
             }
+        case .sqlserver:
+            let date = "CAST(\(column) AS date)"
+            let start: String = switch bucket {
+            case .day: date
+            case .week: "DATEADD(day, -((DATEPART(weekday, \(date)) + @@DATEFIRST + 5) % 7), \(date))"
+            case .month: "DATEFROMPARTS(YEAR(\(date)), MONTH(\(date)), 1)"
+            case .quarter: "DATEFROMPARTS(YEAR(\(date)), (DATEPART(quarter, \(date)) - 1) * 3 + 1, 1)"
+            case .year: "DATEFROMPARTS(YEAR(\(date)), 1, 1)"
+            }
+            return "CONVERT(char(10), \(start), 23)"
         case .mongodb, .redis:
             return column
         }
@@ -37,7 +47,11 @@ extension SQLDialect {
         switch measure.aggregation {
         case .sum: return "SUM(\(column))"
         case .avg:
-            return kind == .postgresql ? "AVG(CAST(\(column) AS double precision))" : "AVG(\(column))"
+            switch kind {
+            case .postgresql: return "AVG(CAST(\(column) AS double precision))"
+            case .sqlserver: return "AVG(CAST(\(column) AS float))"
+            default: return "AVG(\(column))"
+            }
         case .count: return "COUNT(\(column))"
         case .countDistinct: return "COUNT(DISTINCT \(column))"
         case .min: return "MIN(\(column))"
@@ -48,7 +62,7 @@ extension SQLDialect {
     /// Whether GROUP BY can be pushed down to this engine.
     public var supportsBIPushdown: Bool {
         switch kind {
-        case .sqlite, .postgresql, .mysql, .mariadb: true
+        case .sqlite, .postgresql, .mysql, .mariadb, .sqlserver: true
         case .mongodb, .redis: false
         }
     }
@@ -67,11 +81,15 @@ public enum BIQueryBuilder {
             select.append("\(dialect.aggregate(measure)) AS \(dialect.quoteIdentifier("m\(i)"))")
         }
         if select.isEmpty { select = ["COUNT(*) AS \(dialect.quoteIdentifier("m0"))"] }
-        var sql = "SELECT \(select.joined(separator: ", ")) FROM (\(source)) AS bi_src"
+        let top = dialect.kind == .sqlserver ? spec.limit.map { "TOP \($0) " } ?? "" : ""
+        var sql = "SELECT \(top)\(select.joined(separator: ", ")) FROM (\(source)) AS bi_src"
         let conditions = spec.filters.filter(\.isActive).map { condition($0, dialect) }
         if !conditions.isEmpty { sql += " WHERE " + conditions.joined(separator: " AND ") }
         if !spec.dimensions.isEmpty {
-            sql += " GROUP BY " + spec.dimensions.indices.map { String($0 + 1) }.joined(separator: ", ")
+            // SQL Server can't GROUP BY a column position: repeat the expressions.
+            sql += " GROUP BY " + (dialect.kind == .sqlserver
+                ? spec.dimensions.map { expression($0, dialect) }.joined(separator: ", ")
+                : spec.dimensions.indices.map { String($0 + 1) }.joined(separator: ", "))
         }
         if let sort = spec.sort {
             let position: Int? = switch sort.key {
@@ -80,19 +98,23 @@ public enum BIQueryBuilder {
             }
             if let position { sql += " ORDER BY \(position) \(sort.ascending ? "ASC" : "DESC")" }
         }
-        if let limit = spec.limit { sql += " LIMIT \(limit)" }
+        if let limit = spec.limit, dialect.kind != .sqlserver { sql += " LIMIT \(limit)" }
         return sql
     }
 
     /// The distinct values of one field (for a dashboard filter's value list), most frequent first.
     public static func distinctValues(field: String, source: String, dialect: SQLDialect, bucket: BIDateBucket? = nil, limit: Int = 200) -> String {
         let column = expression(BIDimension(field: field, bucket: bucket), dialect)
-        return "SELECT \(column) AS v, COUNT(*) AS n FROM (\(source)) AS bi_src WHERE \(dialect.quoteIdentifier(field)) IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT \(limit)"
+        let rest = "FROM (\(source)) AS bi_src WHERE \(dialect.quoteIdentifier(field)) IS NOT NULL"
+        if dialect.kind == .sqlserver {
+            return "SELECT TOP \(limit) \(column) AS v, COUNT(*) AS n \(rest) GROUP BY \(column) ORDER BY 2 DESC, 1"
+        }
+        return "SELECT \(column) AS v, COUNT(*) AS n \(rest) GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT \(limit)"
     }
 
     /// A sample of the source to infer field types from.
-    public static func sample(source: String, limit: Int = 200) -> String {
-        "SELECT * FROM (\(source)) AS bi_src LIMIT \(limit)"
+    public static func sample(source: String, dialect: SQLDialect, limit: Int = 200) -> String {
+        dialect.kind == .sqlserver ? "SELECT TOP \(limit) * FROM (\(source)) AS bi_src" : "SELECT * FROM (\(source)) AS bi_src LIMIT \(limit)"
     }
 
     static func expression(_ dim: BIDimension, _ dialect: SQLDialect) -> String {

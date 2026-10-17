@@ -272,7 +272,7 @@ public enum BIEngine {
 
     public static func fields(for source: BIDataSource, driver: any DatabaseDriver) async throws -> [BIField] {
         let dialect = SQLDialect(kind: driver.config.kind)
-        let sample = try await driver.executeStatement(BIQueryBuilder.sample(source: source.baseSQL(dialect)), maxRows: 200)
+        let sample = try await driver.executeStatement(BIQueryBuilder.sample(source: source.baseSQL(dialect), dialect: dialect), maxRows: 200)
         return BIFieldInference.fields(sample, keeping: source.fields)
     }
 
