@@ -323,7 +323,7 @@ private struct ObjectInfo: View {
     private var driverSchema: String? {
         guard let context else { return nil }
         switch context.kind {
-        case .postgresql: return object.schema
+        case .postgresql, .sqlserver: return object.schema
         case .mysql, .mariadb, .mongodb: return context.name
         case .sqlite: return nil
         case .redis: return nil

@@ -407,7 +407,7 @@ struct DesignTableView: View {
                     Text("Comment:")
                     TextField("", text: $model.comment).frame(width: 360)
                 }
-            case .postgresql:
+            case .postgresql, .sqlserver:
                 GridRow {
                     Text("Comment:").gridColumnAlignment(.trailing)
                     TextField("", text: $model.comment).frame(width: 360)
@@ -633,7 +633,7 @@ private struct FieldProperties: View {
     private var inertProperties: [String] {
         switch model.kind {
         case .sqlite: ["Collate", "Not Null ON CONFLICT", "Generated Type", "Generated Value"]
-        case .postgresql: ["Comment", "Collation"]
+        case .postgresql, .sqlserver: ["Comment", "Collation"]
         case .redis: []
         case .mysql, .mariadb, .mongodb: ["Comment", "Character Set", "Collation"]
         }

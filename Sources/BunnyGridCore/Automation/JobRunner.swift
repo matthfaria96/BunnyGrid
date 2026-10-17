@@ -169,6 +169,7 @@ public actor JobRunner {
         let config = try connection(settings.target.connectionID)
         let listSchema: String? = switch config.kind {
         case .postgresql: settings.target.schema ?? "public"
+        case .sqlserver: settings.target.schema ?? "dbo"
         case .mysql, .mariadb, .mongodb: settings.target.database
         case .sqlite: nil
         case .redis: nil
@@ -207,6 +208,7 @@ public actor JobRunner {
         func schema(_ config: ConnectionConfig, _ target: JobTarget) -> String? {
             switch config.kind {
             case .postgresql: target.schema ?? "public"
+            case .sqlserver: target.schema ?? "dbo"
             case .mysql, .mariadb, .mongodb: target.database
             case .sqlite: nil
             case .redis: nil

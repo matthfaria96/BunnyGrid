@@ -55,20 +55,44 @@ public actor SQLiteDriver: DatabaseDriver {
 
     public func listSchemas() async throws -> [String] { [] }
 
+    /// Attaches another database file under `alias` (Navicat's "Attach Database…"); it then shows up in
+    /// `listDatabases()` and its objects are listed with `alias` as their schema.
+    public func attach(path: String, as alias: String) async throws {
+        let file = (path as NSString).expandingTildeInPath
+        _ = try await executeStatement("ATTACH DATABASE \(dialect.quoteLiteral(file)) AS \(dialect.quoteIdentifier(alias))")
+    }
+
+    public func detach(_ alias: String) async throws {
+        _ = try await executeStatement("DETACH DATABASE \(dialect.quoteIdentifier(alias))")
+    }
+
+    /// `main.sqlite_master`, or the attached database's catalog.
+    private func master(_ schema: String?) -> String {
+        guard let schema, !schema.isEmpty, schema != "main" else { return "sqlite_master" }
+        return dialect.quoteIdentifier(schema) + ".sqlite_master"
+    }
+
+    private func attachedSchema(_ schema: String?) -> String? {
+        guard let schema, !schema.isEmpty, schema != "main" else { return nil }
+        return schema
+    }
+
     public func listObjects(schema: String?) async throws -> [DatabaseObject] {
         let result = try await executeStatement("""
-            SELECT name, type FROM sqlite_master
+            SELECT name, type FROM \(master(schema))
             WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
             ORDER BY type, name
             """)
+        let owner = attachedSchema(schema)
         return result.rows.compactMap { row in
             guard case .text(let name) = row[0], case .text(let type) = row[1] else { return nil }
-            return DatabaseObject(schema: nil, name: name, kind: type == "view" ? .view : .table)
+            return DatabaseObject(schema: owner, name: name, kind: type == "view" ? .view : .table)
         }
     }
 
     public func listColumns(table: String, schema: String?) async throws -> [TableColumn] {
-        let result = try await executeStatement("PRAGMA table_info(\(dialect.quoteIdentifier(table)))")
+        let prefix = attachedSchema(schema).map { dialect.quoteIdentifier($0) + "." } ?? ""
+        let result = try await executeStatement("PRAGMA \(prefix)table_info(\(dialect.quoteIdentifier(table)))")
         // cid, name, type, notnull, dflt_value, pk
         return result.rows.map { row in
             TableColumn(
@@ -85,7 +109,7 @@ public actor SQLiteDriver: DatabaseDriver {
     /// SQLite keeps each object's original CREATE statement in sqlite_master.
     public func objectDDL(name: String, kind: DatabaseObjectKind, schema: String?) async throws -> String {
         let result = try await executeStatement("""
-            SELECT sql FROM sqlite_master WHERE tbl_name = \(dialect.quoteLiteral(name)) AND sql IS NOT NULL
+            SELECT sql FROM \(master(schema)) WHERE tbl_name = \(dialect.quoteLiteral(name)) AND sql IS NOT NULL
             ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'view' THEN 0 ELSE 1 END, name
             """)
         let statements = result.rows.compactMap { row -> String? in
@@ -100,9 +124,9 @@ public actor SQLiteDriver: DatabaseDriver {
     public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] {
         let result = try await executeStatement("""
             SELECT o.name, o.rootpage,
-                   (SELECT COUNT(*) FROM sqlite_master i WHERE i.type = 'index' AND i.tbl_name = o.name),
-                   (SELECT COUNT(*) FROM sqlite_master t WHERE t.type = 'trigger' AND t.tbl_name = o.name)
-              FROM sqlite_master o WHERE o.type IN ('table', 'view')
+                   (SELECT COUNT(*) FROM \(master(schema)) i WHERE i.type = 'index' AND i.tbl_name = o.name),
+                   (SELECT COUNT(*) FROM \(master(schema)) t WHERE t.type = 'trigger' AND t.tbl_name = o.name)
+              FROM \(master(schema)) o WHERE o.type IN ('table', 'view')
             """)
         var stats: [String: TableStatistics] = [:]
         for row in result.rows where row.count == 4 {
@@ -113,8 +137,8 @@ public actor SQLiteDriver: DatabaseDriver {
             entry.hasTriggers = (int(row[3]) ?? 0) > 0
             stats[row[0].displayString] = entry
         }
-        for object in try await listObjects(schema: nil) where object.kind == .table {
-            let count = try? await executeStatement("SELECT COUNT(*) FROM \(dialect.quoteIdentifier(object.name))").rows.first?.first
+        for object in try await listObjects(schema: schema) where object.kind == .table {
+            let count = try? await executeStatement("SELECT COUNT(*) FROM \(dialect.qualifiedName(table: object.name, schema: object.schema))").rows.first?.first
             if case .integer(let n) = count { stats[object.name, default: TableStatistics()].rows = Int(n) }
         }
         return stats

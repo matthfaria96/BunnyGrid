@@ -61,11 +61,12 @@ public enum BackupEngine {
                               progress: @Sendable (String) async -> Void = { _ in }) async throws -> BackupEntry {
         let listSchema: String? = switch connection.kind {
         case .postgresql: schema ?? "public"
+        case .sqlserver: schema ?? "dbo"
         case .mysql, .mariadb, .mongodb: schema ?? database
         case .sqlite: nil
         case .redis: nil
         }
-        let manifestSchema = connection.kind == .postgresql ? listSchema : nil
+        let manifestSchema = connection.kind.hasSchemas ? listSchema : nil
         await progress("Reading the object list…")
         let all = try await driver.listObjects(schema: listSchema).filter { $0.kind == .table || $0.kind == .view || $0.kind == .materializedView }
         let objects: [DatabaseObject]

@@ -63,15 +63,24 @@ public enum SQLSplitter {
         var blockDepth = 0
         var delimiter: [Character] = [";"]
 
+        var previousWord = ""
         func endWord() {
             guard !word.isEmpty else { return }
             let upper = word.uppercased()
-            if upper == "CREATE", current.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().hasPrefix("CREATE") { sawCreate = true }
-            if sawCreate, upper == "TRIGGER" { isTrigger = true }
+            let leading = current.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if upper == "CREATE", leading.hasPrefix("CREATE") || leading.hasPrefix("ALTER") { sawCreate = true }
+            if upper == "ALTER", leading.hasPrefix("ALTER") || leading.hasPrefix("CREATE") { sawCreate = true }
+            // Triggers (SQLite, MySQL, T-SQL) and T-SQL / MySQL routines keep the `;` of their BEGIN … END body.
+            if sawCreate, ["TRIGGER", "PROCEDURE", "PROC", "FUNCTION"].contains(upper) { isTrigger = true }
             if isTrigger {
                 if upper == "BEGIN" || upper == "CASE" { blockDepth += 1 }
                 if upper == "END", blockDepth > 0 { blockDepth -= 1 }
+                // T-SQL's BEGIN TRAN[SACTION] / BEGIN DISTRIBUTED opens no block.
+                if previousWord == "BEGIN", ["TRAN", "TRANSACTION", "DISTRIBUTED", "DIALOG", "CONVERSATION"].contains(upper), blockDepth > 0 {
+                    blockDepth -= 1
+                }
             }
+            previousWord = upper
             word = ""
         }
 
@@ -90,6 +99,7 @@ public enum SQLSplitter {
             isTrigger = false
             sawCreate = false
             blockDepth = 0
+            previousWord = ""
         }
 
         while i < chars.count {
@@ -103,6 +113,13 @@ public enum SQLSplitter {
                 segmentStart = command.end
                 delimiter = command.delimiter
                 i = command.end
+                continue
+            }
+            // SQL Server's `GO` batch separator: a line of its own (optionally `GO 5`) ends the statement.
+            if (c == "G" || c == "g"), i == 0 || chars[i - 1].isNewline, let end = goCommand(chars, at: i) {
+                endWord()
+                flush(end: i, delimiterEnd: end)
+                i = end
                 continue
             }
             if delimiter != [";"], c == delimiter[0], i + delimiter.count <= chars.count,
@@ -122,6 +139,13 @@ public enum SQLSplitter {
             switch c {
             case "'", "\"", "`":
                 let end = scanQuoted(chars, from: i, quote: c)
+                current.append(contentsOf: chars[i..<end])
+                i = end
+            case "[":
+                // T-SQL / SQLite bracketed identifier: [a;b].
+                var end = i + 1
+                while end < chars.count, chars[end] != "]", !chars[end].isNewline { end += 1 }
+                end = end < chars.count && chars[end] == "]" ? end + 1 : i + 1
                 current.append(contentsOf: chars[i..<end])
                 i = end
             case "-" where next == "-":
@@ -167,6 +191,16 @@ public enum SQLSplitter {
         let token = String(chars[(index + keyword.count)..<end]).trimmingCharacters(in: .whitespaces)
         guard !token.isEmpty, !token.contains(" ") else { return nil }
         return (Array(token), end)
+    }
+
+    /// Recognizes a `GO` (or `GO n`) line at `index`; returns the index after the line.
+    private static func goCommand(_ chars: [Character], at index: Int) -> Int? {
+        guard index + 1 < chars.count, String(chars[index...(index + 1)]).uppercased() == "GO" else { return nil }
+        var end = index + 2
+        while end < chars.count && !chars[end].isNewline { end += 1 }
+        let rest = String(chars[(index + 2)..<end]).trimmingCharacters(in: .whitespaces)
+        guard rest.isEmpty || (rest.allSatisfy(\.isNumber)) || rest.hasPrefix("--") else { return nil }
+        return end
     }
 
     private static func isSpace(_ c: Character) -> Bool {

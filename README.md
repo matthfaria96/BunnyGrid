@@ -1,7 +1,7 @@
 # BunnyGrid
 
 Cliente de bancos de dados nativo para macOS, em Swift e SwiftUI.
-Conecta em **SQLite, PostgreSQL, MySQL, MariaDB, MongoDB e Redis**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
+Conecta em **SQLite, PostgreSQL, MySQL, MariaDB, SQL Server (e Azure SQL), MongoDB e Redis**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
 
 Referências:
 - **Beekeeper Studio**: arquitetura (contrato de driver, fluxo conexão → árvore → abas). Usado só como referência; nenhum código foi copiado (veja [Licenças](#licenças)).
@@ -90,6 +90,18 @@ docker rm -f bg-mariadb
 
 Os testes de SSL, socket e túnel SSH (`ConnectivityIntegrationTests.swift`) usam outras variáveis: `BUNNYGRID_TLS_PG_PORT`, `BUNNYGRID_TLS_PG_USER` e `BUNNYGRID_TLS_PG_CERTS` (PostgreSQL com `ssl = on` e uma CA própria), `BUNNYGRID_PG_SOCKET_DIR`, e `BUNNYGRID_SSH_PORT`, `BUNNYGRID_SSH_USER` e `BUNNYGRID_SSH_KEYS` (um `sshd` com chaves de teste). O comentário no topo do arquivo descreve os arquivos esperados. Com o Remote Login desligado, um `sshd -D -f <config>` do próprio usuário numa porta alta serve.
 
+### Testes de integração com SQL Server
+
+Com um SQL Server acessível. Num Mac com Apple Silicon, o contêiner oficial roda sob Rosetta (colima ou Docker Desktop):
+
+```sh
+docker run -d --name bg-mssql --platform linux/amd64 -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD='…' -p 14331:1433 mcr.microsoft.com/mssql/server:2022-latest
+BUNNYGRID_MSSQL_PORT=14331 BUNNYGRID_MSSQL_PASSWORD='…' swift test --filter SQLServer
+docker rm -f bg-mssql
+```
+
+`BUNNYGRID_MSSQL_HOST` e `BUNNYGRID_MSSQL_USER` (padrão `sa`) mudam o destino. O login precisa de CREATE DATABASE: cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MSSQL_PORT` esses testes são pulados; os testes do protocolo (`TDSProtocolTests`) rodam sempre, com bytes de exemplo.
+
 ### Testes de integração com Redis
 
 ```sh
@@ -116,7 +128,7 @@ No build de debug, `--edit-connection` abre o editor da primeira conexão salva 
 Sources/
   BunnyGridCore/          núcleo sem UI (testável)
     Models/               ConnectionConfig, objetos, colunas, CellValue, QueryResult
-    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO), MongoDB (cliente próprio), Redis (RedisDriver)
+    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO), SQL Server (cliente TDS próprio em `Drivers/TDS`), MongoDB (cliente próprio), Redis (RedisDriver)
     Redis/                cliente RESP2/RESP3 próprio em SwiftNIO, parser de linha de comando (aspas do redis-cli), KeyValueDatabaseDriver, árvore de pastas das chaves, INFO/CLIENT LIST/SLOWLOG
     Mongo/                BSON, OP_MSG sobre SwiftNIO, SCRAM, mongodb+srv (dnssd), parser do shell, DocumentDatabaseDriver, achatamento para o grid
     SQL/                  SQLDialect (aspas, SELECT paginado, EXPLAIN), SQLSplitter (divide scripts, comando sob o cursor) e QueryPlan (árvore do plano)
@@ -201,6 +213,11 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - **Fix with AI** e **Ask AI** (explicar o erro) aparecem quando uma consulta falha, usando a instrução que falhou e a mensagem do banco.
   - **Opções** (Settings › AI Assistant): por plataforma, Max Tokens, Effort (Low/Medium/High; os modelos atuais não aceitam temperature) e Instruction; Action for Enter key, Enable Compare with Other Assistants e Show AI features.
 - **Model** (barra principal ou "Reverse Database to Model" no menu de contexto do banco/schema): aba com o diagrama ER do banco ou schema, lido do catálogo (tabelas, colunas, chaves primárias e estrangeiras). Layout automático em camadas (tabelas referenciadas à esquerda, relacionadas próximas), arrastar cartões, zoom (⌘+ / ⌘-, pinça, ajustar), clicar destaca as relações; linhas com pés de galinha (1:N, 1:1, opcional). As posições ficam em `model-layouts.json` por conexão, banco e schema. Exporta PNG/PDF e **Generate SQL** gera CREATE TABLE + chaves estrangeiras para SQLite, PostgreSQL, MySQL ou MariaDB (com tradução de tipos), para copiar, salvar ou abrir numa consulta. Flags de debug: `--open-model`, `--model-select TABELA`, `--model-export arquivo.png|pdf`, `--model-sql`.
+- **SQL Server e Azure SQL** (cliente TDS 7.4 próprio em Swift sobre SwiftNIO, `Sources/BunnyGridCore/Drivers/TDS`, escrito a partir da especificação pública [MS-TDS]; sem FreeTDS): PRELOGIN, TLS 1.2 dentro de pacotes PRELOGIN (como o TDS 7.x exige) e depois na conexão inteira, LOGIN7 com SQL Server Authentication, SQLBatch, RPC `sp_executesql` com parâmetros tipados (`@p1…`, bigint/float/bit/varbinary/nvarchar), ATTENTION. Tipos: int/bigint/smallint/tinyint, bit, decimal/numeric, money/smallmoney, float/real, char/varchar/nchar/nvarchar (inclusive `max`, por PLP), text/ntext/image, binary/varbinary, date/time/datetime/datetime2/datetimeoffset/smalldatetime, uniqueidentifier, xml, sql_variant e tipos CLR (como bytes); varchar decodificado pela página de código da collation (e UTF-8 nas collations `_UTF8`).
+  - **New Connection**: SQL Server, Azure SQL Database e os serviços SQL Server de AWS, Google Cloud, Alibaba, Huawei e Tencent funcionam (porta 1433). Authentication mostra só SQL Server Authentication (Windows/Entra ainda não). SSL: Disabled não pede criptografia (o servidor pode exigir), Prefer usa TLS quando o servidor oferece, Require exige sem checar o certificado, Verify CA / Verify Full checam a CA e o nome. Túnel SSH pelo mesmo `ConnectionEndpoint`; SQL Server não aceita socket Unix. `sqlserver://` e `mssql://` no New Connection with URI (`?encrypt=true|false|strict`).
+  - **Navegação** como no Navicat for SQL Server: conexão → bancos → schemas (`dbo` aberto) → Tables / Views / Functions (procedures e funções) / Queries / Backups; cada banco tem a sua conexão.
+  - Catálogo `sys.*`: colunas (tipos como `nvarchar(50)`, `decimal(10,2)`), índices, chaves estrangeiras, triggers, estatísticas (linhas, tamanho, MS_Description, datas) e DDL montado como o SSMS (IDENTITY, colunas computadas, defaults nomeados, PK/UNIQUE CLUSTERED/NONCLUSTERED, CHECK, índices com INCLUDE e filtro, triggers, chaves no fim); views, procedures e funções mostram `OBJECT_DEFINITION`.
+  - Grid paginado com `OFFSET … FETCH`, edições como parâmetros tipados (NULL vai literal), transações (`BEGIN TRANSACTION`, o descritor acompanha o ENVCHANGE), Design Table (`sp_rename`, `ALTER COLUMN`, defaults como constraints), renomear/duplicar/truncar, Dump SQL (com `SET IDENTITY_INSERT`), Explain pelo `SET SHOWPLAN_XML` (árvore de operadores com custo e linhas), Stop pelo ATTENTION na própria conexão, limite de linhas que para o servidor (ATTENTION) em vez de descartar, logins no User (sysadmin/dbcreator), Others (procedures, triggers, sequences, synonyms, types, índices, schemas). O divisor de scripts entende `GO`, `[identificadores]` e os `BEGIN … END` de procedures e funções.
 - **MongoDB** (cliente próprio em Swift sobre SwiftNIO, sem dependências novas): BSON completo (inclusive Decimal128), OP_MSG, `hello`, SCRAM-SHA-256 e SCRAM-SHA-1, TLS pela aba SSL, túnel SSH e socket pelo mesmo `ConnectionEndpoint`, `mongodb://` com vários hosts (conecta no primário do replica set) e `mongodb+srv://` (registros SRV/TXT via dnssd, TLS ligado). New Connection com MongoDB e MongoDB Atlas; o formulário ganha Connection Type (Standalone/Replica Set ou SRV), outros hosts, Replica Set, Auth Database e Auth Mechanism, e New Connection with URI aceita `mongodb://` e `mongodb+srv://`.
   - **Navegação**: conexão → bancos → Collections / Views / GridFS / Indexes / Queries. O driver implementa `DatabaseDriver` (coleções como tabelas com a união das chaves de primeiro nível, aninhados como JSON) e `DocumentDatabaseDriver` (find, aggregate, insert, update, delete, runCommand, explain, índices, `$collStats`). Os drivers SQL não mudaram.
   - **Visualizador de coleção**: Grid View (cabeçalho com o tipo BSON de cada campo), Tree View e JSON View; barra Filter / Sort / Projection com a sintaxe do shell; paginação com o total; clicar no cabeçalho ordena; edições de célula pendentes com Apply/Discard (`$set` por `_id`, preservando o tipo do campo); Add / Edit / Duplicate / Delete abrem um editor JSON com Beautify e Validate (`ObjectId("…")`, `ISODate("…")`, `NumberLong`…); Import (JSON, JSON Lines, CSV) e Export (JSON em Extended JSON relaxado, JSON Lines, CSV); estatísticas (documentos, tamanho, índices); GridFS: Save File remonta o arquivo dos chunks.
@@ -216,4 +233,4 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
 ## Licenças
 
 - **Beekeeper Studio Community** é GPL-3 (e `src-commercial/` tem licença comercial). Copiar ou traduzir o código dele para Swift faz do BunnyGrid uma obra derivada sob GPL-3. Até que se decida isso, o Beekeeper serve só como referência de arquitetura e comportamento.
-- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O cliente Redis é código próprio sobre SwiftNIO (o RediStack não foi usado: só fala RESP2). O MongoDB não usa o MongoKitten: o cliente é próprio (BSON + OP_MSG + SCRAM, ~2 mil linhas), sem pacotes novos, testado contra o MongoDB 9.0 (wire version 29).
+- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O cliente Redis é código próprio sobre SwiftNIO (o RediStack não foi usado: só fala RESP2). O MongoDB não usa o MongoKitten: o cliente é próprio (BSON + OP_MSG + SCRAM, ~2 mil linhas), sem pacotes novos, testado contra o MongoDB 9.0 (wire version 29). O SQL Server também usa um cliente próprio (TDS 7.4 sobre SwiftNIO; só acrescenta o produto NIOTLS do swift-nio), testado contra o SQL Server 2022 (16.0).

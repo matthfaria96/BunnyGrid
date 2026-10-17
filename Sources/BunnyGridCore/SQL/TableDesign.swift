@@ -80,6 +80,9 @@ extension SQLDialect {
              "date", "datetime", "timestamp", "json", "blob"]
         case .sqlite:
             ["INTEGER", "REAL", "NUMERIC", "TEXT", "BLOB"]
+        case .sqlserver:
+            ["int", "bigint", "smallint", "tinyint", "bit", "decimal(18,2)", "money", "float", "nvarchar(255)", "nvarchar(max)",
+             "varchar(255)", "nchar(10)", "date", "datetime2(7)", "datetimeoffset(7)", "time(7)", "uniqueidentifier", "varbinary(max)", "xml"]
         case .redis: []
         }
     }
@@ -140,7 +143,7 @@ extension SQLDialect {
 
     public func dropIndex(named name: String, table: String, schema: String?) -> String {
         switch kind {
-        case .mysql, .mariadb, .mongodb: "DROP INDEX \(quoteIdentifier(name)) ON \(qualifiedName(table: table, schema: schema))"
+        case .mysql, .mariadb, .sqlserver, .mongodb: "DROP INDEX \(quoteIdentifier(name)) ON \(qualifiedName(table: table, schema: schema))"
         case .postgresql: "DROP INDEX \(qualifiedName(table: name, schema: schema))"
         case .sqlite: "DROP INDEX \(quoteIdentifier(name))"
         case .redis: ""
@@ -183,12 +186,15 @@ extension SQLDialect {
         var statements: [String] = []
         let kept = Set(design.compactMap(\.originalName))
         for column in original where !kept.contains(column.name) {
+            if kind == .sqlserver, column.defaultValue != nil { statements.append(sqlServerDropDefault(table: table, column: column.name)) }
             statements.append("ALTER TABLE \(table) DROP COLUMN \(quoteIdentifier(column.name))")
         }
 
         for column in design {
             guard let originalName = column.originalName, let before = originalsByName[originalName] else { continue }
-            if originalName != column.name {
+            if originalName != column.name, kind == .sqlserver {
+                statements.append("EXEC sp_rename \(quoteLiteral(table + "." + quoteIdentifier(originalName))), \(quoteLiteral(column.name)), 'COLUMN'")
+            } else if originalName != column.name {
                 statements.append("ALTER TABLE \(table) RENAME COLUMN \(quoteIdentifier(originalName)) TO \(quoteIdentifier(column.name))")
             }
             let typeChanged = before.dataType.lowercased() != column.type.trimmingCharacters(in: .whitespaces).lowercased()
@@ -209,6 +215,14 @@ extension SQLDialect {
                 }
             case .mysql, .mariadb, .mongodb:
                 statements.append("ALTER TABLE \(table) MODIFY COLUMN \(columnDefinition(column))")
+            case .sqlserver:
+                if typeChanged || nullChanged {
+                    statements.append("ALTER TABLE \(table) ALTER COLUMN \(target) \(column.type.trimmingCharacters(in: .whitespaces)) \(column.nullable ? "NULL" : "NOT NULL")")
+                }
+                if defaultChanged {
+                    if before.defaultValue != nil { statements.append(sqlServerDropDefault(table: table, column: column.name)) }
+                    if !newDefault.isEmpty { statements.append("ALTER TABLE \(table) ADD DEFAULT \(newDefault) FOR \(target)") }
+                }
             case .sqlite:
                 throw TableDesignError.unsupported("SQLite can't change the type, NOT NULL or default of “\(column.name)”. Recreate the table to change it.")
             case .redis: throw DatabaseError.unsupported("Tables")
@@ -219,8 +233,18 @@ extension SQLDialect {
             if kind == .sqlite && !column.nullable && column.defaultValue.trimmingCharacters(in: .whitespaces).isEmpty {
                 throw TableDesignError.unsupported("SQLite needs a default value to add the NOT NULL field “\(column.name)”.")
             }
-            statements.append("ALTER TABLE \(table) ADD COLUMN \(columnDefinition(column))")
+            statements.append("ALTER TABLE \(table) ADD \(kind == .sqlserver ? "" : "COLUMN ")\(columnDefinition(column))")
         }
         return statements
+    }
+
+    /// SQL Server keeps a default as a named constraint; this drops it whatever its (generated) name is.
+    func sqlServerDropDefault(table: String, column: String) -> String {
+        """
+        DECLARE @df sysname = (SELECT d.name FROM sys.default_constraints d JOIN sys.columns c ON c.default_object_id = d.object_id \
+        WHERE c.object_id = OBJECT_ID(\(quoteLiteral(table))) AND c.name = \(quoteLiteral(column))); \
+        DECLARE @dropdf nvarchar(max) = \(quoteLiteral("ALTER TABLE \(table) DROP CONSTRAINT ")) + QUOTENAME(@df); \
+        IF @df IS NOT NULL EXEC(@dropdf)
+        """
     }
 }

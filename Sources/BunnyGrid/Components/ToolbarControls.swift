@@ -97,6 +97,16 @@ struct ToolbarChip: View {
     }
 }
 
+/// Thin vertical rule between groups of a tab toolbar, as in Navicat.
+struct ToolbarGroupSeparator: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.15))
+            .frame(width: 1, height: 18)
+            .padding(.horizontal, 3)
+    }
+}
+
 /// Popover for toolbar items whose feature isn't built yet.
 struct ComingSoonNote: View {
     let title: String

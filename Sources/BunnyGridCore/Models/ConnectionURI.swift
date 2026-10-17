@@ -15,7 +15,7 @@ public enum ConnectionURI {
         public var errorDescription: String? {
             switch self {
             case .invalid: "That doesn't look like a connection URI."
-            case .unsupportedScheme(let scheme): "“\(scheme)” connections aren't supported yet. Use postgresql://, mysql://, mariadb://, mongodb:// or sqlite://."
+            case .unsupportedScheme(let scheme): "“\(scheme)” connections aren't supported yet. Use postgresql://, mysql://, mariadb://, sqlserver://, mongodb:// or sqlite://."
             }
         }
     }
@@ -32,6 +32,7 @@ public enum ConnectionURI {
         case "mysql", "mysqlx": kind = .mysql
         case "mariadb": kind = .mariadb
         case "sqlite", "file": kind = .sqlite
+        case "sqlserver", "mssql": kind = .sqlserver
         case "redis", "rediss": kind = .redis
         default: throw ParseError.unsupportedScheme(scheme)
         }
@@ -65,7 +66,7 @@ public enum ConnectionURI {
             port: components.port,
             username: components.user?.removingPercentEncoding ?? "",
             database: database.removingPercentEncoding ?? database,
-            tls: tlsMode(query["sslmode"] ?? query["ssl-mode"] ?? query["ssl"] ?? "")
+            tls: tlsMode(query["sslmode"] ?? query["ssl-mode"] ?? query["ssl"] ?? query["encrypt"] ?? "")
         )
         let files = SSLFiles(
             caCertificatePath: query["sslrootcert"] ?? query["ssl-ca"] ?? query["sslca"] ?? "",
@@ -85,8 +86,9 @@ public enum ConnectionURI {
     /// libpq `sslmode` and MySQL `ssl-mode` values (and the `ssl=true/false` shorthand).
     static func tlsMode(_ value: String) -> TLSMode {
         switch value.lowercased() {
-        case "disable", "disabled", "false", "0": .disable
-        case "require", "required", "true", "1": .require
+        case "disable", "disabled", "false", "0", "no": .disable
+        case "require", "required", "true", "1", "yes", "mandatory": .require
+        case "strict": .verifyFull
         case "verify-ca", "verify_ca": .verifyCA
         case "verify-full", "verify_full", "verify_identity", "verify-identity": .verifyFull
         default: .prefer
