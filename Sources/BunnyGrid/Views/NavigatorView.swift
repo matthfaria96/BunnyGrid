@@ -62,6 +62,7 @@ struct NavigatorView: View {
                 return .handled
             }
 
+            if let browser = app.redisSelection?.session.redis { RedisFilterBar(browser: browser) }
             NavigatorSearchBar()
         }
         .background(VisualEffectBackground(material: .sidebar))
@@ -91,6 +92,14 @@ struct NavigatorView: View {
         } message: {
             Text("Runs CREATE DATABASE on the server.")
         }
+        .sheet(item: Binding(get: { app.redisNewKey }, set: { app.redisNewKey = $0 })) { RedisNewKeySheet(target: $0) }
+        .confirmationDialog("Delete \(app.redisPendingDelete?.keys.count ?? 0) key(s) matching “\(app.redisPendingDelete?.label ?? "")”?",
+                            isPresented: Binding(get: { app.redisPendingDelete != nil }, set: { if !$0 { app.redisPendingDelete = nil } })) {
+            Button("Delete", role: .destructive) {
+                if let pending = app.redisPendingDelete { app.deleteRedisKeys(pending.keys, database: pending.database, connectionID: pending.connectionID) }
+                app.redisPendingDelete = nil
+            }
+        }
     }
 
     @State private var newGroupName = ""
@@ -98,7 +107,7 @@ struct NavigatorView: View {
 
     private func isExpandable(_ node: NavNode) -> Bool {
         switch node {
-        case .object, .savedQuery, .cloudInfo: false
+        case .object, .savedQuery, .cloudInfo, .redisKey, .redisMore: false
         default: true
         }
     }
@@ -153,7 +162,12 @@ struct NavigatorView: View {
                                isExpandable: true, isExpanded: app.expanded.contains(dbNode))
             dbRow.isLoading = context?.state == .opening
             if case .failed(let message) = context?.state { dbRow.warning = message }
+            if let browser = session.redis { dbRow.subtitle = browser.keyCount(database).map { "(\($0))" }; dbRow.isLoading = false }
             rows.append(dbRow)
+            if session.redis != nil {
+                if dbRow.isExpanded { Self.appendRedisKeys(app: app, session: session, database: database, depth: depth + 2, filter: filter, to: &rows) }
+                continue
+            }
             guard dbRow.isExpanded, let context, context.isOpen else { continue }
 
             if context.usesSchemas {
@@ -298,6 +312,10 @@ private struct NavContextMenu: View {
 
     var body: some View {
         switch node {
+        case .database(let id, _) where app.sessions[id]?.redis != nil:
+            RedisNavContextMenu(node: node)
+        case .redisFolder, .redisKey, .redisMore:
+            RedisNavContextMenu(node: node)
         case .connection(let id):
             let isOpen = app.sessions[id]?.isConnected == true
             if isOpen {
@@ -311,7 +329,9 @@ private struct NavContextMenu: View {
             Button("Delete Connection", role: .destructive) { app.delete(id) }
             Button("Duplicate Connection") { app.duplicate(id) }
             Divider()
-            if app.connection(id: id)?.kind != .sqlite {
+            if app.connection(id: id)?.kind == .redis {
+                RedisConnectionMenuItems(id: id)
+            } else if app.connection(id: id)?.kind != .sqlite {
                 Button("New Database…") { app.creatingDatabaseFor = id }
                     .disabled(!isOpen)
             }
@@ -453,6 +473,7 @@ extension DatabaseKind {
         case .sqlite: "doc.text.fill"
         case .postgresql: "cylinder.split.1x2.fill"
         case .mysql, .mariadb: "cylinder.fill"
+        case .redis: "key.fill"
         }
     }
 
@@ -462,6 +483,7 @@ extension DatabaseKind {
         case .postgresql: .blue
         case .mysql: .orange
         case .mariadb: .brown
+        case .redis: .red
         }
     }
 }

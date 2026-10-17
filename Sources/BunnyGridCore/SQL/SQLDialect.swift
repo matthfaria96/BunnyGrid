@@ -14,6 +14,7 @@ public struct SQLDialect: Sendable {
             "`" + name.replacingOccurrences(of: "`", with: "``") + "`"
         case .postgresql, .sqlite:
             "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        case .redis: RedisCommandLine.quote(Data(name.utf8))
         }
     }
 
@@ -116,6 +117,7 @@ public struct SQLDialect: Sendable {
         if statement.prefix(while: { $0.isLetter }).uppercased() == "EXPLAIN" { return statement }
         return switch kind {
         case .sqlite: "EXPLAIN QUERY PLAN " + statement
+        case .redis: statement
         case .postgresql: "EXPLAIN (FORMAT JSON) " + statement
         case .mysql, .mariadb: "EXPLAIN FORMAT=JSON " + statement
         }

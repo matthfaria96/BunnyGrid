@@ -6,6 +6,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
     case postgresql
     case mysql
     case mariadb
+    case redis
 
     public var id: String { rawValue }
 
@@ -15,6 +16,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .postgresql: "PostgreSQL"
         case .mysql: "MySQL"
         case .mariadb: "MariaDB"
+        case .redis: "Redis"
         }
     }
 
@@ -23,6 +25,7 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .sqlite: nil
         case .postgresql: 5432
         case .mysql, .mariadb: 3306
+        case .redis: 6379
         }
     }
 
@@ -31,6 +34,9 @@ public enum DatabaseKind: String, Codable, CaseIterable, Sendable, Identifiable 
     /// Whether the engine exposes schemas inside a database (PostgreSQL)
     /// or treats databases as the namespace level (MySQL/MariaDB, SQLite).
     public var hasSchemas: Bool { self == .postgresql }
+
+    /// Key-value engines browse keys instead of tables (`KeyValueDatabaseDriver`).
+    public var isKeyValue: Bool { self == .redis }
 }
 
 /// SSL modes, named after libpq's `sslmode` (MySQL's `ssl-mode` maps onto the same five).

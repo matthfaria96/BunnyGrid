@@ -1,7 +1,7 @@
 # BunnyGrid
 
 Cliente de bancos de dados nativo para macOS, em Swift e SwiftUI.
-Conecta em **SQLite, PostgreSQL, MySQL e MariaDB**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
+Conecta em **SQLite, PostgreSQL, MySQL, MariaDB e Redis**. Mostra a árvore de objetos, abre tabelas num grid paginado e executa SQL num editor com realce de sintaxe.
 
 Referências:
 - **Beekeeper Studio**: arquitetura (contrato de driver, fluxo conexão → árvore → abas). Usado só como referência; nenhum código foi copiado (veja [Licenças](#licenças)).
@@ -71,6 +71,16 @@ O usuário precisa de CREATE/DROP DATABASE: cada teste cria e apaga um banco pr�
 
 Os testes de SSL, socket e túnel SSH (`ConnectivityIntegrationTests.swift`) usam outras variáveis: `BUNNYGRID_TLS_PG_PORT`, `BUNNYGRID_TLS_PG_USER` e `BUNNYGRID_TLS_PG_CERTS` (PostgreSQL com `ssl = on` e uma CA própria), `BUNNYGRID_PG_SOCKET_DIR`, e `BUNNYGRID_SSH_PORT`, `BUNNYGRID_SSH_USER` e `BUNNYGRID_SSH_KEYS` (um `sshd` com chaves de teste). O comentário no topo do arquivo descreve os arquivos esperados. Com o Remote Login desligado, um `sshd -D -f <config>` do próprio usuário numa porta alta serve.
 
+### Testes de integração com Redis
+
+```sh
+redis-server --port 63791 --dir /tmp/bg-redis --requirepass segredo --daemonize yes
+BUNNYGRID_REDIS_PORT=63791 BUNNYGRID_REDIS_PASSWORD=segredo swift test --filter Redis
+redis-cli -p 63791 -a segredo shutdown nosave
+```
+
+Usa o db 9 e chaves `bunnygrid-test:*`. Opcionais: `BUNNYGRID_REDIS_TLS_PORT` + `BUNNYGRID_REDIS_TLS_CA` (e `_TLS_CERT` / `_TLS_KEY` para certificado de cliente) para um `redis-server --tls-port`, e `BUNNYGRID_REDIS_SOCKET` para socket Unix. O caminho do socket precisa ter menos de 104 caracteres (limite do macOS); um link simbólico curto para o socket serve. Com o módulo RedisJSON carregado (`--loadmodule …/rejson.so`, incluído no `redis` do Homebrew) o teste de JSON também roda.
+
 No build de debug, `--edit-connection` abre o editor da primeira conexão salva (`-connectionTab ssl|ssh|advanced` escolhe a aba) e `--test-connection` roda o Test Connection ao abrir.
 
 ## Estrutura
@@ -79,7 +89,8 @@ No build de debug, `--edit-connection` abre o editor da primeira conexão salva 
 Sources/
   BunnyGridCore/          núcleo sem UI (testável)
     Models/               ConnectionConfig, objetos, colunas, CellValue, QueryResult
-    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO)
+    Drivers/              protocolo DatabaseDriver + SQLite (libsqlite3), PostgreSQL (PostgresNIO), MySQL/MariaDB (MySQLNIO), Redis (RedisDriver)
+    Redis/                cliente RESP2/RESP3 próprio em SwiftNIO, parser de linha de comando (aspas do redis-cli), KeyValueDatabaseDriver, árvore de pastas das chaves, INFO/CLIENT LIST/SLOWLOG
     SQL/                  SQLDialect (aspas, SELECT paginado, EXPLAIN), SQLSplitter (divide scripts, comando sob o cursor) e QueryPlan (árvore do plano)
     Network/              túnel SSH (Citadel), host keys, configuração SSL e endpoint (TCP, socket ou túnel) usado pelos drivers
     Transfer/             zip e Excel (.xlsx), leitura de JSON para importar, execução de scripts .sql com progresso
@@ -87,6 +98,7 @@ Sources/
   BunnyGrid/              app SwiftUI
     App/                  BunnyGridApp, AppModel (conexões e sessões), Session (árvore e abas)
     Views/                janela, barra lateral, editor de conexão, abas de tabela e de consulta
+    Redis/                navegador de chaves, visualizador por tipo, Console, Server Monitor, New Key
     Components/           ResultGridView (NSTableView) e SQLEditorView (NSTextView)
 Tests/BunnyGridCoreTests  splitter, dialeto e driver SQLite
 Resources/Samples         demo.sqlite para testes manuais
@@ -153,8 +165,9 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - **Opções** (Settings › AI Assistant): por plataforma, Max Tokens, Effort (Low/Medium/High; os modelos atuais não aceitam temperature) e Instruction; Action for Enter key, Enable Compare with Other Assistants e Show AI features.
 - **Model** (barra principal ou "Reverse Database to Model" no menu de contexto do banco/schema): aba com o diagrama ER do banco ou schema, lido do catálogo (tabelas, colunas, chaves primárias e estrangeiras). Layout automático em camadas (tabelas referenciadas à esquerda, relacionadas próximas), arrastar cartões, zoom (⌘+ / ⌘-, pinça, ajustar), clicar destaca as relações; linhas com pés de galinha (1:N, 1:1, opcional). As posições ficam em `model-layouts.json` por conexão, banco e schema. Exporta PNG/PDF e **Generate SQL** gera CREATE TABLE + chaves estrangeiras para SQLite, PostgreSQL, MySQL ou MariaDB (com tradução de tipos), para copiar, salvar ou abrir numa consulta. Flags de debug: `--open-model`, `--model-select TABELA`, `--model-export arquivo.png|pdf`, `--model-sql`.
 - **Menus**: File, View (painéis), Table, Favorites (em breve), Tools.
+- **Redis** (como o Navicat for Redis): conexão → db0…db15 com o número de chaves (`INFO keyspace`) → chaves agrupadas em pastas pelo separador (`:` por padrão; menu do banco › Key Separator), carregadas aos poucos com `SCAN` (nunca `KEYS`) e Load More Keys. Filtro por padrão `MATCH` e por tipo acima da busca. Visualizador por tipo: string em texto, JSON (Beautify/Minify/validação) ou hex, carregar e salvar arquivo; hash, list, set, sorted set e stream em tabela com adicionar, editar (inclusive score), remover e filtrar; JSON do RedisJSON; TTL (EXPIRE/PERSIST), renomear (`RENAMENX`) e excluir; tamanho e `MEMORY USAGE` no rodapé. **New Key** para os sete tipos, com TTL. **Console** com conexão própria, prompt com o banco, histórico (↑/↓), respostas coloridas no formato do redis-cli e várias linhas de uma vez. **Server Monitor** com versão, uptime, clientes, memória, ops/s e hit rate, todas as seções do INFO, CLIENT LIST e SLOWLOG, com atualização automática. Conecta com senha ou usuário ACL (`HELLO 3`, com volta ao RESP2 e `AUTH` em servidores antigos), SSL (Require/Verify, CA e certificado de cliente), socket Unix, túnel SSH e URI `redis://` / `rediss://`. Serviços na nuvem compatíveis com Redis (ElastiCache, Memorystore, Azure Cache, Garnet, Redis Enterprise Cloud, ApsaraDB, DCS, TencentDB) usam o mesmo driver. Flags de debug (com `--connect-first` numa conexão Redis): `--redis-expand db0,user:`, `--redis-key CHAVE`, `--redis-console [COMANDOS]`, `--redis-server`, `--redis-new-key`.
 
 ## Licenças
 
 - **Beekeeper Studio Community** é GPL-3 (e `src-commercial/` tem licença comercial). Copiar ou traduzir o código dele para Swift faz do BunnyGrid uma obra derivada sob GPL-3. Até que se decida isso, o Beekeeper serve só como referência de arquitetura e comportamento.
-- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema.
+- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O cliente Redis é código próprio sobre SwiftNIO (o RediStack não foi usado: só fala RESP2).

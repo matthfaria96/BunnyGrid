@@ -43,6 +43,7 @@ public enum QueryPlan {
         case .postgresql, .mysql, .mariadb:
             guard result.columns.count == 1, result.rows.count == 1, let cell = result.rows.first?.first, !cell.isNull else { return nil }
             return kind == .postgresql ? postgresJSON(cell.displayString) : mysqlJSON(cell.displayString)
+        case .redis: return nil
         }
     }
 

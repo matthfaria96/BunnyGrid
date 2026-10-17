@@ -25,6 +25,7 @@ extension SQLDialect {
              "DELETE FROM sqlite_sequence WHERE name = \(quoteLiteral(object.name))"]
         case .postgresql: ["TRUNCATE TABLE \(qualifiedName(object)) RESTART IDENTITY"]
         case .mysql, .mariadb: ["TRUNCATE TABLE \(qualifiedName(object))"]
+        case .redis: []
         }
     }
 
@@ -37,6 +38,7 @@ extension SQLDialect {
             "ALTER \(object.kind == .view ? "VIEW" : object.kind == .materializedView ? "MATERIALIZED VIEW" : "TABLE") \(qualifiedName(object)) RENAME TO \(quoteIdentifier(newName))"
         case .sqlite:
             "ALTER TABLE \(qualifiedName(object)) RENAME TO \(quoteIdentifier(newName))"
+        case .redis: "RENAME \(object.name) \(newName)"
         }
     }
 
@@ -61,6 +63,7 @@ extension DatabaseDriver {
         let d = dialect
         var statements: [String]
         switch config.kind {
+        case .redis: throw DatabaseError.unsupported("Duplicating tables")
         case .postgresql:
             statements = ["CREATE TABLE \(d.qualifiedName(table: newName, schema: source.schema)) (LIKE \(d.qualifiedName(source)) INCLUDING ALL)"]
         case .mysql, .mariadb:

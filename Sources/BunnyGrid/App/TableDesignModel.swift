@@ -79,6 +79,7 @@ final class TableDesignModel: Identifiable {
             case .sqlite: "INTEGER"
             case .postgresql: "serial"
             case .mysql, .mariadb: "int"
+            case .redis: ""
             }
             columns = [ColumnDesign(name: "id", type: idType, nullable: false, isPrimaryKey: true)]
         }
@@ -94,6 +95,7 @@ final class TableDesignModel: Identifiable {
         case .postgresql: schema
         case .mysql, .mariadb: databaseName
         case .sqlite: nil
+        case .redis: nil
         }
     }
 
@@ -179,6 +181,7 @@ final class TableDesignModel: Identifiable {
                 .filter { !["information_schema", "performance_schema", "mysql", "sys"].contains($0) }
         case .sqlite:
             referenceSchemas = []
+        case .redis: referenceSchemas = []
         }
         await loadReferenceTables(schema: defaultReferenceSchema)
     }
@@ -203,6 +206,7 @@ final class TableDesignModel: Identifiable {
         case .sqlite: "CREATE TRIGGER \(name) AFTER UPDATE ON \(table)\nBEGIN\n  -- statements\n  SELECT 1;\nEND"
         case .mysql, .mariadb: "CREATE TRIGGER \(name) BEFORE INSERT ON \(table)\nFOR EACH ROW\nSET NEW.created_at = NOW()"
         case .postgresql: "CREATE TRIGGER \(name) BEFORE UPDATE ON \(table)\nFOR EACH ROW EXECUTE FUNCTION function_name()"
+        case .redis: ""
         }
         newTriggers.append(template)
     }
@@ -254,6 +258,7 @@ final class TableDesignModel: Identifiable {
                 case .postgresql: statements.append("COMMENT ON TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) IS \(dialect.quoteLiteral(comment))")
                 case .mysql, .mariadb: statements.append("ALTER TABLE \(dialect.qualifiedName(table: finalName, schema: driverSchema)) COMMENT = \(dialect.quoteLiteral(comment))")
                 case .sqlite: break
+                case .redis: break
                 }
             }
             if (kind == .mysql || kind == .mariadb), !engine.isEmpty, engine != originalEngine {

@@ -39,7 +39,7 @@ public struct UserDraft: Sendable {
 
 /// Server users and roles (Navicat's "User" button). SQLite has none.
 extension SQLDialect {
-    public var supportsUsers: Bool { kind != .sqlite }
+    public var supportsUsers: Bool { kind != .sqlite && kind != .redis }
 
     public var listUsersSQL: String? {
         switch kind {
@@ -47,7 +47,7 @@ extension SQLDialect {
             "SELECT rolname, rolsuper, rolcanlogin, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname"
         case .mysql, .mariadb:
             "SELECT User, Host, Super_priv, Create_priv FROM mysql.user ORDER BY User, Host"
-        case .sqlite: nil
+        case .sqlite, .redis: nil
         }
     }
 
@@ -101,7 +101,7 @@ extension SQLDialect {
             if draft.superuser { statements.append("GRANT ALL PRIVILEGES ON *.* TO \(account(name, host: draft.host)) WITH GRANT OPTION") }
             else if draft.createDatabases { statements.append("GRANT CREATE ON *.* TO \(account(name, host: draft.host))") }
             return statements
-        case .sqlite:
+        case .sqlite, .redis:
             throw DatabaseError.unsupported("Users")
         }
     }
@@ -130,7 +130,7 @@ extension SQLDialect {
              GROUP BY table_schema, table_name ORDER BY 1
             """
         case .mysql, .mariadb: "SHOW GRANTS FOR \(account(user.name, host: user.host))"
-        case .sqlite: nil
+        case .sqlite, .redis: nil
         }
     }
 
@@ -151,6 +151,7 @@ extension SQLDialect {
         case .sqlite:
             [("Indexes", "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index' ORDER BY tbl_name, name"),
              ("Triggers", "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY tbl_name, name")]
+        case .redis: []
         }
     }
 }

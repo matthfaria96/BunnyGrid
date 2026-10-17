@@ -37,7 +37,7 @@ extension AppModel {
                 guard let id = model.connectionID else { continue }
                 snapshot.tabs.append(.init(kind: .table, connectionID: id, database: model.databaseName, title: model.object.name,
                                            objectName: model.object.name, schema: model.object.schema))
-            case .design, .model:
+            case .design, .model, .redis:
                 continue
             }
         }

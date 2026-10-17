@@ -75,6 +75,7 @@ extension SQLDialect {
              "date", "datetime", "timestamp", "json", "blob"]
         case .sqlite:
             ["INTEGER", "REAL", "NUMERIC", "TEXT", "BLOB"]
+        case .redis: []
         }
     }
 
@@ -124,6 +125,7 @@ extension SQLDialect {
         case .mysql, .mariadb: "DROP INDEX \(quoteIdentifier(name)) ON \(qualifiedName(table: table, schema: schema))"
         case .postgresql: "DROP INDEX \(qualifiedName(table: name, schema: schema))"
         case .sqlite: "DROP INDEX \(quoteIdentifier(name))"
+        case .redis: ""
         }
     }
 
@@ -191,6 +193,7 @@ extension SQLDialect {
                 statements.append("ALTER TABLE \(table) MODIFY COLUMN \(columnDefinition(column))")
             case .sqlite:
                 throw TableDesignError.unsupported("SQLite can't change the type, NOT NULL or default of “\(column.name)”. Recreate the table to change it.")
+            case .redis: throw DatabaseError.unsupported("Tables")
             }
         }
 

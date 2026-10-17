@@ -42,6 +42,7 @@ private struct TabContent: View {
         case .query(let model): QueryTabView(model: model)
         case .design(let model): DesignTableView(model: model)
         case .model(let model): ModelTabView(model: model)
+        case .redis(let model): RedisTabView(model: model)
         }
     }
 }

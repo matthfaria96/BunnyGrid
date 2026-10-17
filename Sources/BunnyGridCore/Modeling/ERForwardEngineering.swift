@@ -235,6 +235,7 @@ extension ERModel {
             case "json": return "json"
             default: return trimmed
             }
+        case .redis: return trimmed
         }
     }
 }

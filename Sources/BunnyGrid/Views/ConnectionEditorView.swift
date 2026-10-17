@@ -198,7 +198,7 @@ struct ConnectionEditorView: View {
         row("User Name") { TextField("", text: $config.username) }
         row("Password") { SecureField("", text: $password) }
         row(config.kind == .postgresql ? "Initial Database" : "Default Database") {
-            TextField("", text: $config.database, prompt: Text(config.kind == .postgresql ? "postgres" : "Optional"))
+            TextField("", text: $config.database, prompt: Text(config.kind == .postgresql ? "postgres" : config.kind == .redis ? "0 (database index)" : "Optional"))
         }
     }
 
@@ -389,7 +389,7 @@ struct ConnectionEditorView: View {
     private var usesSocket: Bool { config.activeSocketPath != nil }
 
     private var defaultSocketPath: String {
-        config.kind == .postgresql ? "/tmp" : "/tmp/mysql.sock"
+        config.kind == .postgresql ? "/tmp" : config.kind == .redis ? "/tmp/redis.sock" : "/tmp/mysql.sock"
     }
 
     /// A path field with a "…" button that opens a file panel.

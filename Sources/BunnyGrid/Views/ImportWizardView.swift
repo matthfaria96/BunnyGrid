@@ -208,6 +208,7 @@ struct ImportWizardView: View {
         case .postgresql: target.object.schema
         case .mysql, .mariadb: target.context.name
         case .sqlite: nil
+        case .redis: nil
         }
     }
 

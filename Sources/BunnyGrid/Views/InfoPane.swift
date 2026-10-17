@@ -15,6 +15,7 @@ struct RightPane: View {
         case .query: panes += [.snippets, .identifiers]
         case .design: panes += [.ddl]
         case .model: break
+        case .redis: break
         case nil: break
         }
         if showAIFeatures { panes.append(.ai) }
@@ -327,6 +328,7 @@ private struct ObjectInfo: View {
         case .postgresql: return object.schema
         case .mysql, .mariadb: return context.name
         case .sqlite: return nil
+        case .redis: return nil
         }
     }
 

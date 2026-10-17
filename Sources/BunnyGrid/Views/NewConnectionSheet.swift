@@ -169,6 +169,7 @@ enum ConnectionCatalog {
         case .postgresql: .postgresql
         case .mariadb: .mariadb
         case .sqlite: .sqlite
+        case .redis: .redis
         default: nil
         }
         return ConnectionType(id: id, name: name, family: family, vendor: vendor, driver: driver ?? defaultDriver,
@@ -177,7 +178,7 @@ enum ConnectionCatalog {
 
     static let engines: [ConnectionType] = [
         engine(.mysql, .mysql), engine(.postgresql, .postgresql), engine(.sqlserver, nil), engine(.oracle, nil),
-        engine(.sqlite, .sqlite), engine(.mariadb, .mariadb), engine(.mongodb, nil), engine(.redis, nil), engine(.snowflake, nil),
+        engine(.sqlite, .sqlite), engine(.mariadb, .mariadb), engine(.mongodb, nil), engine(.redis, .redis), engine(.snowflake, nil),
     ]
 
     /// Same order as Navicat's grid.
