@@ -181,7 +181,7 @@ private struct TabBar: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
                 TabItem(title: "Objects", systemImage: nil, isSelected: app.selectedTabID == nil, closable: false,
-                        hasUnsavedChanges: false, select: { app.selectedTabID = nil }, close: {})
+                        hasUnsavedChanges: false, badge: nil, select: { app.selectedTabID = nil }, close: {})
                 ForEach(app.tabs) { tab in
                     TabItem(
                         title: tab.title,
@@ -189,6 +189,8 @@ private struct TabBar: View {
                         isSelected: tab.id == app.selectedTabID,
                         closable: true,
                         hasUnsavedChanges: tab.hasUnsavedChanges,
+                        // A tab opened in Advanced stays open and usable in Simple, marked as such.
+                        badge: tab.feature?.isAvailable == false ? "Advanced" : nil,
                         select: { app.selectedTabID = tab.id },
                         close: { app.requestClose(tab) }
                     )
@@ -215,6 +217,8 @@ private struct TabItem: View {
     let isSelected: Bool
     let closable: Bool
     let hasUnsavedChanges: Bool
+    /// A small capsule after the title ("Advanced" on tabs of features Simple mode hides).
+    let badge: String?
     let select: () -> Void
     let close: () -> Void
     @State private var isHovering = false
@@ -229,6 +233,19 @@ private struct TabItem: View {
                 .lineLimit(1)
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(isSelected ? .primary : .secondary)
+            if let badge {
+                Text(badge)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+                    .fixedSize()
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    .help("Opened in Advanced mode. It keeps working; switch to Advanced to open more.")
+                    .accessibilityIdentifier("tab.badge")
+            }
             Spacer(minLength: 0)
             if closable {
                 Button(action: close) {
@@ -254,6 +271,7 @@ private struct TabItem: View {
         .onTapGesture(perform: select)
         .onHover { isHovering = $0 }
         .help(title)
+        .animation(.easeOut(duration: 0.2), value: badge)
         .contextMenu {
             if closable { Button("Close Tab", action: close) }
         }

@@ -311,8 +311,13 @@ struct NewConnectionSheet: View {
     @State private var uriError: String?
 
     private var recents: [ConnectionType] {
-        (UserDefaults.standard.stringArray(forKey: "recentConnectionTypes") ?? []).compactMap(ConnectionCatalog.type(id:))
+        (UserDefaults.standard.stringArray(forKey: "recentConnectionTypes") ?? []).compactMap(ConnectionCatalog.type(id:)).filter(catalog.contains)
     }
+
+    /// Advanced lists every engine and hosted service; Simple only the engines BunnyGrid connects to.
+    private var showsCloud: Bool { Feature.cloudCatalog.isAvailable }
+    private var catalog: [ConnectionType] { showsCloud ? ConnectionCatalog.all : engines }
+    private var engines: [ConnectionType] { showsCloud ? ConnectionCatalog.engines : ConnectionCatalog.engines.filter(\.isSupported) }
 
     private var isFiltering: Bool { !search.isEmpty || !familyFilter.isEmpty || !vendorFilter.isEmpty }
 
@@ -389,17 +394,19 @@ struct NewConnectionSheet: View {
             VStack(alignment: .leading, spacing: 1) {  // 22 pt rows, as in Navicat
                 Text("Connection Filter").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                     .padding(.bottom, 2)
-                ForEach(ConnectionFamily.allCases) { family in
+                ForEach(ConnectionFamily.allCases.filter { family in engines.contains { $0.family == family } }) { family in
                     filterRow(isOn: familyFilter.contains(family), title: family.displayName) {
                         ConnectionTypeIcon(type: ConnectionCatalog.engines.first { $0.family == family }!, size: 16)
                     } toggle: {
                         if familyFilter.contains(family) { familyFilter.remove(family) } else { familyFilter.insert(family) }
                     }
                 }
+                if showsCloud {
                 Text("Vendor Filter").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                     .padding(.top, 34)
                     .padding(.bottom, 2)
-                ForEach(ConnectionVendor.allCases) { vendor in
+                }
+                ForEach(showsCloud ? ConnectionVendor.allCases : []) { vendor in
                     filterRow(isOn: vendorFilter.contains(vendor), title: vendor.displayName) {
                         VendorMark(vendor: vendor, size: 16)
                     } toggle: {
@@ -451,8 +458,8 @@ struct NewConnectionSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 if isFiltering {
-                    tiles(ConnectionCatalog.all.filter(matches))
-                    if !ConnectionCatalog.all.contains(where: matches) {
+                    tiles(catalog.filter(matches))
+                    if !catalog.contains(where: matches) {
                         Text("No connection types match.").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 40)
                     }
                 } else {
@@ -461,9 +468,11 @@ struct NewConnectionSheet: View {
                         tiles(recents)
                     }
                     sectionTitle("All")
-                    tiles(ConnectionCatalog.engines)
-                    Divider().padding(.vertical, 12)
-                    tiles(ConnectionCatalog.cloudServices)
+                    tiles(engines)
+                    if showsCloud {
+                        Divider().padding(.vertical, 12)
+                        tiles(ConnectionCatalog.cloudServices)
+                    }
                 }
             }
             .padding(.horizontal, 30)
@@ -494,7 +503,7 @@ struct NewConnectionSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 1) {
                 if isFiltering {
-                    ForEach(ConnectionCatalog.all.filter(matches)) { listRow($0, indent: 0) }
+                    ForEach(catalog.filter(matches)) { listRow($0, indent: 0) }
                 } else {
                     if !recents.isEmpty {
                         sectionTitle("Recents").padding(.bottom, 4)
@@ -502,8 +511,8 @@ struct NewConnectionSheet: View {
                         Spacer().frame(height: 14)
                     }
                     sectionTitle("All").padding(.bottom, 4)
-                    ForEach(ConnectionCatalog.engines) { listRow($0, indent: 0) }
-                    ForEach(ConnectionCatalog.listGroups, id: \.name) { group in
+                    ForEach(engines) { listRow($0, indent: 0) }
+                    ForEach(showsCloud ? ConnectionCatalog.listGroups : [], id: \.name) { group in
                         let isExpanded = expandedGroups.contains(group.name)
                         Button {
                             withAnimation(.easeInOut(duration: 0.15)) {

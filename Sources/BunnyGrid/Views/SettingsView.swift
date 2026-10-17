@@ -10,29 +10,43 @@ struct SettingsView: View {
     @AppStorage("appearance") private var savedAppearance = AppearancePreference.system.rawValue
     @State private var draft = AppOptions.shared.values
     @State private var appearance = AppearancePreference.system.rawValue
+    @State private var interfaceMode = InterfaceMode.advanced
     @State private var ai = AIDraft()
 
+    /// Simple mode shows General, Editor, Records and AI; the others keep their saved values.
+    private static let simplePanes: Set<String> = ["general", "editor", "records", "ai"]
+    private var showsAdvancedPanes: Bool { Feature.advancedSettings.isAvailable }
+
     var body: some View {
-        TabView(selection: $tab) {
-            pane("general") { GeneralPane(draft: $draft, appearance: $appearance) }
+        TabView(selection: Binding(get: { showsAdvancedPanes || Self.simplePanes.contains(tab) ? tab : "general" },
+                                   set: { tab = $0 })) {
+            pane("general") { GeneralPane(draft: $draft, appearance: $appearance, interfaceMode: $interfaceMode) }
                 .tabItem { Label("General", systemImage: "gearshape") }
-            pane("tabs") { TabsPane(draft: $draft) }
-                .tabItem { Label("Tabs", systemImage: "rectangle.on.rectangle") }
-            pane("completion") { CodeCompletionPane(draft: $draft) }
-                .tabItem { Label("Code Completion", systemImage: "text.badge.plus") }
+            if showsAdvancedPanes {
+                pane("tabs") { TabsPane(draft: $draft) }
+                    .tabItem { Label("Tabs", systemImage: "rectangle.on.rectangle") }
+                pane("completion") { CodeCompletionPane(draft: $draft) }
+                    .tabItem { Label("Code Completion", systemImage: "text.badge.plus") }
+            }
             pane("editor") { EditorPane(draft: $draft) }
                 .tabItem { Label("Editor", systemImage: "square.and.pencil") }
             pane("records") { RecordsPane(draft: $draft) }
                 .tabItem { Label("Records", systemImage: "tablecells") }
-            pane("recovery") { AutoRecoveryPane(draft: $draft) }
-                .tabItem { Label("Auto Recovery", systemImage: "clock.arrow.circlepath") }
+            if showsAdvancedPanes {
+                pane("recovery") { AutoRecoveryPane(draft: $draft) }
+                    .tabItem { Label("Auto Recovery", systemImage: "clock.arrow.circlepath") }
+            }
             pane("ai") { AIPane(draft: $draft, ai: $ai) }
                 .tabItem { Label("AI", systemImage: "sparkles") }
-            pane("advanced") { AdvancedPane(draft: $draft) }
-                .tabItem { Label("Advanced", systemImage: "gearshape.2") }
+            if showsAdvancedPanes {
+                pane("advanced") { AdvancedPane(draft: $draft) }
+                    .tabItem { Label("Advanced", systemImage: "gearshape.2") }
+            }
         }
         .frame(width: 760)
         .onAppear(perform: reload)
+        // The avatar's Theme menu or the View menu changed the mode while Settings is open.
+        .onChange(of: AppOptions.shared.interfaceMode) { _, mode in interfaceMode = mode }
     }
 
     /// One pane: its content, then Restore Defaults, then the window's Cancel / OK.
@@ -71,6 +85,7 @@ struct SettingsView: View {
     private func reload() {
         draft = AppOptions.shared.values
         appearance = savedAppearance
+        interfaceMode = AppOptions.shared.interfaceMode
         ai = AIDraft(model: app.assistant)
     }
 
@@ -83,6 +98,7 @@ struct SettingsView: View {
             draft.useSafeConfirmDialog = defaults.useSafeConfirmDialog
             draft.askToSaveNewQueries = defaults.askToSaveNewQueries
             appearance = AppearancePreference.system.rawValue
+            interfaceMode = .advanced
         case "tabs":
             draft.startupTabs = defaults.startupTabs
             draft.openTabsIn = defaults.openTabsIn
@@ -122,6 +138,7 @@ struct SettingsView: View {
     private func apply() {
         AppOptions.shared.save(draft)
         savedAppearance = appearance
+        AppOptions.shared.setInterfaceMode(interfaceMode)
         ai.commit(to: app.assistant)
     }
 
@@ -227,6 +244,7 @@ final class FontPicker: NSObject {
 private struct GeneralPane: View {
     @Binding var draft: OptionsValues
     @Binding var appearance: String
+    @Binding var interfaceMode: InterfaceMode
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -236,6 +254,19 @@ private struct GeneralPane: View {
                 }
                 .labelsHidden()
                 .frame(width: 150)
+            }
+            OptionRow(label: "Interface") {
+                Picker("", selection: $interfaceMode) {
+                    ForEach(InterfaceMode.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 190)
+                .accessibilityIdentifier("settings.interfaceMode")
+                Text(interfaceMode.summary + " Also under your profile picture › Theme.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             OptionRow(label: "Main Window") {
                 Toggle("Show objects under schema in navigation pane", isOn: $draft.showObjectsUnderSchema)
@@ -423,8 +454,10 @@ private struct RecordsPane: View {
                         .disabled(!draft.limitRecords)
                     Text("records per page")
                 }
-                Toggle("Auto begin transaction", isOn: $draft.autoBeginTransaction)
-                    .help("Editing a row starts a transaction; changes stay pending until you commit.")
+                if Feature.transactionMode.isAvailable {
+                    Toggle("Auto begin transaction", isOn: $draft.autoBeginTransaction)
+                        .help("Editing a row starts a transaction; changes stay pending until you commit.")
+                }
             }
             OptionRow(label: "Grid") {
                 FontGroup(title: "Grid Font", font: $draft.gridFont, fallback: .systemFont(ofSize: 12))
@@ -437,6 +470,7 @@ private struct RecordsPane: View {
                     .frame(width: 170)
                 }
             }
+            if Feature.dataProfiling.isAvailable {
             OptionRow(label: "Data Profiling") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Data Profiling Colors").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -449,6 +483,7 @@ private struct RecordsPane: View {
                     .frame(maxWidth: 420, alignment: .leading)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
                 }
+            }
             }
         }
     }

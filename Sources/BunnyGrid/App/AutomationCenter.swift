@@ -224,6 +224,7 @@ final class AutomationTabModel {
 extension AppModel {
     /// Shows the Automation tab, opening it the first time (⇧⌘J, the toolbar button, Tools › Automation).
     func openAutomation() {
+        guard Feature.automation.isAvailable else { return }
         if let existing = tabs.first(where: { if case .automation = $0 { true } else { false } }) {
             selectedTabID = existing.id
         } else {

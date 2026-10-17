@@ -31,6 +31,9 @@ struct ContentView: View {
         .sheet(isPresented: $app.showingConnectionPicker) {
             NewConnectionSheet()
         }
+        .sheet(isPresented: $app.showingOnboarding) {
+            OnboardingView()
+        }
         .sheet(item: $app.namingQuery) { tab in
             SaveQuerySheet(tab: tab)
         }

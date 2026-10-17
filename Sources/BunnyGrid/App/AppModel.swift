@@ -30,6 +30,8 @@ final class AppModel {
     var showingConnectionPicker = false
     /// The profile popover where the AI platform is chosen.
     var showingAccountMenu = false
+    /// The first-launch welcome sheet (OnboardingView): Simple or Advanced, and the appearance.
+    var showingOnboarding = false
     var alertMessage: String?
     private(set) var history: [QueryHistoryEntry] = []
     private(set) var savedQueries: [SavedQuery] = []
@@ -177,6 +179,7 @@ final class AppModel {
         #if DEBUG
         UIHarness.shared.app = self
         #endif
+        decideOnboarding()
         openLaunchArguments()
         runRedisLaunchFlags()
         // Plain launches restore the last session (Options › Tabs / Auto Recovery); launches with files or flags don't.
@@ -191,6 +194,29 @@ final class AppModel {
         }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.saveWorkspace(cleanExit: true) }
+        }
+    }
+
+    /// First launch shows the welcome sheet; someone who used BunnyGrid before keeps Advanced without being asked.
+    /// Launches that open a file or carry flags (captures, UI scenarios) are not covered by it, except with
+    /// `--onboarding` (always shows it) or `--first-launch` (decides as a plain launch would).
+    private func decideOnboarding() {
+        let arguments = CommandLine.arguments.dropFirst()
+        #if DEBUG
+        let forced = arguments.contains("--onboarding")
+        let asPlainLaunch = arguments.contains("--first-launch")
+        #else
+        let forced = false
+        let asPlainLaunch = false
+        #endif
+        let opensSomething = arguments.contains { $0.hasPrefix("--") || (!$0.hasPrefix("-") && FileManager.default.fileExists(atPath: $0)) }
+        let options = AppOptions.shared
+        switch OnboardingDecision.resolve(completed: options.hasCompletedOnboarding, hasSavedConnections: !connections.isEmpty,
+                                          hasSavedSettings: AppOptions.hasSavedPreferences, forced: forced,
+                                          suppressed: opensSomething && !asPlainLaunch) {
+        case .show: showingOnboarding = true
+        case .skipExistingUser: options.completeOnboarding(mode: options.interfaceMode)
+        case .skip: break
         }
     }
 
@@ -553,6 +579,7 @@ final class AppModel {
 
     /// Model tab (Navicat Modeling) for a database or schema; reuses an open one.
     func openModel(in context: DatabaseContext, schema: String?) {
+        guard Feature.model.isAvailable else { return }
         let schema = context.usesSchemas ? (schema ?? context.defaultSchema) : nil
         if let existing = tabs.first(where: {
             if case .model(let model) = $0 {

@@ -72,6 +72,7 @@ struct AccountBadge: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .accessibilityIdentifier("toolbar.account")
         .help("\(app.profile.name) · AI: \(app.assistant.provider.displayName)")
         .popover(isPresented: $app.showingAccountMenu, arrowEdge: .bottom) {
             AIAccountPopover()
@@ -88,6 +89,10 @@ struct AIAccountPopover: View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(16)
+            Divider()
+            ThemeRow()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             Divider()
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -194,6 +199,44 @@ struct AIAccountPopover: View {
                 .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+        }
+    }
+}
+
+/// "Theme": the appearance (System / Light / Dark) and the interface (Simple / Advanced), each with a checkmark.
+/// Both apply at once; Settings › General and View › Interface Mode show the same choices.
+private struct ThemeRow: View {
+    @AppStorage("appearance") private var appearance = AppearancePreference.system.rawValue
+
+    var body: some View {
+        let options = AppOptions.shared
+        let current = AppearancePreference(rawValue: appearance) ?? .system
+        HStack(spacing: 8) {
+            Image(systemName: "paintpalette")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            Text("Theme").font(.system(size: 12))
+            Spacer()
+            Menu {
+                Picker("Appearance", selection: Binding(get: { current }, set: { choice in
+                    appearance = choice.rawValue
+                    choice.apply()
+                })) {
+                    ForEach(AppearancePreference.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.inline)
+                Picker("Interface", selection: Binding(get: { options.interfaceMode }, set: { options.setInterfaceMode($0) })) {
+                    ForEach(InterfaceMode.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Text("\(current.title) · \(options.interfaceMode.title)").font(.system(size: 12))
+            }
+            .menuStyle(.button)
+            .fixedSize()
+            .accessibilityIdentifier("account.theme")
+            .help("Appearance and interface mode")
         }
     }
 }

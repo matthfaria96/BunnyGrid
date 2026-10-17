@@ -1,4 +1,5 @@
 import AppKit
+import BunnyGridCore
 import SwiftUI
 
 /// Window appearance chosen in Settings; "system" follows macOS.
@@ -88,6 +89,8 @@ struct MainCommands: Commands {
             Button("Show Previous Tab") { model.selectAdjacentTab(-1) }
                 .keyboardShortcut(.tab, modifiers: [.control, .shift])
             Divider()
+            InterfaceModeMenu()
+            Divider()
         }
         CommandMenu("Table") {
             TableMenuItems(model: model)
@@ -96,11 +99,8 @@ struct MainCommands: Commands {
             FavoritesMenuItems(model: model)
         }
         CommandMenu("Tools") {
-            ForEach(SyncTool.allCases) { tool in
-                Button(tool.title + "…") { model.openSyncWizard(tool) }
-            }
+            SyncToolMenuItems(model: model)
             AutomationMenuItems(model: model)
-            Divider()
             Button("AI Assistant") { model.showAssistant = true; model.rightPane = .ai }
             Button("AI Platform…") { model.showingAccountMenu = true }
             QueryHistoryItem(model: model)
@@ -127,9 +127,35 @@ private struct NewBIWorkspaceItem: View {
     let model: AppModel
 
     var body: some View {
-        Button("New BI Workspace") { model.newBIWorkspace(in: model.currentContext) }
-            .keyboardShortcut("t")
-            .disabled(model.currentContext == nil)
+        // Simple mode has no BI: the item (and with it ⌘T) is gone.
+        if Feature.bi.isAvailable {
+            Button("New BI Workspace") { model.newBIWorkspace(in: model.currentContext) }
+                .keyboardShortcut("t")
+                .disabled(model.currentContext == nil)
+        }
+    }
+}
+
+/// Tools › Data Transfer / Data Synchronization / Structure Synchronization (Advanced).
+private struct SyncToolMenuItems: View {
+    let model: AppModel
+
+    var body: some View {
+        let tools = SyncTool.allCases.filter(\.feature.isAvailable)
+        ForEach(tools) { tool in
+            Button(tool.title + "…") { model.openSyncWizard(tool) }
+        }
+        if !tools.isEmpty { Divider() }
+    }
+}
+
+/// View › Interface Mode › Simple / Advanced, with a checkmark on the current one.
+struct InterfaceModeMenu: View {
+    var body: some View {
+        Picker("Interface Mode", selection: Binding(get: { AppOptions.shared.interfaceMode },
+                                                    set: { AppOptions.shared.setInterfaceMode($0) })) {
+            ForEach(InterfaceMode.allCases) { Text($0.title).tag($0) }
+        }
     }
 }
 
@@ -179,19 +205,26 @@ private struct TableMenuItems: View {
             if let tab, let context = model.currentContextFor(tab) { model.importTarget = ImportTarget(context: context, object: tab.object) }
         }
         .disabled(tab?.object.kind != .table || tab?.readOnlyReason != nil)
-        Button("Data Generation…") {
-            if let tab, let context = model.currentContextFor(tab) { model.generationTarget = ImportTarget(context: context, object: tab.object) }
+        if Feature.dataGeneration.isAvailable {
+            Button("Data Generation…") {
+                if let tab, let context = model.currentContextFor(tab) { model.generationTarget = ImportTarget(context: context, object: tab.object) }
+            }
+            .disabled(tab?.object.kind != .table || tab?.readOnlyReason != nil)
         }
-        .disabled(tab?.object.kind != .table || tab?.readOnlyReason != nil)
-        Divider()
-        Button("Begin Transaction") {
-            if let tab { Task { await tab.beginTransaction(session: tab.connectionID.flatMap { model.sessions[$0] }) } }
+        // A transaction begun in Advanced can still be committed or rolled back after switching to Simple.
+        if Feature.transactionMode.isAvailable || tab?.isInTransaction == true {
+            Divider()
+            if Feature.transactionMode.isAvailable {
+                Button("Begin Transaction") {
+                    if let tab { Task { await tab.beginTransaction(session: tab.connectionID.flatMap { model.sessions[$0] }) } }
+                }
+                .disabled(tab?.canBeginTransaction != true)
+            }
+            Button("Commit") { Task { await tab?.commitTransaction() } }
+                .disabled(tab?.isInTransaction != true)
+            Button("Rollback") { Task { await tab?.rollbackTransaction() } }
+                .disabled(tab?.isInTransaction != true)
         }
-        .disabled(tab?.canBeginTransaction != true)
-        Button("Commit") { Task { await tab?.commitTransaction() } }
-            .disabled(tab?.isInTransaction != true)
-        Button("Rollback") { Task { await tab?.rollbackTransaction() } }
-            .disabled(tab?.isInTransaction != true)
     }
 }
 

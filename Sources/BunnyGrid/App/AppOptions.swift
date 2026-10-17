@@ -1,4 +1,5 @@
 import AppKit
+import BunnyGridCore
 import Observation
 import SwiftUI
 
@@ -113,6 +114,9 @@ final class AppOptions {
     static let shared = AppOptions()
 
     private(set) var values: OptionsValues
+    /// Simple or Advanced (BunnyGridCore `InterfaceMode`), under its own key: the avatar's Theme menu, the View menu
+    /// and Settings › General change it at once, with no OK. `-interfaceMode simple|advanced` overrides it at launch.
+    private(set) var interfaceMode: InterfaceMode
 
     private init() {
         if let data = UserDefaults.standard.data(forKey: "appOptions"), let saved = Self.decode(data) {
@@ -120,8 +124,43 @@ final class AppOptions {
         } else {
             values = OptionsValues()
         }
+        interfaceMode = UserDefaults.standard.string(forKey: Self.interfaceModeKey).flatMap(InterfaceMode.init(rawValue:)) ?? .advanced
     }
 
+    static let interfaceModeKey = "interfaceMode"
+    static let onboardingKey = "hasCompletedOnboarding"
+
+    func setInterfaceMode(_ mode: InterfaceMode) {
+        guard mode != interfaceMode else { return }
+        interfaceMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.interfaceModeKey)
+        DiagnosticLog.write("[ui] interface mode: \(mode.rawValue)")
+    }
+
+    var hasCompletedOnboarding: Bool { UserDefaults.standard.bool(forKey: Self.onboardingKey) }
+
+    /// The welcome sheet's Continue, or a person from before the choice existed (who keeps Advanced).
+    func completeOnboarding(mode: InterfaceMode) {
+        setInterfaceMode(mode)
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.interfaceModeKey)
+        UserDefaults.standard.set(true, forKey: Self.onboardingKey)
+    }
+
+    /// Preferences an earlier BunnyGrid wrote (options, appearance, panes, recents…), not the system's own window keys.
+    static var hasSavedPreferences: Bool {
+        guard let domain = Bundle.main.bundleIdentifier, let saved = UserDefaults.standard.persistentDomain(forName: domain) else { return false }
+        let ours: Set<String> = [interfaceModeKey, onboardingKey]
+        return saved.keys.contains { !ours.contains($0) && !$0.hasPrefix("NS") && !$0.hasPrefix("Apple") && !$0.hasPrefix("com.apple") }
+    }
+}
+
+extension Feature {
+    /// Whether this feature shows in the current interface mode. Every entry point (toolbar, menus, shortcuts,
+    /// context menus, wizards, editor tabs, Settings pages) asks this.
+    @MainActor var isAvailable: Bool { isAvailable(in: AppOptions.shared.interfaceMode) }
+}
+
+extension AppOptions {
     /// Saved options over the defaults, so options added in a later version don't reset the user's others.
     static func decode(_ data: Data) -> OptionsValues? {
         if let values = try? JSONDecoder().decode(OptionsValues.self, from: data) { return values }

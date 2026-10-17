@@ -118,9 +118,15 @@ struct DesignTableView: View {
         .frame(height: 38)
     }
 
+    /// Simple mode keeps Fields, Indexes, Foreign Keys and SQL Preview (and whichever section is already open).
+    private var visibleSections: [TableDesignModel.Section] {
+        guard !Feature.designTableExtras.isAvailable else { return TableDesignModel.Section.allCases }
+        return TableDesignModel.Section.allCases.filter { [.fields, .indexes, .foreignKeys, .sqlPreview].contains($0) || $0 == model.section }
+    }
+
     private var sectionBar: some View {
         HStack(spacing: 0) {
-            ForEach(Array(TableDesignModel.Section.allCases.enumerated()), id: \.element) { offset, section in
+            ForEach(Array(visibleSections.enumerated()), id: \.element) { offset, section in
                 if offset > 0 { Spacer(minLength: 4) }
                 Button {
                     model.section = section

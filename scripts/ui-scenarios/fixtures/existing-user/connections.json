@@ -1,0 +1,4 @@
+[
+  {"color": "none", "database": "", "filePath": "{{RUN}}/demo.sqlite", "host": "", "id": "0B000000-0000-4000-8000-000000000001",
+   "kind": "sqlite", "name": "Earlier Demo", "port": 0, "readOnly": false, "tls": "disable", "username": ""}
+]

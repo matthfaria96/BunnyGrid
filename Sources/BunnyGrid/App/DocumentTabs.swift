@@ -21,6 +21,12 @@ protocol DocumentTab: AnyObject {
     func save()
     /// The tab is closing.
     func cancel()
+    /// The Simple / Advanced feature it belongs to (BI workspaces); nil for the everyday ones.
+    var feature: Feature? { get }
+}
+
+extension DocumentTab {
+    var feature: Feature? { nil }
 }
 
 extension DatabaseContext {

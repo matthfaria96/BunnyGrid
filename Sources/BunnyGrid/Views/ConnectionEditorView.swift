@@ -57,9 +57,14 @@ struct ConnectionEditorView: View {
         isNew || config.name.isEmpty ? "\(isNew ? "New" : "Edit") Connection (\(typeName))" : "\(config.name) — Edit Connection (\(typeName))"
     }
     /// No HTTP tab: Navicat's HTTP tunnel needs its own server-side tunnel script, which BunnyGrid doesn't have.
+    /// Simple mode keeps General, SSL and SSH (General alone for a file).
     private var tabs: [Tab] {
-        config.kind.isFileBased ? [.general, .advanced, .databases, .remarks] : Tab.allCases.filter { $0 != .http }
+        let all = config.kind.isFileBased ? [.general, .advanced, .databases, .remarks] : Tab.allCases.filter { $0 != .http }
+        return Feature.connectionAdvancedTabs.isAvailable ? all : all.filter { [.general, .ssl, .ssh].contains($0) }
     }
+
+    /// The selected tab, or General when the mode hides it.
+    private var shownTab: Tab { tabs.contains(tab) ? tab : .general }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -74,7 +79,7 @@ struct ConnectionEditorView: View {
                 Divider()
                 ScrollView {
                     Group {
-                        switch tab {
+                        switch shownTab {
                         case .general: general
                         case .advanced: advanced
                         case .ssl: ssl
@@ -159,10 +164,10 @@ struct ConnectionEditorView: View {
                     Button { tab = item } label: {
                         Text(item.rawValue)
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(tab == item ? Color.white : Color.primary)
+                            .foregroundStyle(shownTab == item ? Color.white : Color.primary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 3)
-                            .background(RoundedRectangle(cornerRadius: 5).fill(tab == item ? Color.accentColor.opacity(0.55) : .clear))
+                            .background(RoundedRectangle(cornerRadius: 5).fill(shownTab == item ? Color.accentColor.opacity(0.55) : .clear))
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)

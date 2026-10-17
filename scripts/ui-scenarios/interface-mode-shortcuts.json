@@ -1,0 +1,33 @@
+{
+  "name": "interface-mode-shortcuts",
+  "args": ["{{DB}}", "--open-table", "customers", "-interfaceMode", "simple", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "tab.rowCount", "atLeast": 20},
+    {"op": "assert", "probe": "interfaceMode", "equals": "simple"},
+    {"op": "assert", "probe": "onboarding", "equals": "false", "note": "a launch that opens a file is not covered by the welcome sheet"},
+    {"op": "assert", "label": "Data Generation", "window": "main", "exists": false, "note": "Simple table toolbar"},
+    {"op": "assert", "label": "Begin Transaction", "window": "main", "exists": false},
+    {"op": "assert", "label": "Data Masking", "window": "main", "exists": false},
+    {"op": "assert", "label": "Filter & Sort", "window": "main", "exists": true},
+    {"op": "assert", "probe": "menu:File>New BI Workspace", "equals": "missing"},
+    {"op": "screenshot", "name": "table-simple"},
+    {"op": "key", "key": "t", "modifiers": ["cmd"], "note": "⌘T (New BI Workspace) does nothing in Simple"},
+    {"op": "key", "key": "j", "modifiers": ["cmd", "shift"], "note": "⇧⌘J (Automation) does nothing in Simple"},
+    {"op": "wait", "ms": 700},
+    {"op": "assert", "probe": "tabCount", "equals": 1},
+    {"op": "assert", "probe": "tabKind", "equals": "table"},
+    {"op": "menuBar", "path": ["View", "Interface Mode", "Advanced"], "note": "View › Interface Mode › Advanced"},
+    {"op": "waitFor", "probe": "interfaceMode", "equals": "advanced"},
+    {"op": "waitFor", "label": "Data Generation", "window": "main", "exists": true},
+    {"op": "key", "key": "j", "modifiers": ["cmd", "shift"], "note": "now ⇧⌘J opens Automation"},
+    {"op": "waitFor", "probe": "tabKind", "equals": "automation"},
+    {"op": "assert", "id": "tab.badge", "exists": false},
+    {"op": "menuBar", "path": ["View", "Interface Mode", "Simple"]},
+    {"op": "waitFor", "probe": "interfaceMode", "equals": "simple"},
+    {"op": "waitFor", "id": "tab.badge", "exists": true, "note": "the open Automation tab stays, marked Advanced"},
+    {"op": "assert", "probe": "tabKind", "equals": "automation"},
+    {"op": "assert", "probe": "tabCount", "equals": 2},
+    {"op": "wait", "ms": 300},
+    {"op": "screenshot", "name": "advanced-tab-in-simple"}
+  ]
+}

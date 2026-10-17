@@ -77,7 +77,9 @@ struct QueryTabView: View {
         HStack(spacing: 2) {
             ToolIconButton(systemImage: "square.and.arrow.down", help: "Save (⌘S)", tint: .secondary) { app.saveQuery(model) }
             Divider().frame(height: 16).padding(.horizontal, 6)
-            ToolIconButton(systemImage: "hammer", help: "Query Builder") { model.showingQueryBuilder = true }
+            if Feature.queryBuilder.isAvailable {
+                ToolIconButton(systemImage: "hammer", help: "Query Builder") { model.showingQueryBuilder = true }
+            }
             ToolIconButton(systemImage: "wand.and.stars", help: "Beautify SQL (⌘⇧B)") { model.beautify() }
                 .disabled(model.isBlank)
             ToolIconButton(systemImage: "parentheses", help: "Code Snippet") {
@@ -464,10 +466,12 @@ private struct ResultSetPane: View {
                     }
                     .disabled(editor?.isEditable != true || editor?.hasChanges == true)
                     Divider().frame(height: 16).padding(.horizontal, 4)
-                    ToolIconButton(systemImage: "chart.bar.xaxis", help: "Data Profiling: statistics of the rows in this result") {
-                        showingProfiling = true
+                    if Feature.dataProfiling.isAvailable {
+                        ToolIconButton(systemImage: "chart.bar.xaxis", help: "Data Profiling: statistics of the rows in this result") {
+                            showingProfiling = true
+                        }
+                        .disabled(editor == nil || result.rows.isEmpty)
                     }
-                    .disabled(editor == nil || result.rows.isEmpty)
                     ExportMenu(columns: result.columns, rows: result.rows, suggestedName: model.title)
                         .buttonStyle(.borderless)
                         .foregroundStyle(.orange)

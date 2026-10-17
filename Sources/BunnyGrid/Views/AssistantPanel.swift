@@ -45,7 +45,7 @@ struct AssistantPanel: View {
                     if let comparing = assistant.assistants.first(where: { $0.id == assistant.comparingAssistantID }) {
                         StreamingReply(provider: comparing.provider, name: comparing.name, text: assistant.compareText)
                     }
-                    if !assistant.isStreaming, assistant.comparingAssistantID == nil, !assistant.compareCandidates.isEmpty {
+                    if Feature.aiCompare.isAvailable, !assistant.isStreaming, assistant.comparingAssistantID == nil, !assistant.compareCandidates.isEmpty {
                         CompareOffer(candidates: assistant.compareCandidates)
                     }
                     if let error = assistant.error {

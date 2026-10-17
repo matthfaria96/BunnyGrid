@@ -497,6 +497,16 @@ enum WorkspaceTab: Identifiable {
         }
     }
 
+    /// The Simple / Advanced feature this kind of tab belongs to; such a tab stays open in Simple, with a badge.
+    @MainActor var feature: Feature? {
+        switch self {
+        case .model: .model
+        case .automation: .automation
+        case .document(let tab): tab.feature
+        case .table, .query, .design, .redis: nil
+        }
+    }
+
     @MainActor var hasUnsavedChanges: Bool {
         switch self {
         case .table(let model): model.hasChanges || model.isInTransaction

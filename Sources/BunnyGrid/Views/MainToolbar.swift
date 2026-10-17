@@ -39,20 +39,23 @@ struct MainToolbar: View {
                     AppIcon(name: "new-query", size: 32, isEnabled: app.currentContext != nil)
                 }
 
-                // Engine-specific object buttons, as Navicat shows them (SQLite: Index and Trigger).
-                ForEach(ObjectCategory.toolbarCategories(for: app.currentContext?.kind), id: \.self) { category in
+                // Engine-specific object buttons, as Navicat shows them (SQLite: Index and Trigger). Simple keeps
+                // Table and View; the other objects stay listed in the navigator.
+                ForEach(toolbarCategories, id: \.self) { category in
                     objectButton(category, isDocumentStore && category == .tables ? "Collection" : category.noun, category.iconName)
+                        .transition(Self.modeTransition)
                 }
                 let server = app.currentSession
-                if !isDocumentStore {
+                if !isDocumentStore && Feature.users.isAvailable {
                 ChromeButton(title: "User", isEnabled: server?.state == .connected && server?.config.kind != .sqlite,
                              help: "Users and roles of the server") {
                     app.usersSession = server
                 } glyph: {
                     AppIcon(name: "user", size: 32, isEnabled: server?.state == .connected && server?.config.kind != .sqlite)
                 }
+                .transition(Self.modeTransition)
                 }
-                if let context = app.currentContext, context.kind != .sqlite, !isDocumentStore {
+                if let context = app.currentContext, context.kind != .sqlite, !isDocumentStore, Feature.otherObjects.isAvailable {
                     Menu {
                         ForEach(context.driver.dialect.otherObjectQueries, id: \.title) { item in
                             Button(item.title) {
@@ -74,24 +77,33 @@ struct MainToolbar: View {
                     .menuIndicator(.hidden)
                     .fixedSize()
                     .help("Sequences, types, triggers, indexes and other objects")
+                    .transition(Self.modeTransition)
                 }
                 objectButton(.queries, "Query", "query")
-                if !isDocumentStore { objectButton(.backups, "Backup", "backup") }
+                if !isDocumentStore && Feature.backup.isAvailable {
+                    objectButton(.backups, "Backup", "backup").transition(Self.modeTransition)
                 }
+                }
+                if Feature.automation.isAvailable {
                 ChromeButton(title: "Automation", help: "Batch jobs that run queries, exports and backups on a schedule") {
                     app.openAutomation()
                 } glyph: {
                     AppIcon(name: "automation", size: 32)
                 }
+                .transition(Self.modeTransition)
+                }
                 let modelContext = app.currentContext?.isOpen == true && !isDocumentStore ? app.currentContext : nil
-                if engine != .redis && !isDocumentStore {
+                if engine != .redis && !isDocumentStore && Feature.model.isAvailable {
                 ChromeButton(title: "Model", isEnabled: modelContext != nil, help: "Reverse the database to an ER model") {
                     if let modelContext { app.openModel(in: modelContext, schema: app.currentSchema) }
                 } glyph: {
                     AppIcon(name: "model", size: 32, isEnabled: modelContext != nil)
                 }
+                .transition(Self.modeTransition)
                 }
-                BIToolbarMenu()
+                if Feature.bi.isAvailable {
+                    BIToolbarMenu().transition(Self.modeTransition)
+                }
 
                 Spacer(minLength: 16)
 
@@ -104,8 +116,18 @@ struct MainToolbar: View {
             .padding(.trailing, 10)
             .padding(.top, 3)
             .padding(.bottom, 4)
+            // Switching Simple / Advanced: the buttons that come and go fade and the others slide into place.
+            .animation(.smooth(duration: 0.32), value: AppOptions.shared.interfaceMode)
         }
         .background(ChromeBackground())
+    }
+
+    static let modeTransition = AnyTransition.opacity.combined(with: .scale(scale: 0.85, anchor: .bottom))
+
+    /// The engine's object buttons; Simple keeps Table / Collection and View.
+    private var toolbarCategories: [ObjectCategory] {
+        let all = ObjectCategory.toolbarCategories(for: app.currentContext?.kind)
+        return Feature.routineObjectButtons.isAvailable ? all : all.filter { $0 == .tables || $0 == .views }
     }
 
     /// The engine of the selected connection: the toolbar shows only what applies to it, as Navicat does.

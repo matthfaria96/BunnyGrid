@@ -7,6 +7,15 @@ enum SyncTool: String, CaseIterable, Identifiable {
     case dataTransfer, dataSync, structureSync
     var id: String { rawValue }
 
+    /// Its entry in the Simple / Advanced table.
+    var feature: Feature {
+        switch self {
+        case .dataTransfer: .dataTransfer
+        case .dataSync: .dataSync
+        case .structureSync: .structureSync
+        }
+    }
+
     var title: String {
         switch self {
         case .dataTransfer: "Data Transfer"
@@ -108,6 +117,7 @@ final class SyncEndpoint {
 extension AppModel {
     /// Opens a wizard from the selected navigator node (or tab).
     func openSyncWizard(_ tool: SyncTool, node: NavNode? = nil) {
+        guard tool.feature.isAvailable else { return }
         let node = node ?? navSelection
         let id = node?.connectionID ?? currentSession?.id
         syncWizard = SyncWizardRequest(tool: tool, connectionID: id, database: node?.databaseName ?? currentContext?.name,

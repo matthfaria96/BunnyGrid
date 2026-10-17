@@ -164,7 +164,9 @@ struct ObjectActionItems: View {
             Divider()
             if object.kind == .table && writable {
                 Button("Import Wizard…") { app.importTarget = ImportTarget(context: context, object: object) }
-                Button("Data Generation…") { app.generationTarget = ImportTarget(context: context, object: object) }
+                if Feature.dataGeneration.isAvailable {
+                    Button("Data Generation…") { app.generationTarget = ImportTarget(context: context, object: object) }
+                }
             }
             Button("Export Wizard…") { app.exportTarget = ExportTarget(context: context, objects: [object]) }
             Menu("Dump SQL File") {

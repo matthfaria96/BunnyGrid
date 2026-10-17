@@ -110,9 +110,11 @@ struct ObjectsView: View {
                 }
             }
             Spacer()
-            ToolIcon("list.bullet", gridMode ? .secondary : .accentColor, "List", isEnabled: true) { gridMode = false }
-            ToolIcon("square.grid.3x3", gridMode ? .accentColor : .secondary, "Grid", isEnabled: true) { gridMode = true }
-            Divider().frame(height: 18).padding(.horizontal, 6)
+            if Feature.objectsGrid.isAvailable {
+                ToolIcon("list.bullet", gridMode ? .secondary : .accentColor, "List", isEnabled: true) { gridMode = false }
+                ToolIcon("square.grid.3x3", gridMode ? .accentColor : .secondary, "Grid", isEnabled: true) { gridMode = true }
+                Divider().frame(height: 18).padding(.horizontal, 6)
+            }
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search", text: $search).textFieldStyle(.plain)
@@ -191,7 +193,8 @@ struct ObjectsView: View {
                     .task { await context.loadObjects(schema: schema) }
             } else {
                 ZStack {
-                    if gridMode {
+                    // Simple mode lists objects; the icon view is Advanced.
+                    if gridMode && Feature.objectsGrid.isAvailable {
                         ObjectTiles(objects: objects, selection: $selection, tint: category.tint) { open($0) }
                     } else {
                         objectList(context: context)

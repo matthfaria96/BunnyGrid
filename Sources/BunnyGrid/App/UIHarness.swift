@@ -93,6 +93,7 @@ final class UIHarness {
             Self.acceptFirstMouseEverywhere()
             Self.virtualizePointer()
             Self.virtualizeKeyWindow()
+            Self.virtualizeOcclusion()
         }
         Self.privatePasteboard()
         Self.scriptPanels()
@@ -459,6 +460,21 @@ final class UIHarness {
         }
     }
 
+    /// With the screen locked (or the display asleep) every window is occluded, and SwiftUI then neither updates nor
+    /// vends the accessibility elements the scenarios find their targets by. While a scenario runs, visible windows
+    /// report themselves visible, so a run behaves the same whether or not someone is at the Mac.
+    private static func virtualizeOcclusion() {
+        let state: @convention(block) (NSWindow) -> UInt = { window in
+            window.isVisible ? NSWindow.OcclusionState.visible.rawValue : 0
+        }
+        if let method = class_getInstanceMethod(NSWindow.self, #selector(getter: NSWindow.occlusionState)) {
+            method_setImplementation(method, imp_implementationWithBlock(state))
+        }
+        for window in NSApp.windows {
+            NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        }
+    }
+
     /// Copy commands in a scenario must not overwrite the person's clipboard: `NSPasteboard.general` is a private
     /// pasteboard for the run (the `pasteboard` probe reads it).
     nonisolated(unsafe) static let scenarioPasteboard = NSPasteboard(name: NSPasteboard.Name("app.bunnygrid.uiharness.general.\(getpid())"))
@@ -628,10 +644,15 @@ final class UIHarness {
 
     /// Visible windows front to back (sheets and menus' owners first).
     private var windows: [NSWindow] {
-        NSApp.orderedWindows.filter {
+        let ordered = NSApp.orderedWindows.filter {
             $0.isVisible && $0.contentView != nil && !($0 is NSPanel && $0.title.isEmpty && $0.contentView?.subviews.isEmpty == true)
                 && String(describing: type(of: $0)) != "SPRoundedWindow"   // text-field autocomplete popup
         }
+        // Popovers (the account menu) are not in `orderedWindows`; they sit above everything, so they come first.
+        let popovers = NSApp.windows.filter { window in
+            window.isVisible && String(describing: type(of: window)).contains("Popover") && !ordered.contains { $0 === window }
+        }
+        return popovers + ordered
     }
 
     private func targetWindow(_ step: [String: Any]) throws -> NSWindow {
@@ -1209,6 +1230,12 @@ final class UIHarness {
         if let sheet = main.attachedSheet { _ = capture(sheet, as: name + "-sheet") }
         for other in windows where other !== main && !other.isSheet && other.level == .normal {
             _ = capture(other, as: name + "-" + (other.title.isEmpty ? "window" : other.title.lowercased().replacingOccurrences(of: " ", with: "-")))
+        }
+        // Popovers (the account menu) and open menus, which live in windows of their own above the main one.
+        for (index, other) in NSApp.windows.filter({ $0.isVisible && $0.level != .normal }).enumerated() {
+            let kind = String(describing: type(of: other))
+            if kind.contains("Popover") { _ = capture(other, as: name + "-popover\(index == 0 ? "" : "-\(index)")") }
+            else if kind.contains("Menu") { _ = capture(other, as: name + "-menu\(index == 0 ? "" : "-\(index)")") }
         }
         return path
     }

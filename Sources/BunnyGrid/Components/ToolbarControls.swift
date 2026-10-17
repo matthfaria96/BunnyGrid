@@ -93,6 +93,8 @@ struct ToolbarChip: View {
         .disabled(!isEnabled)
         .onHover { isHovering = $0 }
         .help(help ?? title)
+        // Icons-only (narrow window): VoiceOver and the UI scenarios still find it by its title.
+        .accessibilityLabel(title)
         .popover(isPresented: $showingSoon, arrowEdge: .bottom) { ComingSoonNote(title: title, detail: comingSoon ?? "") }
     }
 }

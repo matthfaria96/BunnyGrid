@@ -194,7 +194,8 @@ struct NavigatorView: View {
     private func appendCategories(context: DatabaseContext, schema: String?, depth: Int, filter: String, to rows: inout [NavRow]) {
         guard let id = context.session?.id else { return }
         let filtering = !filter.isEmpty || app.favoritesOnly
-        for category in ObjectCategory.categories(for: context.kind) {
+        // Simple mode has no backups; its other folders are the same.
+        for category in ObjectCategory.categories(for: context.kind) where category != .backups || Feature.backup.isAvailable {
             let node = NavNode.category(id, context.name, schema, category)
             let isExpanded = app.expanded.contains(node) || (filtering && category.objectKind != nil)
             var row = NavRow(node: node, depth: depth, title: category.title(for: context.kind), icon: category.systemImage,
@@ -627,9 +628,12 @@ private struct DatabaseActionItems: View {
             Button("Structure and Data…") { app.dumpDatabase(context, schema: schema, includeData: true) }
             Button("Structure Only…") { app.dumpDatabase(context, schema: schema, includeData: false) }
         }
-        Button("Reverse Database to Model") { app.openModel(in: context, schema: schema) }
-        Divider()
-        ForEach(SyncTool.allCases) { tool in
+        if Feature.model.isAvailable {
+            Button("Reverse Database to Model") { app.openModel(in: context, schema: schema) }
+        }
+        let tools = SyncTool.allCases.filter(\.feature.isAvailable)
+        if !tools.isEmpty { Divider() }
+        ForEach(tools) { tool in
             Button(tool.title + "…") {
                 app.syncWizard = SyncWizardRequest(tool: tool, connectionID: context.session?.id, database: context.name, schema: schema)
             }

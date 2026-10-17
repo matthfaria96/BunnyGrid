@@ -546,8 +546,9 @@ final class TableTabModel: Identifiable {
 
     func setValue(_ value: CellValue, row: Int, column: Int) {
         guard isEditable, let page, !maskedColumnIndexes.contains(column) else { return }
-        // Options › Records › "Auto begin transaction": the first edit opens a transaction, then applies.
-        if AppOptions.shared.values.autoBeginTransaction, canBeginTransaction, !isStartingTransaction {
+        // Options › Records › "Auto begin transaction": the first edit opens a transaction, then applies
+        // (Advanced only: Simple has no transaction mode, edits apply with Apply / ⌘S).
+        if AppOptions.shared.values.autoBeginTransaction, Feature.transactionMode.isAvailable, canBeginTransaction, !isStartingTransaction {
             isStartingTransaction = true
             Task {
                 await beginTransaction(session: context?.session)

@@ -7,12 +7,18 @@ struct AutomationMenuItems: View {
     let model: AppModel
 
     var body: some View {
-        Button("Automation") { model.openAutomation() }
-            .keyboardShortcut("j", modifiers: [.command, .shift])
-        Button("New Backup…") {
-            if let context = model.currentContext { model.automation.backupTarget = BackupTarget(context: context, schema: model.currentSchema) }
+        // Simple mode hides both (and ⇧⌘J with them).
+        if Feature.automation.isAvailable {
+            Button("Automation") { model.openAutomation() }
+                .keyboardShortcut("j", modifiers: [.command, .shift])
         }
-        .disabled(model.currentContext == nil)
+        if Feature.backup.isAvailable {
+            Button("New Backup…") {
+                if let context = model.currentContext { model.automation.backupTarget = BackupTarget(context: context, schema: model.currentSchema) }
+            }
+            .disabled(model.currentContext == nil)
+        }
+        if Feature.automation.isAvailable || Feature.backup.isAvailable { Divider() }
     }
 }
 

@@ -1,0 +1,14 @@
+{
+  "name": "interface-mode-existing-user",
+  "fixture": "existing-user",
+  "args": ["--first-launch", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "wait", "ms": 1200},
+    {"op": "assert", "probe": "connectionCount", "equals": 1, "note": "saved connections from an earlier version"},
+    {"op": "assert", "probe": "onboarding", "equals": "false", "note": "no welcome sheet for an existing user"},
+    {"op": "assert", "probe": "onboardingDone", "equals": "true"},
+    {"op": "assert", "probe": "interfaceMode", "equals": "advanced", "note": "who keeps Advanced"},
+    {"op": "assert", "label": "Automation", "window": "main", "exists": true},
+    {"op": "assert", "probe": "sheet", "equals": "false"}
+  ]
+}

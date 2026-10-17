@@ -92,8 +92,11 @@ struct TableTabView: View {
 
     @ViewBuilder
     private var toolbarItems: some View {
-                TableProfileMenu(model: model, namingProfile: $namingProfile)
-                ToolbarGroupSeparator()
+                if Feature.tableProfile.isAvailable {
+                    TableProfileMenu(model: model, namingProfile: $namingProfile)
+                    ToolbarGroupSeparator()
+                }
+                // A transaction begun in Advanced keeps its Commit / Rollback in Simple.
                 if model.isInTransaction {
                     ToolbarChip(title: "Commit", systemImage: "checkmark.seal.fill", tint: .green, help: "Apply pending edits and commit the transaction", icon: "tb-commit") {
                         Task { await model.commitTransaction() }
@@ -101,13 +104,13 @@ struct TableTabView: View {
                     ToolbarChip(title: "Rollback", systemImage: "arrow.uturn.backward.circle.fill", tint: .red, help: "Undo everything since Begin Transaction", icon: "tb-rollback") {
                         Task { await model.rollbackTransaction() }
                     }
-                } else {
+                } else if Feature.transactionMode.isAvailable {
                     ToolbarChip(title: "Begin Transaction", systemImage: "arrow.triangle.branch", tint: .orange, isEnabled: model.canBeginTransaction,
                                 help: model.canBeginTransaction ? "Edit inside a transaction on this tab's own connection; commit or roll back later" : "Begin Transaction needs an editable table", icon: "tb-begin-transaction") {
                         Task { await model.beginTransaction(session: model.connectionID.flatMap { app.sessions[$0] }) }
                     }
                 }
-                ToolbarGroupSeparator()
+                if model.isInTransaction || Feature.transactionMode.isAvailable { ToolbarGroupSeparator() }
                 ToolbarChip(title: "Cell Editor", systemImage: "square.and.pencil", tint: .orange, isOn: model.showCellEditor, icon: "tb-cell-editor") {
                     model.showCellEditor.toggle()
                 }
@@ -128,8 +131,10 @@ struct TableTabView: View {
                     )
                 }
                 ToolbarGroupSeparator()
-                ToolbarChip(title: "Data Profiling", systemImage: "chart.bar.doc.horizontal", tint: .green, isEnabled: !model.columns.isEmpty, icon: "tb-data-profiling") {
-                    model.showProfiling = true
+                if Feature.dataProfiling.isAvailable {
+                    ToolbarChip(title: "Data Profiling", systemImage: "chart.bar.doc.horizontal", tint: .green, isEnabled: !model.columns.isEmpty, icon: "tb-data-profiling") {
+                        model.showProfiling = true
+                    }
                 }
                 ToolbarChip(title: "Import", systemImage: "square.and.arrow.down", tint: .teal,
                             isEnabled: model.object.kind == .table && model.readOnlyReason == nil, icon: "tb-import") {
@@ -139,19 +144,26 @@ struct TableTabView: View {
                 }
                 ExportChip(columns: model.page?.columns ?? [], rows: model.exportRows, suggestedName: model.object.name)
                     .disabled(model.page == nil)
-                ToolbarChip(title: "Data Generation", systemImage: "wand.and.stars", tint: .purple,
-                            isEnabled: model.object.kind == .table && model.readOnlyReason == nil && !model.isInTransaction, icon: "tb-data-generation") {
-                    if let context = app.currentContextFor(model) {
-                        app.generationTarget = ImportTarget(context: context, object: model.object)
+                if Feature.dataGeneration.isAvailable {
+                    ToolbarChip(title: "Data Generation", systemImage: "wand.and.stars", tint: .purple,
+                                isEnabled: model.object.kind == .table && model.readOnlyReason == nil && !model.isInTransaction, icon: "tb-data-generation") {
+                        if let context = app.currentContextFor(model) {
+                            app.generationTarget = ImportTarget(context: context, object: model.object)
+                        }
                     }
                 }
-                ToolbarChip(title: "Data Masking", systemImage: "theatermasks", tint: .indigo,
-                            isOn: model.masks.values.contains { $0 != .none }, isEnabled: model.page != nil, icon: "tb-data-masking") {
-                    showingMasking = true
+                // Masks already on (set in Advanced, or by a default table profile) stay visible and removable in Simple.
+                if Feature.dataMasking.isAvailable || model.masks.values.contains(where: { $0 != .none }) {
+                    ToolbarChip(title: "Data Masking", systemImage: "theatermasks", tint: .indigo,
+                                isOn: model.masks.values.contains { $0 != .none }, isEnabled: model.page != nil, icon: "tb-data-masking") {
+                        showingMasking = true
+                    }
+                    .popover(isPresented: $showingMasking, arrowEdge: .bottom) { DataMaskingPopover(model: model) }
                 }
-                .popover(isPresented: $showingMasking, arrowEdge: .bottom) { DataMaskingPopover(model: model) }
-                ToolbarChip(title: "Create BI Workspace", systemImage: "chart.pie", tint: .pink, icon: "tb-bi-workspace") {
-                    app.newBIWorkspace(in: app.currentContextFor(model), table: model.object)
+                if Feature.bi.isAvailable {
+                    ToolbarChip(title: "Create BI Workspace", systemImage: "chart.pie", tint: .pink, icon: "tb-bi-workspace") {
+                        app.newBIWorkspace(in: app.currentContextFor(model), table: model.object)
+                    }
                 }
     }
 

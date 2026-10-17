@@ -41,6 +41,8 @@ final class BIWorkspaceModel: DocumentTab, Identifiable {
 
     // MARK: DocumentTab
 
+    var feature: Feature? { .bi }
+
     var title: String { workspace.name }
     var kindName: String { "BI Workspace" }
     var hasUnsavedChanges: Bool { false }

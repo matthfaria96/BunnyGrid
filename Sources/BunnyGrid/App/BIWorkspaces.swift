@@ -15,6 +15,7 @@ extension AppModel {
 
     /// Opens a saved workspace (reusing its tab).
     func openBIWorkspace(_ workspace: BIWorkspace) {
+        guard Feature.bi.isAvailable else { return }
         if let tab = tabs.first(where: { if case .document(let t) = $0 { (t as? BIWorkspaceModel)?.workspace.id == workspace.id } else { false } }) {
             selectedTabID = tab.id
             return
@@ -27,6 +28,8 @@ extension AppModel {
     /// "New BI Workspace": an empty workspace, or (from a table's "Create BI Workspace") one with that table as its
     /// data source and a first chart.
     func newBIWorkspace(in context: DatabaseContext?, table: DatabaseObject? = nil) {
+        // Simple mode hides BI: its menu item, ⌘T and the table button do nothing (open workspaces stay usable).
+        guard Feature.bi.isAvailable else { return }
         var workspace = BIWorkspace(name: table.map { "\($0.name) Workspace" } ?? "BI Workspace \(biWorkspaces.count + 1)")
         if let context, let session = context.session {
             let objects = table.map { [$0] } ?? []
