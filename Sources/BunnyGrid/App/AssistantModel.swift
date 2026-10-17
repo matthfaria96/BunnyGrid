@@ -21,6 +21,19 @@ struct AIMessage: Codable, Identifiable, Hashable {
     var note: String?
     /// Platform that answered (nil in chats saved before ChatGPT support: those were Claude).
     var provider: AIProvider?
+    /// For user messages: what was typed, so Edit can put it back in the composer.
+    var typedText: String?
+    /// Answers to the same question from the other assistants ("Compare with Other Assistants").
+    var alternates: [AIAlternate]?
+}
+
+/// Another assistant's answer to the same question; display only, never sent back to the API.
+struct AIAlternate: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var provider: AIProvider
+    var model: String?
+    var text: String
+    var note: String?
 }
 
 struct AIChat: Codable, Identifiable, Hashable {
@@ -28,11 +41,33 @@ struct AIChat: Codable, Identifiable, Hashable {
     var title: String
     var messages: [AIMessage] = []
     var createdAt = Date()
+    var updatedAt: Date?
 }
 
-/// A text file attached to the next message.
+/// Context attached to the next message: a file, a schema's structure or an open tab.
 struct AIAttachment: Identifiable, Hashable {
+    enum Kind: Hashable {
+        case file, schema, tab
+
+        var systemImage: String {
+            switch self {
+            case .file: "paperclip"
+            case .schema: "square.stack.3d.up"
+            case .tab: "rectangle.on.rectangle"
+            }
+        }
+
+        var tag: String {
+            switch self {
+            case .file: "attached_file"
+            case .schema: "attached_schema"
+            case .tab: "attached_tab"
+            }
+        }
+    }
+
     let id = UUID()
+    let kind: Kind
     let name: String
     let content: String
 }
@@ -45,7 +80,7 @@ enum KeyVerification: Equatable {
     case failed(String)
 }
 
-/// The AI Assistant pane: chats with Claude or ChatGPT about the current database.
+/// The AI Assistant: chats with Claude or ChatGPT about the current database, plus the editor's Ask AI actions.
 @MainActor
 @Observable
 final class AssistantModel {
@@ -61,28 +96,53 @@ final class AssistantModel {
     var openAIModel: String = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAIModels.defaultModel {
         didSet { UserDefaults.standard.set(openAIModel, forKey: "openAIModel") }
     }
+    /// Max Tokens, Effort and Instruction per platform.
+    var requestOptions: [AIProvider: AIRequestOptions] = AssistantModel.loadOptions() {
+        didSet {
+            let encoded = Dictionary(uniqueKeysWithValues: requestOptions.map { ($0.key.rawValue, $0.value) })
+            UserDefaults.standard.set(try? JSONEncoder().encode(encoded), forKey: "aiRequestOptions")
+        }
+    }
+    /// Navicat's "Action for Enter key": send, or start a new line (then ⌘↩ sends).
+    var enterSends = UserDefaults.standard.object(forKey: "aiEnterSends") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(enterSends, forKey: "aiEnterSends") }
+    }
+    /// Navicat's "Enable Compare with Other Assistants".
+    var compareEnabled = UserDefaults.standard.object(forKey: "aiCompareEnabled") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(compareEnabled, forKey: "aiCompareEnabled") }
+    }
     /// OpenAI models for the picker: the suggested ones until the account's list arrives.
     private(set) var openAIModels: [AIModelOption] = OpenAIModels.suggested
     /// Keys saved in the Keychain, read off the main thread at launch.
     private(set) var storedKeys: [AIProvider: String] = [:]
     private(set) var verification: [AIProvider: KeyVerification] = [:]
+    /// Saved Ask AI actions from the query editor.
+    private(set) var actions: [AIAction] = []
+
     var draft = ""
     var includeTable = false
     var includeSchema = false
     var attachments: [AIAttachment] = []
     private(set) var isStreaming = false
     private(set) var streamingText = ""
+    /// The assistant message whose answer from another platform is streaming in.
+    private(set) var comparingMessageID: UUID?
+    private(set) var compareText = ""
     var error: String?
     var isExpanded = false
 
     @ObservationIgnored weak var app: AppModel?
     @ObservationIgnored private let storeURL: URL
+    @ObservationIgnored private let actionStore: JSONListStore<AIAction>
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var compareTask: Task<Void, Never>?
 
     nonisolated static let apiKeyAccount = "api-key"
 
     init(storeURL: URL) {
         self.storeURL = storeURL
+        actionStore = JSONListStore(fileURL: storeURL.deletingLastPathComponent().appending(path: "ai-actions.json"))
+        actions = (try? actionStore.load()) ?? []
         load()
         loadKeys()
     }
@@ -93,8 +153,33 @@ final class AssistantModel {
 
     // MARK: - Platforms and keys
 
+    /// `BUNNYGRID_ANTHROPIC_BASE_URL` / `BUNNYGRID_OPENAI_BASE_URL` point a platform at a proxy or a local mock.
+    static func baseURL(for provider: AIProvider) -> URL? {
+        let name = provider == .claude ? "BUNNYGRID_ANTHROPIC_BASE_URL" : "BUNNYGRID_OPENAI_BASE_URL"
+        guard let value = ProcessInfo.processInfo.environment[name], !value.isEmpty else { return nil }
+        return URL(string: value)
+    }
+
+    private static func anthropic(_ key: String) -> AnthropicClient {
+        baseURL(for: .claude).map { AnthropicClient(apiKey: key, baseURL: $0) } ?? AnthropicClient(apiKey: key)
+    }
+
+    private static func openAI(_ key: String) -> OpenAIClient {
+        baseURL(for: .chatGPT).map { OpenAIClient(apiKey: key, baseURL: $0) } ?? OpenAIClient(apiKey: key)
+    }
+
     nonisolated private static func keychain(_ provider: AIProvider) -> KeychainStore {
         KeychainStore(service: provider.keychainService)
+    }
+
+    private static func loadOptions() -> [AIProvider: AIRequestOptions] {
+        guard let data = UserDefaults.standard.data(forKey: "aiRequestOptions"),
+              let decoded = try? JSONDecoder().decode([String: AIRequestOptions].self, from: data) else { return [:] }
+        return Dictionary(uniqueKeysWithValues: decoded.compactMap { key, value in AIProvider(rawValue: key).map { ($0, value) } })
+    }
+
+    func options(for provider: AIProvider) -> AIRequestOptions {
+        requestOptions[provider] ?? AIRequestOptions()
     }
 
     /// Keychain reads can block on an access prompt (ad hoc builds), so they run detached.
@@ -145,9 +230,9 @@ final class AssistantModel {
             do {
                 switch provider {
                 case .claude:
-                    _ = try await AnthropicClient(apiKey: key).listModels()
+                    _ = try await Self.anthropic(key).listModels()
                 case .chatGPT:
-                    let ids = try await OpenAIClient(apiKey: key).listModels()
+                    let ids = try await Self.openAI(key).listModels()
                     openAIModels = OpenAIModels.options(from: ids)
                     if !openAIModels.contains(where: { $0.id == openAIModel }), let first = openAIModels.first {
                         openAIModel = first.id
@@ -186,6 +271,21 @@ final class AssistantModel {
         return models(for: provider).first { $0.id == id }?.name ?? id
     }
 
+    /// The other platforms that could answer the same question, for Compare.
+    var compareProviders: [AIProvider] {
+        AIProvider.allCases.filter { $0 != provider && hasAPIKey(for: $0) }
+    }
+
+    /// One streamed request to `provider` with its current model and options.
+    func stream(_ provider: AIProvider, messages: [JSONValue], system: String = AIPrompts.systemPrompt) -> AsyncThrowingStream<AssistantStreamEvent, any Error> {
+        let key = apiKey(for: provider)
+        let options = options(for: provider)
+        return switch provider {
+        case .claude: Self.anthropic(key).streamMessage(model: claudeModel, system: system, messages: messages, options: options)
+        case .chatGPT: Self.openAI(key).streamResponse(model: openAIModel, instructions: system, messages: messages, options: options)
+        }
+    }
+
     // MARK: - Chats
 
     func newChat() {
@@ -196,11 +296,22 @@ final class AssistantModel {
         error = nil
     }
 
+    func deleteChat(_ id: UUID) {
+        if id == currentChatID { cancel() }
+        chats.removeAll { $0.id == id }
+        if currentChatID == id { currentChatID = chats.first?.id }
+        save()
+    }
+
     func deleteCurrentChat() {
         guard let id = currentChatID else { return }
-        cancel()
-        chats.removeAll { $0.id == id }
-        currentChatID = chats.first?.id
+        deleteChat(id)
+    }
+
+    func renameChat(_ id: UUID, to title: String) {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, let index = chats.firstIndex(where: { $0.id == id }) else { return }
+        chats[index].title = title
         save()
     }
 
@@ -209,6 +320,12 @@ final class AssistantModel {
         chats = []
         currentChatID = nil
         save()
+    }
+
+    func open(_ chat: AIChat) {
+        cancel()
+        currentChatID = chat.id
+        error = nil
     }
 
     // MARK: - Context
@@ -226,7 +343,7 @@ final class AssistantModel {
         var lines: [String] = []
         let context = app.currentContext
         if let context, let session = context.session {
-            lines.append("Engine: \(session.config.kind.displayName) \(session.serverVersion)")
+            lines.append("Engine: " + AIPrompts.engineLabel(engine: session.config.kind.displayName, version: session.serverVersion))
             lines.append("Database: \(context.name)" + (app.currentSchema.map { ", schema: \($0)" } ?? ""))
         }
         if includeTable, let table = contextTable {
@@ -273,21 +390,43 @@ final class AssistantModel {
                 error = "\(url.lastPathComponent) is not a text file."
                 return
             }
-            attachments.append(AIAttachment(name: url.lastPathComponent, content: text))
+            attachments.append(AIAttachment(kind: .file, name: url.lastPathComponent, content: text))
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    // MARK: - Sending
+    /// Navicat's "Attach Schemas": the structure of each chosen schema goes with the next message.
+    func attachSchemas(_ schemas: [String?], in context: DatabaseContext) {
+        Task {
+            for schema in schemas {
+                let description = await AIContextBuilder.schemaDescription(context: context, schema: schema)
+                let name = context.location(schema: schema)
+                attachments.removeAll { $0.kind == .schema && $0.name == name }
+                attachments.append(AIAttachment(kind: .schema, name: name, content: description.isEmpty ? "(no tables)" : description))
+            }
+        }
+    }
 
-    private static let systemPrompt = """
-        You are the AI assistant inside BunnyGrid, a native macOS database client. You help the user \
-        write, explain, optimize and fix SQL for the database they are connected to. Use the SQL dialect \
-        of their engine. Put runnable SQL in fenced ```sql code blocks so it can be opened in the query \
-        editor. Be concise; explain briefly what a query does and note assumptions about the schema. \
-        A <database_context> block, when present, describes the user's current database, table or schema.
-        """
+    /// Navicat's "Attach Tabs": what each chosen tab shows (a query's SQL, a table's structure).
+    func attachTabs(_ ids: [UUID]) {
+        guard let app else { return }
+        for tab in app.tabs where ids.contains(tab.id) {
+            let content: String
+            switch tab {
+            case .query(let model):
+                content = model.text
+            case .table(let model):
+                content = "Table \(model.object.qualifiedName):\n" + model.columns.map { "  \($0.name) \($0.dataType)\($0.isPrimaryKey ? " PRIMARY KEY" : "")\($0.nullable ? "" : " NOT NULL")" }.joined(separator: "\n")
+            case .design(let model):
+                content = "Table design \(model.tableName):\n" + model.columns.map { "  \($0.name) \($0.type)" }.joined(separator: "\n")
+            }
+            attachments.removeAll { $0.kind == .tab && $0.name == tab.title }
+            attachments.append(AIAttachment(kind: .tab, name: tab.title, content: content))
+        }
+    }
+
+    // MARK: - Sending
 
     /// Starts a request from the toolbar (e.g. "Fill with AI") with the table chip on.
     func ask(_ prompt: String, includeTable: Bool) {
@@ -301,7 +440,6 @@ final class AssistantModel {
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isStreaming else { return }
-        let provider = provider
         guard hasAPIKey(for: provider) else {
             error = provider.missingKeyMessage()
             return
@@ -310,11 +448,11 @@ final class AssistantModel {
 
         var apiText = contextBlock()
         for attachment in attachments {
-            apiText += "<attached_file name=\"\(attachment.name)\">\n\(attachment.content)\n</attached_file>\n\n"
+            apiText += "<\(attachment.kind.tag) name=\"\(attachment.name)\">\n\(attachment.content)\n</\(attachment.kind.tag)>\n\n"
         }
         apiText += text
         let display = attachments.isEmpty ? text : text + "\n📎 " + attachments.map(\.name).joined(separator: ", ")
-        let message = AIMessage(role: .user, text: display, apiContent: [.object(["type": .string("text"), "text": .string(apiText)])])
+        let message = AIMessage(role: .user, text: display, apiContent: [.object(["type": .string("text"), "text": .string(apiText)])], typedText: text)
 
         if currentChatID == nil {
             let chat = AIChat(title: String(text.prefix(40)))
@@ -325,15 +463,14 @@ final class AssistantModel {
         append(message, to: chatID)
         draft = ""
         attachments = []
+        answer(chatID: chatID, restoreDraft: text)
+    }
 
-        let history = (chats.first { $0.id == chatID }?.messages ?? []).map { message -> JSONValue in
-            .object(["role": .string(message.role.rawValue), "content": .array(message.apiContent)])
-        }
-        let key = apiKey(for: provider)
-        let stream = switch provider {
-        case .claude: AnthropicClient(apiKey: key).streamMessage(model: claudeModel, system: Self.systemPrompt, messages: history)
-        case .chatGPT: OpenAIClient(apiKey: key).streamResponse(model: openAIModel, instructions: Self.systemPrompt, messages: history)
-        }
+    /// Streams the reply to the chat's last (user) message with the current platform.
+    private func answer(chatID: UUID, restoreDraft: String?) {
+        let history = apiHistory(chats.first { $0.id == chatID }?.messages ?? [])
+        let provider = provider
+        let stream = stream(provider, messages: history)
         isStreaming = true
         streamingText = ""
         task = Task {
@@ -350,12 +487,7 @@ final class AssistantModel {
                     case .fallback(let from, let to):
                         fallbackNote = "\(from) declined this request; \(to) answered instead."
                     case .finished(let turn):
-                        var note = fallbackNote
-                        if turn.wasRefused {
-                            note = "\(provider.displayName) declined to answer this request."
-                        } else if turn.stopReason == "max_tokens" {
-                            note = "The answer was cut off at the output limit."
-                        }
+                        let note = Self.note(for: turn, provider: provider) ?? fallbackNote
                         // A refused turn with no content can't be echoed back; keep it out of the API history.
                         let content = turn.echoContent.isEmpty ? [JSONValue.object(["type": .string("text"), "text": .string(turn.text.isEmpty ? "(no answer)" : turn.text)])] : turn.echoContent
                         append(AIMessage(role: .assistant, text: turn.text, apiContent: content, model: turn.model, note: note, provider: provider), to: chatID)
@@ -365,21 +497,124 @@ final class AssistantModel {
                 return
             } catch {
                 self.error = error.localizedDescription
-                // Drop the unanswered user message so the conversation stays valid (user/assistant alternation).
-                removeLastMessage(if: .user, from: chatID)
-                draft = text
+                if let restoreDraft {
+                    // Drop the unanswered user message so the conversation stays valid (user/assistant alternation).
+                    removeLastMessage(if: .user, from: chatID)
+                    draft = restoreDraft
+                }
             }
         }
+    }
+
+    private static func note(for turn: AssistantTurn, provider: AIProvider) -> String? {
+        if turn.wasRefused { return "\(provider.displayName) declined to answer this request." }
+        if turn.stopReason == "max_tokens" { return "The answer was cut off at the output limit (Max Tokens in Settings)." }
+        return nil
+    }
+
+    private func apiHistory(_ messages: [AIMessage]) -> [JSONValue] {
+        messages.map { .object(["role": .string($0.role.rawValue), "content": .array($0.apiContent)]) }
+    }
+
+    /// Asks again for the last answer, with the current platform and model.
+    func regenerate() {
+        guard !isStreaming, let chatID = currentChatID, let index = chats.firstIndex(where: { $0.id == chatID }),
+              chats[index].messages.last?.role == .assistant else { return }
+        guard hasAPIKey(for: provider) else {
+            error = provider.missingKeyMessage()
+            return
+        }
+        chats[index].messages.removeLast()
+        save()
+        error = nil
+        answer(chatID: chatID, restoreDraft: nil)
+    }
+
+    /// Puts the last question back in the composer and removes it (and its answer) from the chat.
+    func editLastQuestion() {
+        guard !isStreaming, let chatID = currentChatID, let index = chats.firstIndex(where: { $0.id == chatID }),
+              let lastUser = chats[index].messages.lastIndex(where: { $0.role == .user }) else { return }
+        let message = chats[index].messages[lastUser]
+        draft = message.typedText ?? message.text
+        chats[index].messages.removeSubrange(lastUser...)
+        if chats[index].messages.isEmpty {
+            chats.remove(at: index)
+            currentChatID = nil
+        }
+        save()
+    }
+
+    var canRegenerate: Bool {
+        !isStreaming && currentChat?.messages.last?.role == .assistant
+    }
+
+    /// Gets another platform's answer to the question before `messageID`, shown alongside the original.
+    func compare(_ messageID: UUID, with other: AIProvider) {
+        guard comparingMessageID == nil, let chatID = currentChatID, let chat = currentChat,
+              let index = chat.messages.firstIndex(where: { $0.id == messageID }), index > 0 else { return }
+        let history = apiHistory(Array(chat.messages[..<index]))
+        let stream = stream(other, messages: history)
+        comparingMessageID = messageID
+        compareText = ""
+        compareTask = Task {
+            defer {
+                comparingMessageID = nil
+                compareText = ""
+            }
+            do {
+                for try await event in stream {
+                    switch event {
+                    case .textDelta(let piece): compareText += piece
+                    case .fallback: break
+                    case .finished(let turn):
+                        let alternate = AIAlternate(provider: other, model: turn.model, text: turn.text, note: Self.note(for: turn, provider: other))
+                        updateMessage(messageID, in: chatID) { message in
+                            message.alternates = (message.alternates ?? []).filter { $0.provider != other } + [alternate]
+                        }
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self.error = "\(other.displayName): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Opens a chat seeded with an Ask AI exchange so the conversation can continue.
+    func continueInNewChat(question: String, apiPrompt: String, answer: String, provider: AIProvider, model: String?) {
+        cancel()
+        var chat = AIChat(title: String(question.prefix(40)))
+        chat.messages = [
+            AIMessage(role: .user, text: question, apiContent: [.object(["type": .string("text"), "text": .string(apiPrompt)])], typedText: question),
+            AIMessage(role: .assistant, text: answer, apiContent: [.object(["type": .string("text"), "text": .string(answer.isEmpty ? "(no answer)" : answer)])],
+                      model: model, provider: provider),
+        ]
+        chats.insert(chat, at: 0)
+        currentChatID = chat.id
+        save()
+        app?.showAssistant = true
+        app?.rightPane = .ai
     }
 
     func cancel() {
         task?.cancel()
         task = nil
+        compareTask?.cancel()
+        compareTask = nil
     }
 
     private func append(_ message: AIMessage, to chatID: UUID) {
         guard let index = chats.firstIndex(where: { $0.id == chatID }) else { return }
         chats[index].messages.append(message)
+        chats[index].updatedAt = Date()
+        save()
+    }
+
+    private func updateMessage(_ id: UUID, in chatID: UUID, _ change: (inout AIMessage) -> Void) {
+        guard let chatIndex = chats.firstIndex(where: { $0.id == chatID }),
+              let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == id }) else { return }
+        change(&chats[chatIndex].messages[messageIndex])
         save()
     }
 
@@ -392,6 +627,32 @@ final class AssistantModel {
         }
         save()
     }
+
+    // MARK: - Ask AI actions
+
+    @discardableResult
+    func saveAction(_ action: AIAction) -> AIAction {
+        if let index = actions.firstIndex(where: { $0.id == action.id }) {
+            actions[index] = action
+        } else {
+            actions.insert(action, at: 0)
+        }
+        try? actionStore.save(actions)
+        return action
+    }
+
+    func deleteAction(_ id: UUID) {
+        actions.removeAll { $0.id == id }
+        try? actionStore.save(actions)
+    }
+
+    func togglePin(_ id: UUID) {
+        guard let index = actions.firstIndex(where: { $0.id == id }) else { return }
+        actions[index].isPinned.toggle()
+        try? actionStore.save(actions)
+    }
+
+    var pinnedActions: [AIAction] { actions.filter(\.isPinned) }
 
     // MARK: - Persistence
 
@@ -412,5 +673,37 @@ final class AssistantModel {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: url, options: .atomic)
         }
+    }
+}
+
+/// Builds the database descriptions that go to the AI.
+@MainActor
+enum AIContextBuilder {
+    /// `table(column type PK, …)` for each table and view in the schema; columns come from the driver.
+    static func schemaDescription(context: DatabaseContext, schema: String?, limit: Int = 80) async -> String {
+        if context.objects(in: schema) == nil { await context.loadObjects(schema: schema) }
+        let objects = (context.objects(in: schema) ?? []).filter { $0.kind != .routine }.prefix(limit)
+        let driver = context.driver
+        let driverSchema = context.driverSchema(schema)
+        var lines: [String] = []
+        for object in objects {
+            let columns = (try? await driver.listColumns(table: object.name, schema: driverSchema)) ?? []
+            let described = columns.map { "\($0.name) \($0.dataType)\($0.isPrimaryKey ? " PK" : "")" }.joined(separator: ", ")
+            let kind = object.kind == .table ? "" : " -- \(object.kind == .view ? "view" : "materialized view")"
+            lines.append("\(object.name)(\(described))\(kind)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// What the editor's Ask AI actions can draw on for this query tab.
+    static func requestContext(for query: QueryTabModel, includeSchema: Bool) async -> AIRequestContext {
+        let context = query.context
+        let engine = context?.kind.displayName ?? "SQL"
+        let version = context?.session?.serverVersion ?? ""
+        var schemaText = ""
+        if includeSchema, let context {
+            schemaText = await schemaDescription(context: context, schema: context.defaultSchema)
+        }
+        return AIRequestContext(engine: engine, serverVersion: version, selectedText: query.selectedText, allText: query.text, schemaDescription: schemaText)
     }
 }

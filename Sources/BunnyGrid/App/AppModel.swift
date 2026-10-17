@@ -128,6 +128,17 @@ final class AppModel {
         if case .query(let model) = selectedTab { model } else { nil }
     }
 
+    func select(_ query: QueryTabModel) {
+        selectedTabID = query.id
+    }
+
+    /// The editor that chat code goes into: the selected query tab, else the most recent one.
+    var activeQueryTab: QueryTabModel? {
+        if let selectedQueryTab { return selectedQueryTab }
+        for tab in tabs.reversed() { if case .query(let model) = tab { return model } }
+        return nil
+    }
+
     /// The database the navigator points at, falling back to the open tab's database.
     var currentContext: DatabaseContext? {
         if let node = navSelection, let id = node.connectionID, let session = sessions[id] {
@@ -655,6 +666,20 @@ final class AppModel {
         if CommandLine.arguments.contains("--new-connection") { showingConnectionPicker = true }
         if CommandLine.arguments.contains("--account-menu") { showingAccountMenu = true }
         if CommandLine.arguments.contains("--ai-pane") { showAssistant = true; rightPane = .ai }
+        if CommandLine.arguments.contains("--ai-wide") { assistant.isExpanded = true }
+        if let index = CommandLine.arguments.firstIndex(of: "--ai-ask"), CommandLine.arguments.indices.contains(index + 1) {
+            let prompt = CommandLine.arguments[index + 1]
+            Task {
+                try? await Task.sleep(for: .seconds(1))
+                assistant.draft = prompt
+                assistant.send()
+                guard CommandLine.arguments.contains("--ai-compare") else { return }
+                while assistant.isStreaming { try? await Task.sleep(for: .milliseconds(100)) }
+                if let last = assistant.currentChat?.messages.last, let other = assistant.compareProviders.first {
+                    assistant.compare(last.id, with: other)
+                }
+            }
+        }
         #endif
         if CommandLine.arguments.contains("--show-objects"), let id = opened {
             Task {
@@ -672,6 +697,19 @@ final class AppModel {
             if let query {
                 openQuery(text: query, in: context)
                 selectedQueryTab?.run()
+                #if DEBUG
+                if let index = CommandLine.arguments.firstIndex(of: "--ask-ai"), CommandLine.arguments.indices.contains(index + 1),
+                   let tab = selectedQueryTab {
+                    try? await Task.sleep(for: .milliseconds(800))
+                    while tab.isRunning { try? await Task.sleep(for: .milliseconds(50)) }
+                    let name = CommandLine.arguments[index + 1]
+                    if name == "custom" {
+                        tab.showingAskAICustom = true
+                    } else if let action = AIBuiltinAction(rawValue: name) {
+                        AskAI.run(action, on: tab, app: self)
+                    }
+                }
+                #endif
             }
             if let tableName, let object = context.objects(in: context.defaultSchema)?.first(where: { $0.name == tableName }) {
                 expanded.insert(.category(id, database, context.defaultSchema, .tables))

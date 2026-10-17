@@ -62,14 +62,18 @@ public struct OpenAIClient: Sendable {
     }
 
     /// `store: false` keeps conversations off OpenAI's servers; the full history is sent each turn.
-    public static func requestBody(model: String, instructions: String, input: [JSONValue]) -> JSONValue {
-        .object([
+    /// Effort is sent only when changed from medium, since not every listed model takes `reasoning`.
+    public static func requestBody(model: String, instructions: String, input: [JSONValue], options: AIRequestOptions = AIRequestOptions()) -> JSONValue {
+        var body: [String: JSONValue] = [
             "model": .string(model),
-            "instructions": .string(instructions),
+            "instructions": .string(options.system(instructions)),
             "input": .array(input),
             "stream": .bool(true),
             "store": .bool(false),
-        ])
+        ]
+        if let maxTokens = options.maxTokens { body["max_output_tokens"] = .int(maxTokens) }
+        if options.effort != .medium { body["reasoning"] = .object(["effort": .string(options.effort.rawValue)]) }
+        return .object(body)
     }
 
     /// Converts Messages-API style history (`{role, content: [blocks]}`) to Responses input messages.
@@ -98,8 +102,8 @@ public struct OpenAIClient: Sendable {
         return request
     }
 
-    public func streamResponse(model: String, instructions: String, messages: [JSONValue]) -> AsyncThrowingStream<AssistantStreamEvent, any Error> {
-        let body = Self.requestBody(model: model, instructions: instructions, input: Self.input(fromMessages: messages))
+    public func streamResponse(model: String, instructions: String, messages: [JSONValue], options: AIRequestOptions = AIRequestOptions()) -> AsyncThrowingStream<AssistantStreamEvent, any Error> {
+        let body = Self.requestBody(model: model, instructions: instructions, input: Self.input(fromMessages: messages), options: options)
         var request = request(path: "v1/responses")
         request.httpMethod = "POST"
         request.timeoutInterval = 600

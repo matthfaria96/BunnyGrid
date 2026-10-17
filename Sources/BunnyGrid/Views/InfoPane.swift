@@ -5,6 +5,7 @@ import SwiftUI
 /// The right pane, as in Navicat for macOS: an ⓘ Info tab describing the selection, and the AI tab.
 struct RightPane: View {
     @Environment(AppModel.self) private var app
+    @AppStorage("showAIFeatures") private var showAIFeatures = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,8 +14,10 @@ struct RightPane: View {
                     tab(.info) {
                         Image(systemName: "info.circle").font(.system(size: 14, weight: .medium))
                     }
-                    tab(.ai) {
-                        Text("AI").font(.system(size: 13, weight: .medium, design: .rounded))
+                    if showAIFeatures {
+                        tab(.ai) {
+                            AppIcon(name: app.assistant.provider.iconName, size: 15)
+                        }
                     }
                 }
                 .padding(.horizontal, 6)
@@ -31,7 +34,7 @@ struct RightPane: View {
             }
             .frame(height: 38)
             Divider()
-            switch app.rightPane {
+            switch showAIFeatures ? app.rightPane : .info {
             case .info: InfoContent()
             case .ai: AssistantPanel()
             }

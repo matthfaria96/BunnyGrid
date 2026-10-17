@@ -58,6 +58,19 @@ enum IconLibrary {
         cache[name] = image
         return image
     }
+
+    /// A copy drawn at a fixed point size, for places that ignore SwiftUI frames (menu and popup button labels).
+    static func image(_ name: String, size: CGFloat) -> NSImage? {
+        let key = "\(name)@\(size)"
+        if let cached = cache[key] { return cached }
+        guard let source = image(name) else { return nil }
+        let sized = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            source.draw(in: rect)
+            return true
+        }
+        cache[key] = sized
+        return sized
+    }
 }
 
 /// One of the app's illustrated SVG icons.

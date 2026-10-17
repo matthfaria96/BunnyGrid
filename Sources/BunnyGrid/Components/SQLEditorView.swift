@@ -9,6 +9,8 @@ struct SQLEditorView: NSViewRepresentable {
     @Binding var selectedText: String
     /// Returns suggestions for the word being typed; `qualifier` is the identifier before a `.`.
     var completions: ((_ prefix: String, _ qualifier: String?) -> [String])?
+    /// Hands the text view to the owner (for AI inserts with undo).
+    var onTextView: ((NSTextView) -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -44,6 +46,7 @@ struct SQLEditorView: NSViewRepresentable {
         SQLHighlighter.highlight(textView)
 
         scrollView.documentView = textView
+        onTextView?(textView)
         DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
         return scrollView
     }

@@ -1,6 +1,41 @@
+import AppKit
 import BunnyGridCore
 import Foundation
 import Observation
+
+/// Where AI-generated code goes in the editor (Navicat's insert options).
+enum EditorInsertMode: CaseIterable, Identifiable {
+    case atCursor, replaceSelection, replaceAll, append
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .atCursor: "Insert at Editor Cursor"
+        case .replaceSelection: "Replace Selection in Editor"
+        case .replaceAll: "Replace All in Editor"
+        case .append: "Append to Editor"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .atCursor: "Insert at Cursor"
+        case .replaceSelection: "Replace Selection"
+        case .replaceAll: "Replace All"
+        case .append: "Append"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .atCursor: "text.cursor"
+        case .replaceSelection: "selection.pin.in.out"
+        case .replaceAll: "doc.text"
+        case .append: "text.append"
+        }
+    }
+}
 
 /// A SQL editor tab with its results.
 @MainActor
@@ -16,7 +51,16 @@ final class QueryTabModel: Identifiable {
     var selectedResultID: UUID?
     private(set) var isRunning = false
     private(set) var error: String?
-    @ObservationIgnored private weak var context: DatabaseContext?
+    /// The statement that failed and the engine's message, for Fix with AI / Explain Error.
+    private(set) var failedStatement: String?
+    private(set) var failureMessage: String?
+    @ObservationIgnored private(set) weak var context: DatabaseContext?
+    /// The editor's text view, registered by `SQLEditorView`, so AI code can be inserted with undo.
+    @ObservationIgnored weak var textView: NSTextView?
+    /// The Ask AI answer being shown for this editor.
+    var aiRun: AskAIRun?
+    /// The Ask AI custom actions sheet.
+    var showingAskAICustom = false
     @ObservationIgnored private let driver: any DatabaseDriver
     let location: String
     let connectionID: UUID?
@@ -70,6 +114,8 @@ final class QueryTabModel: Identifiable {
         guard !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isRunning else { return }
         isRunning = true
         error = nil
+        failedStatement = nil
+        failureMessage = nil
         task = Task {
             defer { isRunning = false }
             let clock = ContinuousClock()
@@ -87,6 +133,8 @@ final class QueryTabModel: Identifiable {
                 } catch {
                     let prefix = statements.count > 1 ? "Statement \(index + 1) of \(statements.count) failed: " : ""
                     self.error = prefix + error.localizedDescription
+                    failedStatement = statement
+                    failureMessage = error.localizedDescription
                     break
                 }
             }
@@ -98,6 +146,42 @@ final class QueryTabModel: Identifiable {
     func cancel() {
         task?.cancel()
         task = nil
+    }
+
+    // MARK: - Editing from the AI
+
+    func canInsert(_ mode: EditorInsertMode) -> Bool {
+        mode == .replaceSelection ? hasSelection : true
+    }
+
+    /// Puts `code` into the editor through the text view, so ⌘Z undoes it.
+    func insert(_ code: String, mode: EditorInsertMode) {
+        guard let textView else {
+            switch mode {
+            case .replaceAll: text = code
+            default: text += (text.isEmpty || text.hasSuffix("\n") ? "" : "\n") + code
+            }
+            return
+        }
+        let string = textView.string as NSString
+        let selection = textView.selectedRange()
+        var range: NSRange
+        var insertion = code
+        switch mode {
+        case .atCursor: range = NSRange(location: selection.location, length: 0)
+        case .replaceSelection: range = selection
+        case .replaceAll: range = NSRange(location: 0, length: string.length)
+        case .append:
+            range = NSRange(location: string.length, length: 0)
+            if string.length > 0, !textView.string.hasSuffix("\n") { insertion = "\n\n" + code } else if string.length > 0 { insertion = "\n" + code }
+        }
+        guard textView.shouldChangeText(in: range, replacementString: insertion) else { return }
+        textView.textStorage?.replaceCharacters(in: range, with: insertion)
+        textView.didChangeText()
+        let inserted = NSRange(location: range.location, length: (insertion as NSString).length)
+        textView.setSelectedRange(inserted)
+        textView.scrollRangeToVisible(inserted)
+        textView.window?.makeFirstResponder(textView)
     }
 
     private func record(_ sql: String, duration: Duration, rowCount: Int?, error: String?) {

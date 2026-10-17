@@ -4,20 +4,24 @@ import SwiftUI
 struct QueryTabView: View {
     @Bindable var model: QueryTabModel
     @State private var showingHistory = false
+    @AppStorage("showAIFeatures") private var showAIFeatures = true
 
     var body: some View {
         VSplitView {
             VStack(spacing: 0) {
                 toolbar
                 Divider()
-                SQLEditorView(text: $model.text, selectedText: $model.selectedText) { prefix, qualifier in
+                SQLEditorView(text: $model.text, selectedText: $model.selectedText, completions: { prefix, qualifier in
                     model.completions(prefix: prefix, qualifier: qualifier)
-                }
+                }, onTextView: { model.textView = $0 })
             }
             .frame(minHeight: 120, idealHeight: 260)
 
             ResultsPane(model: model)
                 .frame(minHeight: 120)
+        }
+        .sheet(item: $model.aiRun) { run in
+            AskAIResultView(run: run, query: model)
         }
     }
 
@@ -33,6 +37,10 @@ struct QueryTabView: View {
             if model.isRunning {
                 Button(action: model.cancel) { Label("Stop", systemImage: "stop.fill") }
                 ProgressView().controlSize(.small)
+            }
+            if showAIFeatures {
+                Divider().frame(height: 16)
+                AskAIButton(query: model)
             }
             Spacer()
             Text("⎋ or ⌃Space to complete")
@@ -59,7 +67,9 @@ struct QueryTabView: View {
 }
 
 private struct ResultsPane: View {
+    @Environment(AppModel.self) private var app
     @Bindable var model: QueryTabModel
+    @AppStorage("showAIFeatures") private var showAIFeatures = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -79,8 +89,37 @@ private struct ResultsPane: View {
             }
 
             if let error = model.error {
-                ErrorBanner(message: error)
-                    .frame(maxHeight: model.results.isEmpty ? .infinity : 90)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                    Label {
+                        Text(error).textSelection(.enabled).font(.body.monospaced())
+                    } icon: {
+                        Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if showAIFeatures, model.failureMessage != nil {
+                        HStack(spacing: 8) {
+                            Button {
+                                AskAI.run(.fixError, on: model, app: app)
+                            } label: {
+                                Label("Fix with AI", systemImage: "wand.and.stars")
+                            }
+                            .help("Let \(app.assistant.provider.displayName) correct the failing statement")
+                            Button {
+                                AskAI.run(.explainError, on: model, app: app)
+                            } label: {
+                                Label("Ask AI", systemImage: "questionmark.bubble")
+                            }
+                            .help("Explain this error message")
+                            Spacer()
+                        }
+                        .controlSize(.small)
+                        .padding(.leading, 26)
+                    }
+                    }
+                    .padding()
+                }
+                .frame(maxHeight: model.results.isEmpty ? .infinity : 130)
                 Divider()
             }
             Group {

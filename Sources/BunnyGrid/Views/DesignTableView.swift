@@ -245,7 +245,7 @@ struct DesignTableView: View {
             ContentUnavailableView("No Changes", systemImage: "checkmark.circle", description: Text("The design matches the table in the database."))
         } else {
             ScrollView {
-                Text(MarkdownText.highlightSQL(model.statements.map { $0 + ";" }.joined(separator: "\n\n")))
+                Text(SQLSyntax.highlight(model.statements.map { $0 + ";" }.joined(separator: "\n\n")))
                     .font(.system(size: 12.5, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)

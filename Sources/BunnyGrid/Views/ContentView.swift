@@ -4,6 +4,7 @@ import SwiftUI
 /// Main window, laid out like Navicat: big toolbar, then Navigation | tabs | AI Assistant, then the status bar.
 struct ContentView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         @Bindable var app = app
@@ -52,6 +53,11 @@ struct ContentView: View {
         } message: {
             Text(app.alertMessage ?? "")
         }
+        #if DEBUG
+        .task {
+            if CommandLine.arguments.contains("--settings") { openSettings() }
+        }
+        #endif
     }
 }
 

@@ -75,15 +75,15 @@ public struct AnthropicClient: Sendable {
     }
 
     /// Builds the request body. Thinking is left at the model default (adaptive);
-    /// effort is set explicitly because Opus 5.5 defaults to `medium`.
-    public static func requestBody(model: ClaudeModel, system: String, messages: [JSONValue], maxTokens: Int = 64_000) -> JSONValue {
+    /// effort is always sent so the user's choice applies (Opus 5.5 defaults to `medium`).
+    public static func requestBody(model: ClaudeModel, system: String, messages: [JSONValue], options: AIRequestOptions = AIRequestOptions()) -> JSONValue {
         var body: [String: JSONValue] = [
             "model": .string(model.rawValue),
-            "max_tokens": .int(maxTokens),
+            "max_tokens": .int(options.maxTokens ?? 64_000),
             "stream": .bool(true),
-            "system": .string(system),
+            "system": .string(options.system(system)),
             "messages": .array(messages),
-            "output_config": .object(["effort": .string("medium")]),
+            "output_config": .object(["effort": .string(options.effort.rawValue)]),
         ]
         if model.supportsDefaultFallback {
             body["fallbacks"] = .string("default")
@@ -91,8 +91,8 @@ public struct AnthropicClient: Sendable {
         return .object(body)
     }
 
-    public func streamMessage(model: ClaudeModel, system: String, messages: [JSONValue]) -> AsyncThrowingStream<AssistantStreamEvent, any Error> {
-        let body = Self.requestBody(model: model, system: system, messages: messages)
+    public func streamMessage(model: ClaudeModel, system: String, messages: [JSONValue], options: AIRequestOptions = AIRequestOptions()) -> AsyncThrowingStream<AssistantStreamEvent, any Error> {
+        let body = Self.requestBody(model: model, system: system, messages: messages, options: options)
         let apiKey = apiKey
         let url = baseURL.appending(path: "v1/messages")
         return AsyncThrowingStream { continuation in

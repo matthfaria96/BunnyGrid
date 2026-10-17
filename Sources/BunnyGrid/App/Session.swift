@@ -255,7 +255,7 @@ final class DatabaseContext: Identifiable {
     }
 
     /// The schema argument the driver expects: the database name on MySQL, nothing on SQLite.
-    private func driverSchema(_ schema: String?) -> String? {
+    func driverSchema(_ schema: String?) -> String? {
         switch kind {
         case .postgresql: schema
         case .mysql, .mariadb: name
