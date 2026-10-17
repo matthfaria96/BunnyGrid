@@ -87,8 +87,11 @@ public enum SQLBeautifier {
         return tokens
     }
 
+    /// Uppercased keywords: one hash lookup per word instead of comparing with every keyword.
+    private static let keywords = Set(SQLKeywords.all.map { $0.uppercased() })
+
     private static func isKeyword(_ word: String) -> Bool {
-        SQLKeywords.all.contains { $0.caseInsensitiveCompare(word) == .orderedSame }
+        keywords.contains(word.uppercased())
     }
 
     static func formatStatement(_ sql: String) -> String {

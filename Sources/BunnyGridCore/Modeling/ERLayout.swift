@@ -214,6 +214,12 @@ public enum ERLayout {
     public static func route(_ relation: ERRelationship, in model: ERModel, frames: [String: CGRect]) -> [CGPoint]? {
         guard let child = frames[relation.fromTable], let parent = frames[relation.toTable],
               let childTable = model.table(relation.fromTable), let parentTable = model.table(relation.toTable) else { return nil }
+        return route(relation, child: childTable, at: child, parent: parentTable, at: parent)
+    }
+
+    /// The same route with the tables and their frames already looked up (the canvas keeps them indexed).
+    public static func route(_ relation: ERRelationship, child childTable: ERTable, at child: CGRect,
+                             parent parentTable: ERTable, at parent: CGRect) -> [CGPoint] {
         let childRow = relation.fromColumns.first.flatMap { name in childTable.columns.firstIndex { $0.name == name } } ?? 0
         let parentRow = relation.toColumns.first.flatMap { name in parentTable.columns.firstIndex { $0.name == name } } ?? 0
         let y1 = child.minY + rowCenter(childRow)

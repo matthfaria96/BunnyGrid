@@ -12,29 +12,91 @@ struct WorkspaceView: View {
                 TabBar()
                 Divider()
             }
-            // Every tab stays alive so switching back keeps its scroll position, selection and editor state.
-            // Hidden tabs are disabled so their keyboard shortcuts (⌘↩, ⌘R…) don't fire.
-            // In an overlay so a hidden tab's minimum width never widens the pane (the split view would otherwise
-            // take the space from the navigator and clip the visible tab).
-            Color.clear.overlay(alignment: .topLeading) { ZStack {
-                ObjectsView()
-                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
-                    .opacity(app.selectedTabID == nil ? 1 : 0)
-                    .allowsHitTesting(app.selectedTabID == nil)
-                    .disabled(app.selectedTabID != nil)
-                ForEach(app.tabs) { tab in
-                    let isActive = tab.id == app.selectedTabID
-                    TabContent(tab: tab)
-                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
-                        .opacity(isActive ? 1 : 0)
-                        .allowsHitTesting(isActive)
-                        .disabled(!isActive)
-                        .accessibilityHidden(!isActive)
-                }
-            } }
-            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .clipped()
+            // Every tab stays alive so switching back keeps its scroll position, selection and editor state, each in
+            // its own hosting view; only the selected one is shown (see `TabDeck`).
+            TabDeck(app: app, tabs: app.tabs, selectedID: app.selectedTabID)
+                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+    }
+}
+
+/// The tabs' contents, one `NSHostingView` per tab. Hidden tabs stay alive (state, scroll positions, undo) but
+/// are hidden AppKit views: switching tabs shows one view and hides another instead of changing opacity, hit
+/// testing and the enabled state of every tab in one SwiftUI tree (which re-evaluated both tabs' bodies and
+/// their AppKit views on each switch). A hidden view gets no key equivalents, so a hidden tab's shortcuts don't fire.
+/// A tab's view is made the first time it is shown.
+private struct TabDeck: NSViewRepresentable {
+    let app: AppModel
+    let tabs: [WorkspaceTab]
+    let selectedID: UUID?
+
+    func makeNSView(context: Context) -> TabDeckView {
+        let view = TabDeckView()
+        view.clipsToBounds = true
+        return view
+    }
+
+    func updateNSView(_ view: TabDeckView, context: Context) {
+        let app = app
+        view.show(selectedID, keeping: Set(tabs.map(\.id))) { id in
+            if let id {
+                guard let tab = tabs.first(where: { $0.id == id }) else { return nil }
+                return AnyView(TabContent(tab: tab).environment(app))
+            }
+            return AnyView(ObjectsView().environment(app))
+        }
+    }
+}
+
+@MainActor
+final class TabDeckView: NSView {
+    private struct Key: Hashable { let id: UUID? }
+    private var hosts: [Key: NSHostingView<AnyView>] = [:]
+    private var visible: Key?
+    /// The first responder each hidden tab had, given back when it is shown again.
+    private var savedResponders: [Key: NSResponder] = [:]
+
+    override var isFlipped: Bool { true }
+
+    func show(_ id: UUID?, keeping open: Set<UUID>, make: (UUID?) -> AnyView?) {
+        // Closed tabs.
+        for key in hosts.keys where key.id.map({ !open.contains($0) }) ?? false {
+            hosts.removeValue(forKey: key)?.removeFromSuperview()
+            savedResponders[key] = nil
+        }
+        let key = Key(id: id)
+        guard key != visible || hosts[key] == nil else { return }
+        let window = self.window
+        let oldHost = visible.flatMap { hosts[$0] }
+        var hadFocus = false
+        if let old = visible, let oldHost, let responder = window?.firstResponder as? NSView, responder.isDescendant(of: oldHost) {
+            savedResponders[old] = responder
+            hadFocus = true
+        }
+        visible = key
+        let host: NSHostingView<AnyView>
+        if let existing = hosts[key] {
+            host = existing
+        } else {
+            guard let root = make(id) else { return }
+            host = NSHostingView(rootView: root)
+            // The deck owns the size: a tab's minimum width must not widen the pane.
+            host.sizingOptions = []
+            host.frame = bounds
+            host.autoresizingMask = [.width, .height]
+            addSubview(host)
+            hosts[key] = host
+        }
+        if host.frame != bounds { host.frame = bounds }
+        host.isHidden = false
+        // One first-responder change: straight to what the tab had focused, or away from the hidden tab
+        // (a hidden editor must not keep receiving keystrokes).
+        if let responder = savedResponders.removeValue(forKey: key) as? NSView, responder.isDescendant(of: host) {
+            window?.makeFirstResponder(responder)
+        } else if hadFocus {
+            window?.makeFirstResponder(nil)
+        }
+        oldHost?.isHidden = true
     }
 }
 

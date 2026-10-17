@@ -58,6 +58,24 @@ public protocol DatabaseDriver: AnyObject, Sendable {
     func objectDDL(name: String, kind: DatabaseObjectKind, schema: String?) async throws -> String
     func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey]
     func listTriggers(table: String, schema: String?) async throws -> [TableTrigger]
+    /// Columns, foreign keys and indexes of every table in a schema (reverse engineering a model). The default
+    /// asks table by table; engines that can read the whole catalog in a few statements override it.
+    func describeTables(schema: String?) async throws -> [TableDescription]
+}
+
+/// One table's shape as the catalog describes it.
+public struct TableDescription: Sendable, Equatable {
+    public var object: DatabaseObject
+    public var columns: [TableColumn]
+    public var foreignKeys: [TableForeignKey]
+    public var indexes: [TableIndex]
+
+    public init(object: DatabaseObject, columns: [TableColumn], foreignKeys: [TableForeignKey], indexes: [TableIndex]) {
+        self.object = object
+        self.columns = columns
+        self.foreignKeys = foreignKeys
+        self.indexes = indexes
+    }
 }
 
 extension DatabaseDriver {
@@ -79,6 +97,19 @@ extension DatabaseDriver {
     }
     public func listForeignKeys(table: String, schema: String?) async throws -> [TableForeignKey] { [] }
     public func listTriggers(table: String, schema: String?) async throws -> [TableTrigger] { [] }
+
+    public func describeTables(schema: String?) async throws -> [TableDescription] {
+        var tables: [TableDescription] = []
+        for object in try await listObjects(schema: schema) where object.kind == .table {
+            try Task.checkCancellation()
+            tables.append(TableDescription(
+                object: object,
+                columns: try await listColumns(table: object.name, schema: schema),
+                foreignKeys: (try? await listForeignKeys(table: object.name, schema: schema)) ?? [],
+                indexes: (try? await listIndexes(table: object.name, schema: schema)) ?? []))
+        }
+        return tables
+    }
 
     /// The object's CREATE statement for the DDL pane. The default rebuilds a table from its columns and indexes;
     /// engines that store or print the original DDL override it.

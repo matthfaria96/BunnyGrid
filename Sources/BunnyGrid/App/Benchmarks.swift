@@ -268,6 +268,14 @@ enum Benchmarks {
             app.navigatorFilter = ""
             _ = await timeToIdle("navigator.collapse") { app.setExpanded(node, false) }
 
+        case "objects-stats":
+            // The Objects tab's statistics on a big file (no UI): one call, as the Objects list makes it.
+            guard let context = await openContext() else { return }
+            let start = PerfTrace.now()
+            let stats = (try? await context.driver.tableStatistics(schema: nil)) ?? [:]
+            let estimated = stats.values.filter { $0.rowsAreEstimated == true }.count
+            report("objects.statistics", PerfTrace.milliseconds(since: start), "\(stats.count) objects, \(estimated) estimated, events=\(stats["events"]?.rows ?? -1)")
+
         case "objects":
             guard let context = await openContext(), let id = context.session?.id else { return }
             app.expanded.insert(.database(id, "main"))
@@ -326,6 +334,31 @@ enum Benchmarks {
                 }
             }
             reportStretches("tabs.switchAll", samples)
+
+        case "beautify":
+            // Beautify SQL on the whole 20,000-line script: how long the main thread is blocked, and until the
+            // new text is coloured.
+            guard let context = await openContext() else { return }
+            let script = (try? String(contentsOfFile: argument("--bench-script") ?? "", encoding: .utf8)) ?? "SELECT 1;"
+            app.openQuery(text: script, in: context)
+            guard let tab = app.selectedQueryTab else { return }
+            await waitFor { views(SQLTextView.self).last?.colouredUpTo == .max }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let editor = views(SQLTextView.self).last else { return }
+            let before = editor.string.utf16.count
+            _ = await RunLoopMonitor.shared.settle()
+            RunLoopMonitor.shared.isRecording = true
+            let start = PerfTrace.now()
+            tab.beautify()
+            await waitFor { editor.string.utf16.count != before }
+            let replaced = PerfTrace.milliseconds(since: start)
+            await waitFor { editor.colouredUpTo == .max }
+            let coloured = PerfTrace.milliseconds(since: start)
+            _ = await RunLoopMonitor.shared.nextIdle()
+            RunLoopMonitor.shared.isRecording = false
+            report("editor.beautify", replaced, String(format: "text replaced; coloured at %.1f ms, %d -> %d chars", coloured, before, editor.string.utf16.count))
+            reportStretches("editor.beautify.mainBusy", RunLoopMonitor.shared.stretches)
+            _ = await timeToIdle("editor.undoBeautify") { editor.undoManager?.undo() }
 
         case "typing", "autocomplete":
             guard let context = await openContext() else { return }
@@ -457,7 +490,7 @@ enum Benchmarks {
     static func scrollGrid(_ grid: NSTableView, scroll: NSScrollView, name: String) async {
         let maxY = max(grid.bounds.height - scroll.contentSize.height, 1)
         // A fast fling: 180 pt per frame down the whole page and back.
-        await driveFrames("\(name).scrollVertical", duration: .seconds(3)) { frame in
+        await driveFrames("\(name).scrollVertical", duration: .seconds(CommandLine.arguments.contains("--bench-hot") ? 6 : 3)) { frame in
             var y = CGFloat(frame * 180).truncatingRemainder(dividingBy: maxY * 2)
             if y > maxY { y = maxY * 2 - y }
             scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX, y: y - (grid.headerView?.frame.height ?? 0)))
@@ -476,7 +509,7 @@ enum Benchmarks {
         guard grid.tableColumns.count > 3 else { return }
         let column = grid.tableColumns[2]
         let base = column.width
-        await driveFrames("grid.resizeColumn", duration: .seconds(2)) { frame in
+        await driveFrames("grid.resizeColumn", duration: .seconds(CommandLine.arguments.contains("--bench-hot") ? 6 : 2)) { frame in
             column.width = base + CGFloat((frame % 60) * 4)
         }
     }

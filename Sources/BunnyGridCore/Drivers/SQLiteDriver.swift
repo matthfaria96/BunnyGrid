@@ -119,9 +119,19 @@ public actor SQLiteDriver: DatabaseDriver {
         return statements.joined(separator: "\n\n")
     }
 
-    /// Root page, indexes and triggers per table and view, from sqlite_master, plus exact row counts
-    /// (SQLite keeps no estimates; counting is cheap for the small files it usually holds).
+    /// Files above this size get estimated row counts in the Objects list instead of a COUNT(*) per table
+    /// (counting a 1M-row table in an 800 MB file reads most of it: seconds on a cold cache).
+    public static let exactRowCountByteLimit = 64 << 20
+
+    /// Root page, indexes and triggers per table and view, from sqlite_master, plus row counts: exact (COUNT(*)
+    /// on a second connection) for files up to `exactRowCountByteLimit`; on bigger files, estimates marked
+    /// `rowsAreEstimated` from `sqlite_stat1` (written by ANALYZE) or else the largest rowid, both instant.
+    /// The exact count of one table stays available from `tableStatistics(schema:table:)` and `countRows`.
     public func tableStatistics(schema: String?) async throws -> [String: TableStatistics] {
+        try await tableStatistics(schema: schema, exactCountLimit: Self.exactRowCountByteLimit)
+    }
+
+    func tableStatistics(schema: String?, exactCountLimit: Int) async throws -> [String: TableStatistics] {
         let result = try await executeStatement("""
             SELECT o.name, o.rootpage,
                    (SELECT COUNT(*) FROM \(master(schema)) i WHERE i.type = 'index' AND i.tbl_name = o.name),
@@ -138,6 +148,13 @@ public actor SQLiteDriver: DatabaseDriver {
             stats[row[0].displayString] = entry
         }
         let tables = try await listObjects(schema: schema).filter { $0.kind == .table }
+        if try await databaseBytes(schema: schema) > exactCountLimit {
+            for (name, rows) in try await estimatedRowCounts(tables.map(\.name), schema: schema) {
+                stats[name, default: TableStatistics()].rows = rows
+                stats[name]?.rowsAreEstimated = true
+            }
+            return stats
+        }
         if let counts = await countRowsElsewhere(tables.map(\.name), schema: schema) {
             for (name, count) in counts { stats[name, default: TableStatistics()].rows = count }
             return stats
@@ -147,6 +164,39 @@ public actor SQLiteDriver: DatabaseDriver {
             if case .integer(let n) = count { stats[object.name, default: TableStatistics()].rows = Int(n) }
         }
         return stats
+    }
+
+    /// page_count × page_size of the main file or an attached schema.
+    private func databaseBytes(schema: String?) async throws -> Int {
+        let prefix = attachedSchema(schema).map { dialect.quoteIdentifier($0) + "." } ?? ""
+        func value(_ pragma: String) async throws -> Int {
+            if case .integer(let n) = try await executeStatement("PRAGMA \(prefix)\(pragma)").rows.first?.first { return Int(n) }
+            return 0
+        }
+        return try await value("page_count") * value("page_size")
+    }
+
+    /// Row estimates without scanning: the first number of each `sqlite_stat1` entry (rows in the table or index,
+    /// as of the last ANALYZE), else `max(rowid)` (exact for tables that are only appended to). WITHOUT ROWID
+    /// tables with no statistics get none.
+    func estimatedRowCounts(_ tables: [String], schema: String?) async throws -> [String: Int] {
+        var estimates: [String: Int] = [:]
+        let prefix = attachedSchema(schema).map { dialect.quoteIdentifier($0) + "." } ?? ""
+        let hasStat1 = try await executeStatement("SELECT 1 FROM \(master(schema)) WHERE type = 'table' AND name = 'sqlite_stat1'").rows.isEmpty == false
+        if hasStat1, let rows = try? await executeStatement("SELECT tbl, stat FROM \(prefix)sqlite_stat1").rows {
+            for row in rows where row.count == 2 {
+                guard let first = row[1].displayString.split(separator: " ").first, let count = Int(first) else { continue }
+                estimates[row[0].displayString] = max(estimates[row[0].displayString] ?? 0, count)
+            }
+        }
+        for table in tables where estimates[table] == nil {
+            if case .integer(let n) = try? await executeStatement("SELECT max(rowid) FROM \(dialect.qualifiedName(table: table, schema: attachedSchema(schema)))").rows.first?.first {
+                estimates[table] = Int(n)
+            } else if (try? await executeStatement("SELECT 1 FROM \(dialect.qualifiedName(table: table, schema: attachedSchema(schema))) LIMIT 1").rows.isEmpty) == true {
+                estimates[table] = 0
+            }
+        }
+        return estimates.filter { tables.contains($0.key) }
     }
 
     /// Exact row counts read on a second, read-only connection away from the actor. Counting a large table
@@ -217,6 +267,66 @@ public actor SQLiteDriver: DatabaseDriver {
             keys[id]?.referencedColumns.append(row[4].isNull ? "" : row[4].displayString)
         }
         return order.compactMap { keys[$0] }
+    }
+
+    /// Every table's columns, foreign keys and indexes in four statements (the pragma table-valued functions
+    /// joined with sqlite_master), instead of three or more PRAGMAs per table.
+    public func describeTables(schema: String?) async throws -> [TableDescription] {
+        let objects = try await listObjects(schema: schema).filter { $0.kind == .table }
+        guard !objects.isEmpty else { return [] }
+        let owner = dialect.quoteLiteral(attachedSchema(schema) ?? "main")
+        let tables = "SELECT name FROM \(master(schema)) WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        // cid, name, type, notnull, dflt_value, pk
+        let columnRows = try await executeStatement("""
+            SELECT m.name, p.cid, p.name, p.type, p."notnull", p.dflt_value, p.pk
+              FROM (\(tables)) m JOIN pragma_table_info(m.name, \(owner)) p ORDER BY m.name, p.cid
+            """).rows
+        // id, seq, table, from, to, on_update, on_delete
+        let keyRows = try await executeStatement("""
+            SELECT m.name, f.id, f.seq, f."table", f."from", f."to", f.on_update, f.on_delete
+              FROM (\(tables)) m JOIN pragma_foreign_key_list(m.name, \(owner)) f ORDER BY m.name, f.id, f.seq
+            """).rows
+        let indexRows = try await executeStatement("""
+            SELECT m.name, l.seq, l.name, l."unique", l.origin, i.seqno, i.name
+              FROM (\(tables)) m JOIN pragma_index_list(m.name, \(owner)) l
+              LEFT JOIN pragma_index_info(l.name, \(owner)) i ORDER BY m.name, l.seq, i.seqno
+            """).rows
+        var columns: [String: [TableColumn]] = [:]
+        for row in columnRows where row.count == 7 {
+            columns[row[0].displayString, default: []].append(TableColumn(
+                name: row[2].displayString,
+                dataType: row[3].displayString,
+                nullable: row[4] == .integer(0),
+                defaultValue: row[5].isNull ? nil : row[5].displayString,
+                isPrimaryKey: row[6] != .integer(0),
+                ordinal: Int(row[1].displayString) ?? 0))
+        }
+        var keys: [String: [TableForeignKey]] = [:]
+        var lastKey: (table: String, id: CellValue)?
+        for row in keyRows where row.count == 8 {
+            let table = row[0].displayString
+            if lastKey?.table != table || lastKey?.id != row[1] {
+                keys[table, default: []].append(TableForeignKey(name: "", columns: [], referencedTable: row[3].displayString, referencedColumns: [],
+                                                                onDelete: row[7].displayString, onUpdate: row[6].displayString))
+                lastKey = (table, row[1])
+            }
+            keys[table]![keys[table]!.count - 1].columns.append(row[4].displayString)
+            keys[table]![keys[table]!.count - 1].referencedColumns.append(row[5].isNull ? "" : row[5].displayString)
+        }
+        var indexes: [String: [TableIndex]] = [:]
+        var lastIndex: (table: String, name: String)?
+        for row in indexRows where row.count == 7 {
+            let table = row[0].displayString, name = row[2].displayString
+            if lastIndex?.table != table || lastIndex?.name != name {
+                indexes[table, default: []].append(TableIndex(name: name, columns: [], unique: row[3] == .integer(1), primary: row[4] == .text("pk")))
+                lastIndex = (table, name)
+            }
+            if !row[5].isNull { indexes[table]![indexes[table]!.count - 1].columns.append(row[6].displayString) }
+        }
+        return objects.map { object in
+            TableDescription(object: object, columns: columns[object.name] ?? [], foreignKeys: keys[object.name] ?? [],
+                             indexes: indexes[object.name] ?? [])
+        }
     }
 
     public func listTriggers(table: String, schema: String?) async throws -> [TableTrigger] {

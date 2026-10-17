@@ -264,9 +264,9 @@ struct ObjectsView: View {
             let cells: [String]
             if isSQLite {
                 cells = [object.name, stats?.rootPage.map(String.init) ?? "", stats?.hasIndexes.map { $0 ? "Yes" : "No" } ?? "",
-                         stats?.hasTriggers.map { $0 ? "Yes" : "No" } ?? "", stats?.rows.map { $0.formatted() } ?? ""]
+                         stats?.hasTriggers.map { $0 ? "Yes" : "No" } ?? "", Self.rowsText(stats)]
             } else {
-                cells = [object.name, stats?.rows.map { $0.formatted() } ?? "",
+                cells = [object.name, Self.rowsText(stats),
                          stats?.sizeBytes.flatMap { $0 > 0 ? ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) : nil } ?? "",
                          stats?.engine ?? object.schema ?? context.name, stats?.created ?? "", stats?.modified ?? "",
                          stats?.collation ?? "", stats?.comment ?? ""]
@@ -286,10 +286,29 @@ struct ObjectsView: View {
                     }
                     Divider()
                 }
+                if statistics[object.name]?.rowsAreEstimated == true {
+                    Button("Count Rows") { countRows(object, in: context) }
+                    Divider()
+                }
                 ObjectActionItems(object: object, context: context)
             }
         }
         )
+    }
+
+    /// "1,234", or "~1,234" for an estimate (big SQLite files: `sqlite_stat1` or the largest rowid).
+    private static func rowsText(_ stats: TableStatistics?) -> String {
+        guard let rows = stats?.rows else { return "" }
+        return (stats?.rowsAreEstimated == true ? "~" : "") + rows.formatted()
+    }
+
+    /// The exact count behind an estimate, on demand.
+    private func countRows(_ object: DatabaseObject, in context: DatabaseContext) {
+        Task {
+            guard let count = try? await context.driver.countRows(table: object.name, schema: object.schema) else { return }
+            statistics[object.name, default: TableStatistics()].rows = count
+            statistics[object.name]?.rowsAreEstimated = false
+        }
     }
 
     private var selectedSavedQuery: SavedQuery? {
