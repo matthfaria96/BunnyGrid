@@ -109,7 +109,9 @@ import Testing
     @Test func refusesWhatItCantKeep() {
         #expect(SQLiteTableRebuild.unsupportedFeatures(in: #"CREATE TABLE t (a INT CHECK (a > 0))"#) == ["CHECK constraints"])
         #expect(SQLiteTableRebuild.unsupportedFeatures(in: #"CREATE TABLE t ("check" INT, note TEXT DEFAULT 'CHECK (x)')"#).isEmpty)
-        #expect(SQLiteTableRebuild.unsupportedFeatures(in: "CREATE TABLE t (a INT PRIMARY KEY) WITHOUT ROWID") == ["WITHOUT ROWID"])
+        // WITHOUT ROWID and the primary key's ON CONFLICT are table options the rebuild keeps; other ON CONFLICT clauses aren't.
+        #expect(SQLiteTableRebuild.unsupportedFeatures(in: "CREATE TABLE t (a INT PRIMARY KEY ON CONFLICT REPLACE) WITHOUT ROWID").isEmpty)
+        #expect(SQLiteTableRebuild.unsupportedFeatures(in: "CREATE TABLE t (a INT NOT NULL ON CONFLICT IGNORE)") == ["ON CONFLICT clauses"])
         #expect(SQLiteTableRebuild.unsupportedFeatures(in: "CREATE TABLE t (a INT, b INT GENERATED ALWAYS AS (a * 2))") == ["generated columns"])
         let rebuild = SQLiteTableRebuild(table: "t", originalSQL: "CREATE TABLE t (a TEXT COLLATE NOCASE)",
                                          originalColumns: [TableColumn(name: "a", dataType: "TEXT", nullable: true, ordinal: 0)],
