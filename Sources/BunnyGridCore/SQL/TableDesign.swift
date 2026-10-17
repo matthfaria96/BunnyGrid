@@ -10,14 +10,18 @@ public struct ColumnDesign: Hashable, Identifiable, Sendable {
     /// Raw SQL expression, empty for no default (e.g. `0`, `'n/a'`, `now()`).
     public var defaultValue: String
     public var isPrimaryKey: Bool
+    /// Attributes read from the table and written back unchanged (MySQL `AUTO_INCREMENT`, `ON UPDATE …`, `COMMENT`).
+    public var extra: String
 
-    public init(originalName: String? = nil, name: String, type: String, nullable: Bool = true, defaultValue: String = "", isPrimaryKey: Bool = false) {
+    public init(originalName: String? = nil, name: String, type: String, nullable: Bool = true, defaultValue: String = "", isPrimaryKey: Bool = false,
+                extra: String = "") {
         self.originalName = originalName
         self.name = name
         self.type = type
         self.nullable = nullable
         self.defaultValue = defaultValue
         self.isPrimaryKey = isPrimaryKey
+        self.extra = extra
     }
 
     public init(_ column: TableColumn) {
@@ -27,7 +31,8 @@ public struct ColumnDesign: Hashable, Identifiable, Sendable {
             type: column.dataType,
             nullable: column.nullable,
             defaultValue: column.defaultValue ?? "",
-            isPrimaryKey: column.isPrimaryKey
+            isPrimaryKey: column.isPrimaryKey,
+            extra: column.extra ?? ""
         )
     }
 }
@@ -83,6 +88,8 @@ extension SQLDialect {
         if !column.nullable { sql += " NOT NULL" }
         let defaultValue = column.defaultValue.trimmingCharacters(in: .whitespaces)
         if !defaultValue.isEmpty { sql += " DEFAULT \(defaultValue)" }
+        let extra = column.extra.trimmingCharacters(in: .whitespaces)
+        if !extra.isEmpty, kind == .mysql || kind == .mariadb { sql += " \(extra)" }
         return sql
     }
 

@@ -67,7 +67,26 @@ BUNNYGRID_MYSQL_PORT=3306 BUNNYGRID_MYSQL_USER=root BUNNYGRID_MYSQL_PASSWORD=…
 # MariaDB: acrescente BUNNYGRID_MYSQL_KIND=mariadb
 ```
 
-O usuário precisa de CREATE/DROP DATABASE: cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MYSQL_PORT` esses testes são pulados.
+O usuário precisa de CREATE/DROP DATABASE e CREATE USER: cada teste cria e apaga um banco próprio. Sem `BUNNYGRID_MYSQL_PORT` esses testes são pulados.
+
+Um MySQL descartável do Homebrew (`brew install mysql`), sem mexer no `my.cnf` nem nos dados do sistema (`--no-defaults`; dados, socket, pid, log e certificados ficam numa pasta só):
+
+```sh
+scripts/test-servers/mysql.sh start /tmp/bg-mysql   # inicializa na primeira vez, porta 33071 (BUNNYGRID_MYSQL_PORT muda)
+eval "$(scripts/test-servers/mysql.sh env /tmp/bg-mysql)"
+swift test --filter MySQL
+scripts/test-servers/mysql.sh stop /tmp/bg-mysql
+```
+
+O script cria uma CA e certificados de servidor e de cliente, sobe o servidor com SSL (sem `require_secure_transport`, para testar com e sem SSL) e os usuários `bunny` / `bunnypass`, `certuser` (`REQUIRE X509`) e `nopass` (sem senha, útil para abrir o app sem Keychain). O `env` exporta também `BUNNYGRID_MYSQL_SSL_CA`, `_SSL_CERT`, `_SSL_KEY`, `_SSL_USER` e `BUNNYGRID_MYSQL_SOCKET`; se o caminho do socket passar do limite de 104 bytes, ele fica num link curto em `$TMPDIR`. Para o caso do túnel, acrescente `BUNNYGRID_SSH_PORT`, `_USER` e `_KEYS` (um `sshd -f <config>` do usuário com a chave `user_ecdsa` serve).
+
+MariaDB pelo Docker (colima):
+
+```sh
+docker run -d --name bg-mariadb -p 127.0.0.1:33081:3306 -e MARIADB_ROOT_PASSWORD=bunnypass mariadb:11
+BUNNYGRID_MYSQL_KIND=mariadb BUNNYGRID_MYSQL_PORT=33081 BUNNYGRID_MYSQL_USER=root BUNNYGRID_MYSQL_PASSWORD=bunnypass swift test --filter MySQL
+docker rm -f bg-mariadb
+```
 
 Os testes de SSL, socket e túnel SSH (`ConnectivityIntegrationTests.swift`) usam outras variáveis: `BUNNYGRID_TLS_PG_PORT`, `BUNNYGRID_TLS_PG_USER` e `BUNNYGRID_TLS_PG_CERTS` (PostgreSQL com `ssl = on` e uma CA própria), `BUNNYGRID_PG_SOCKET_DIR`, e `BUNNYGRID_SSH_PORT`, `BUNNYGRID_SSH_USER` e `BUNNYGRID_SSH_KEYS` (um `sshd` com chaves de teste). O comentário no topo do arquivo descreve os arquivos esperados. Com o Remote Login desligado, um `sshd -D -f <config>` do próprio usuário numa porta alta serve.
 
