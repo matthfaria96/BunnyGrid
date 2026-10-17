@@ -83,6 +83,8 @@ Sources/
     SQL/                  SQLDialect (aspas, SELECT paginado, EXPLAIN), SQLSplitter (divide scripts, comando sob o cursor) e QueryPlan (árvore do plano)
     Network/              túnel SSH (Citadel), host keys, configuração SSL e endpoint (TCP, socket ou túnel) usado pelos drivers
     Transfer/             zip e Excel (.xlsx), leitura de JSON para importar, execução de scripts .sql com progresso
+    Backup/               formato .bgbackup, BackupStore (pasta por conexão/banco/schema), criar, restaurar e extrair SQL; cópia de arquivo SQLite (sqlite3_backup)
+    Automation/           BatchJob, JobSchedule (cron, próximas execuções, StartCalendarInterval), JobRunner, launch agents, runner headless
     Storage/              ConnectionStore (JSON em Application Support) e KeychainStore (senhas)
   BunnyGrid/              app SwiftUI
     App/                  BunnyGridApp, AppModel (conexões e sessões), Session (árvore e abas)
@@ -102,13 +104,16 @@ Dados do usuário:
 - chaves de API: Keychain, serviços `app.bunnygrid.anthropic` (Claude) e `app.bunnygrid.openai` (ChatGPT)
 - foto de perfil escolhida no app: `profile-photo.png` na mesma pasta (sem ela, usa a foto da conta do macOS)
 - senhas: Keychain, serviço `app.bunnygrid.connections` (conta `<id>` para o banco, `<id>.ssh` para a senha SSH ou passphrase da chave, `<id>.ssl-key` para a passphrase da chave do certificado de cliente)
+- backups: `backups/<id da conexão>/<banco>/<schema ou _>/<aaaaMMddHHmmss>.bgbackup`
+- jobs: `automation/jobs.json`; cada execução em `automation/runs/<id>.json` (com o log) e cópia em texto em `automation/logs/`; saída do launchd em `automation/logs/launchd-<id do job>.log`
+- agendamentos: `~/Library/LaunchAgents/app.bunnygrid.job.<id>.plist`, só para jobs com agendamento ativo salvo
 - host keys SSH aceitas no primeiro uso: `~/Library/Application Support/BunnyGrid/ssh-known-hosts.json`
 
 ## O que já funciona (v0.7)
 
 A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nada da arte do Navicat é usado):
 
-- **Barra principal**: Connection (menu de tipos), New Query, Table, View, Materialized View, Function, Role, Others, Query, Backup, Automation, Model, BI, Sobre, AI Assistant e conta. Os botões de tipo de objeto mostram aquela categoria na aba Objects. Role, Automation e BI estão desativados ("em breve").
+- **Barra principal**: Connection (menu de tipos), New Query, Table, View, Materialized View, Function, Role, Others, Query, Backup, Automation, Model, BI, Sobre, AI Assistant e conta. Os botões de tipo de objeto mostram aquela categoria na aba Objects. Role e BI estão desativados ("em breve"); Automation abre a janela de jobs e Backup mostra a pasta Backups.
 - **Painel de navegação**: BunnyGrid Cloud (em breve) → My Connections → grupos (pastas) → conexões → bancos → schemas (PostgreSQL) → Tables / Views / Materialized Views / Functions / Queries / Backups → objetos. Abrir um nó conecta ou abre o banco; no PostgreSQL cada banco tem sua própria conexão. No rodapé: busca, localizar o objeto da aba aberta e recolher tudo.
 - **Abas**: "Objects" fixa e abas como `payment @dvdrental.public (PostgreSQL)`. O título da janela segue o Navicat (`… - Table - BunnyGrid`).
 - **Aba Objects**: Open / Design / New / Delete, Import / Export Wizard e busca; lista os objetos da pasta selecionada ou os bancos da conexão.
@@ -152,6 +157,11 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
   - **Fix with AI** e **Ask AI** (explicar o erro) aparecem quando uma consulta falha, usando a instrução que falhou e a mensagem do banco.
   - **Opções** (Settings › AI Assistant): por plataforma, Max Tokens, Effort (Low/Medium/High; os modelos atuais não aceitam temperature) e Instruction; Action for Enter key, Enable Compare with Other Assistants e Show AI features.
 - **Model** (barra principal ou "Reverse Database to Model" no menu de contexto do banco/schema): aba com o diagrama ER do banco ou schema, lido do catálogo (tabelas, colunas, chaves primárias e estrangeiras). Layout automático em camadas (tabelas referenciadas à esquerda, relacionadas próximas), arrastar cartões, zoom (⌘+ / ⌘-, pinça, ajustar), clicar destaca as relações; linhas com pés de galinha (1:N, 1:1, opcional). As posições ficam em `model-layouts.json` por conexão, banco e schema. Exporta PNG/PDF e **Generate SQL** gera CREATE TABLE + chaves estrangeiras para SQLite, PostgreSQL, MySQL ou MariaDB (com tradução de tipos), para copiar, salvar ou abrir numa consulta. Flags de debug: `--open-model`, `--model-select TABELA`, `--model-export arquivo.png|pdf`, `--model-sql`.
+- **Backup** (botão Backup da barra principal, pasta Backups da aba Objects ou Tools › New Backup…): backup do banco ou schema com comentário, escolha de objetos, estrutura e/ou dados; no SQLite também cópia do arquivo inteiro pela API `sqlite3_backup`. A lista mostra data, tamanho, objetos, linhas, tipo e comentário; **Restore** no mesmo banco ou em outro banco aberto do mesmo motor (Drop existing, Continue on error, transação única, com progresso e erros), **Extract SQL** para um .sql, editar comentário, mostrar no Finder, apagar (vai para o Lixo).
+  - Formato `.bgbackup` (versão 1): `BGBACKUP` + versão (UInt32 LE) + tamanho do manifesto (UInt32 LE) + manifesto JSON (conexão, banco, schema, data, comentário, objetos, linhas) + o script SQL (ou o arquivo SQLite) comprimido em DEFLATE puro (`COMPRESSION_ZLIB` da Apple; `zlib.decompress(dados, -15)` no Python). O script vem do Dump SQL, com DROP … IF EXISTS e INSERTs de 100 linhas.
+- **Automation** (botão Automation, Tools › Automation ⇧⌘J): janela com os batch jobs. Cada job tem passos em ordem (Run Saved Query, Run SQL, Execute SQL File, Backup, Export com as opções do Export Wizard e pasta de saída, opcionalmente datada), "continuar quando um passo falha", agendamento (manual, uma vez, de hora em hora, diário, semanal, mensal ou cron de 5 campos com as próximas 5 execuções), notificações de sucesso e falha, e o histórico com status, duração e log de cada execução. Start roda na hora, dentro do app.
+  - Agendamentos rodam com o app fechado: salvar um agendamento ativo grava `~/Library/LaunchAgents/app.bunnygrid.job.<id>.plist` (`StartCalendarInterval`) e carrega com `launchctl bootstrap`; desligar o agendamento ou apagar o job faz `bootout` e remove o plist. O launchd executa `BunnyGrid --run-job <id> --scheduled`, modo headless do mesmo executável: lê conexões, consultas e jobs da pasta de dados, as senhas do Keychain, conecta pelo mesmo caminho (SSH, SSL, socket, Initial Queries), grava a execução e notifica. `SMAppService.agent` não foi usado porque só registra plists fixos dentro do bundle, sem horário por job.
+  - Para testar sem tocar em `~/Library/LaunchAgents`: `BUNNYGRID_LAUNCH_AGENTS_DIR=<pasta>` grava os plists ali e não chama o launchctl. Rodar um job à mão: `BUNNYGRID_DATA_DIR=<pasta> build/BunnyGrid.app/Contents/MacOS/BunnyGrid --run-job <id>` (saída 0 = sucesso, 1 = falhou, 2 = job não encontrado). Flag de debug: `-automationPane steps|schedule|history`.
 - **Menus**: File, View (painéis), Table, Favorites (em breve), Tools.
 
 ## Licenças

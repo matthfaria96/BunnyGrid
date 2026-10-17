@@ -55,6 +55,7 @@ struct ContentView: View {
             UsersView(session: session)
         }
         .modifier(ObjectActionAlert())
+        .modifier(BackupSheets())
         .alert("BunnyGrid", isPresented: Binding(
             get: { app.alertMessage != nil },
             set: { if !$0 { app.alertMessage = nil } }

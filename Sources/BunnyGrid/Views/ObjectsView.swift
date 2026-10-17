@@ -48,6 +48,8 @@ struct ObjectsView: View {
                 ToolIcon("plus.circle", .green, "New Database", isEnabled: connectionSession?.config.kind != .sqlite) {
                     app.creatingDatabaseFor = connectionSession?.id
                 }
+            } else if category == .backups {
+                BackupToolbarItems(context: context, schema: schema)
             } else if category == .queries {
                 let selected = selectedSavedQuery
                 ToolIcon("folder", .blue, "Open Query", isEnabled: selected != nil) {
@@ -170,8 +172,10 @@ struct ObjectsView: View {
         } else if let context, category == .indexes || category == .triggers {
             IndexTriggerList(context: context, category: category, search: search)
         } else if let context {
-            if category.objectKind == nil {
-                ContentUnavailableView("No \(category.rawValue)", systemImage: category.systemImage, description: Text("Backups are coming soon."))
+            if category == .backups {
+                BackupListView(context: context, schema: schema, search: search)
+            } else if category.objectKind == nil {
+                ContentUnavailableView("No \(category.rawValue)", systemImage: category.systemImage)
             } else if context.objects(in: schema) == nil {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                     .task { await context.loadObjects(schema: schema) }
