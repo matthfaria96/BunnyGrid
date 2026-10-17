@@ -123,6 +123,19 @@ extension Notification.Name {
 }
 
 extension NSColor {
+    /// Default SQL keyword color, as in Navicat's editor: light blue in dark mode, blue in light mode.
+    static let navicatKeyword = NSColor(name: "navicatKeyword") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.42, green: 0.71, blue: 1.0, alpha: 1)
+            : NSColor(srgbRed: 0.0, green: 0.33, blue: 0.85, alpha: 1)
+    }
+    /// Default SQL string color: pink in dark mode, red in light mode.
+    static let navicatString = NSColor(name: "navicatString") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 1.0, green: 0.42, blue: 0.53, alpha: 1)
+            : NSColor(srgbRed: 0.77, green: 0.10, blue: 0.16, alpha: 1)
+    }
+
     convenience init?(hex: String?) {
         guard var hex, !hex.isEmpty else { return nil }
         if hex.hasPrefix("#") { hex.removeFirst() }
