@@ -7,6 +7,8 @@ public actor MySQLDriver: DatabaseDriver {
     public nonisolated let config: ConnectionConfig
     private let password: String?
     private var connection: MySQLConnection?
+    /// `CONNECTION_ID()` of `connection`, for `KILL QUERY` from a second connection.
+    public private(set) var connectionID: Int?
 
     public init(config: ConnectionConfig, password: String?) {
         self.config = config
@@ -36,11 +38,36 @@ public actor MySQLDriver: DatabaseDriver {
         } catch {
             throw DatabaseError.connectionFailed(String(describing: error))
         }
+        await captureConnectionID()
     }
 
     public func disconnect() async {
         try? await connection?.close().get()
         connection = nil
+        connectionID = nil
+    }
+
+    private func captureConnectionID() async {
+        switch try? await executeStatement("SELECT CONNECTION_ID()").rows.first?.first {
+        case .integer(let id)?: connectionID = Int(id)
+        case .text(let id)?: connectionID = Int(id)
+        default: break
+        }
+    }
+
+    /// Opens a short-lived second connection with the same settings and runs `KILL QUERY` on this
+    /// connection's thread; the running statement fails with "Query execution was interrupted".
+    public func cancelCurrentQuery() async throws {
+        guard connection != nil, let connectionID else { return }
+        let canceller = MySQLDriver(config: config, password: password)
+        try await canceller.connect()
+        do {
+            _ = try await canceller.executeStatement("KILL QUERY \(connectionID)")
+        } catch {
+            await canceller.disconnect()
+            throw error
+        }
+        await canceller.disconnect()
     }
 
     public func serverVersion() async throws -> String {
@@ -195,29 +222,46 @@ public actor MySQLDriver: DatabaseDriver {
     }
 
     public func executeStatement(_ sql: String) async throws -> QueryResult {
+        try await executeStatement(sql, maxRows: nil)
+    }
+
+    /// MySQLNIO has no backpressure: past `maxRows` the remaining rows still arrive, but are dropped as they do.
+    public func executeStatement(_ sql: String, maxRows: Int?) async throws -> QueryResult {
         guard let connection else { throw DatabaseError.notConnected }
         let box = MetadataBox()
-        let rows: [MySQLRow]
         do {
-            rows = try await connection.query(sql, onMetadata: { box.affected = Int($0.affectedRows) }).get()
+            try await connection.query(sql, onRow: { row in
+                if let maxRows, box.rows.count >= max(maxRows, 0) {
+                    box.truncated = true
+                } else {
+                    box.rows.append(row)
+                }
+            }, onMetadata: { box.affected = Int($0.affectedRows) }).get()
         } catch MySQLError.server(let packet) where packet.errorCode == .UNSUPPORTED_PS {
             // Some statements (CREATE TRIGGER/PROCEDURE, LOCK TABLES, USE, …) can't be prepared;
             // the text protocol runs them, without an affected-row count.
             do {
-                rows = try await connection.simpleQuery(sql).get()
+                try await connection.simpleQuery(sql, onRow: { row in
+                    if let maxRows, box.rows.count >= max(maxRows, 0) {
+                        box.truncated = true
+                    } else {
+                        box.rows.append(row)
+                    }
+                }).get()
             } catch {
                 throw DatabaseError.queryFailed(Self.message(error))
             }
         } catch {
             throw DatabaseError.queryFailed(Self.message(error))
         }
+        let rows = box.rows
         let columns = rows.first?.columnDefinitions.map(\.name) ?? []
         let values = rows.map { row in
             zip(row.columnDefinitions, row.values).map { definition, buffer in
                 Self.value(definition: definition, buffer: buffer, format: row.format)
             }
         }
-        return QueryResult(statement: sql, columns: columns, rows: values, affectedRows: columns.isEmpty ? box.affected : nil)
+        return QueryResult(statement: sql, columns: columns, rows: values, affectedRows: columns.isEmpty ? box.affected : nil, isTruncated: box.truncated)
     }
 
     // MARK: - Decoding
@@ -305,7 +349,9 @@ public actor MySQLDriver: DatabaseDriver {
     }
 }
 
-/// Collects the OK-packet metadata reported on the event loop.
+/// Collects the rows and OK-packet metadata reported on the event loop.
 private final class MetadataBox: @unchecked Sendable {
     var affected: Int?
+    var rows: [MySQLRow] = []
+    var truncated = false
 }

@@ -5,10 +5,56 @@ import Foundation
 /// BEGIN … END body of a CREATE TRIGGER (SQLite, MySQL). A MySQL client `DELIMITER xx` line
 /// (as in mysqldump files) switches the terminator until the next DELIMITER line.
 public enum SQLSplitter {
+    /// One statement of a script and where it sits in the script.
+    public struct Statement: Sendable, Equatable {
+        /// The statement, trimmed, without its closing `;`.
+        public let sql: String
+        /// UTF-16 offsets of `sql` in the script (what `NSTextView` selections use).
+        public let range: Range<Int>
+        /// UTF-16 offset just past the closing `;` (the end of the script for a last statement without one).
+        public let end: Int
+    }
+
     public static func split(_ script: String) -> [String] {
+        statements(in: script).map(\.sql)
+    }
+
+    /// The statement the cursor (a UTF-16 offset) is in, for "Run Current Statement":
+    /// the statement whose text or closing `;` touches the cursor; otherwise the next statement when only
+    /// spaces on the same line separate it from the cursor; otherwise the statement before the cursor.
+    public static func statement(at cursor: Int, in script: String) -> Statement? {
+        let all = statements(in: script)
+        if let containing = all.first(where: { $0.range.lowerBound <= cursor && cursor <= $0.end }) { return containing }
+        let utf16 = Array(script.utf16)
+        let next = all.first { $0.range.lowerBound > cursor }
+        if let next, cursor >= 0, !utf16[min(cursor, utf16.count)..<next.range.lowerBound].contains(0x0A) { return next }
+        return all.last { $0.end <= cursor } ?? next
+    }
+
+    /// Whether `sql` only reads (SELECT, WITH, SHOW, EXPLAIN, …), so it may be re-run to load more rows
+    /// and runs on read-only connections.
+    public static func isReadOnly(_ sql: String) -> Bool {
+        let first = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix { !$0.isWhitespace && $0 != "(" }
+            .uppercased()
+        return ["SELECT", "WITH", "SHOW", "EXPLAIN", "DESCRIBE", "DESC", "PRAGMA", "VALUES"].contains(first)
+    }
+
+    /// Splits `script` into statements with their positions.
+    public static func statements(in script: String) -> [Statement] {
         let chars = Array(script)
-        var statements: [String] = []
+        // UTF-16 offset of each character, plus the end.
+        var offsets = [Int]()
+        offsets.reserveCapacity(chars.count + 1)
+        var offset = 0
+        for c in chars {
+            offsets.append(offset)
+            offset += c.utf16.count
+        }
+        offsets.append(offset)
+        var statements: [Statement] = []
         var current = ""
+        var segmentStart = 0
         var i = 0
         // Words of the current statement, to recognize CREATE … TRIGGER and its BEGIN/CASE … END nesting.
         var word = ""
@@ -29,9 +75,17 @@ public enum SQLSplitter {
             word = ""
         }
 
-        func flush() {
-            let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty && !isOnlyComments(trimmed) { statements.append(trimmed) }
+        /// Ends the statement made of `chars[segmentStart..<end]`; `delimiterEnd` is the index past its `;`.
+        func flush(end: Int, delimiterEnd: Int) {
+            var lower = segmentStart
+            var upper = end
+            while lower < upper, isSpace(chars[lower]) { lower += 1 }
+            while upper > lower, isSpace(chars[upper - 1]) { upper -= 1 }
+            let trimmed = String(chars[lower..<upper])
+            if !trimmed.isEmpty && !isOnlyComments(trimmed) {
+                statements.append(Statement(sql: trimmed, range: offsets[lower]..<offsets[upper], end: offsets[delimiterEnd]))
+            }
+            segmentStart = delimiterEnd
             current = ""
             isTrigger = false
             sawCreate = false
@@ -46,6 +100,7 @@ public enum SQLSplitter {
                let command = delimiterCommand(chars, at: i) {
                 endWord()
                 current = ""
+                segmentStart = command.end
                 delimiter = command.delimiter
                 i = command.end
                 continue
@@ -53,7 +108,7 @@ public enum SQLSplitter {
             if delimiter != [";"], c == delimiter[0], i + delimiter.count <= chars.count,
                Array(chars[i..<(i + delimiter.count)]) == delimiter {
                 endWord()
-                flush()
+                flush(end: i, delimiterEnd: i + delimiter.count)
                 i += delimiter.count
                 continue
             }
@@ -90,14 +145,14 @@ public enum SQLSplitter {
                 current.append(c)
                 i += 1
             case ";":
-                flush()
+                flush(end: i, delimiterEnd: i + 1)
                 i += 1
             default:
                 current.append(c)
                 i += 1
             }
         }
-        flush()
+        flush(end: chars.count, delimiterEnd: chars.count)
         return statements
     }
 
@@ -112,6 +167,10 @@ public enum SQLSplitter {
         let token = String(chars[(index + keyword.count)..<end]).trimmingCharacters(in: .whitespaces)
         guard !token.isEmpty, !token.contains(" ") else { return nil }
         return (Array(token), end)
+    }
+
+    private static func isSpace(_ c: Character) -> Bool {
+        c.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
     }
 
     /// Returns the index just past the closing quote. Doubled quotes are an escape.

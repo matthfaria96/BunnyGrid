@@ -86,7 +86,7 @@ extension SQLDialect {
         return sql
     }
 
-    private func validate(_ columns: [ColumnDesign]) throws {
+    func validate(_ columns: [ColumnDesign]) throws {
         guard !columns.isEmpty else { throw TableDesignError.invalid("Add at least one field.") }
         var seen = Set<String>()
         for column in columns {
@@ -101,12 +101,13 @@ extension SQLDialect {
         }
     }
 
-    public func createTable(name: String, schema: String?, columns: [ColumnDesign]) throws -> String {
+    public func createTable(name: String, schema: String?, columns: [ColumnDesign], foreignKeys: [TableForeignKey] = []) throws -> String {
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { throw TableDesignError.invalid("The table needs a name.") }
         try validate(columns)
         var parts = columns.map { "  " + columnDefinition($0) }
         let keys = columns.filter(\.isPrimaryKey).map { quoteIdentifier($0.name) }
         if !keys.isEmpty { parts.append("  PRIMARY KEY (\(keys.joined(separator: ", ")))") }
+        for key in foreignKeys { parts.append("  " + (try foreignKeyClause(key, schema: schema))) }
         return "CREATE TABLE \(qualifiedName(table: name, schema: schema)) (\n\(parts.joined(separator: ",\n"))\n)"
     }
 

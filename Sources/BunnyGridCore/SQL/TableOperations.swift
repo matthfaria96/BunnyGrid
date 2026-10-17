@@ -161,17 +161,25 @@ public enum SQLDumper {
         let isMySQL = d.kind == .mysql || d.kind == .mariadb
         var out: [String] = []
         if let header { out.append(header.split(separator: "\n", omittingEmptySubsequences: false).map { "-- " + $0 }.joined(separator: "\n")) }
-        // MySQL checks foreign keys on CREATE, DROP and INSERT, and tables come in name order, not dependency order.
-        if isMySQL { out.append("SET FOREIGN_KEY_CHECKS = 0;") }
         // Tables first, then views, so views find their tables.
         let ordered = objects.filter { $0.kind == .table } + objects.filter { $0.kind != .table && $0.kind != .routine }
+        // Foreign keys must not depend on the order of the tables: MySQL turns the checks off for the script,
+        // PostgreSQL's ALTER TABLE … ADD … FOREIGN KEY statements move to the end, after every table and its rows.
+        if isMySQL && ordered.contains(where: { $0.kind == .table }) { out.append("SET FOREIGN_KEY_CHECKS = 0;") }
+        var deferredKeys: [String] = []
         for object in ordered {
             try Task.checkCancellation()
             out.append("-- \(object.kind == .table ? "Table" : "View"): \(object.qualifiedName)")
             var resetSequences: [String] = []
             if options.includeStructure {
                 if options.includeDrop { out.append(d.dropIfExists(object)) }
-                let ddl = try await driver.objectDDL(name: object.name, kind: object.kind, schema: object.schema)
+                var ddl = try await driver.objectDDL(name: object.name, kind: object.kind, schema: object.schema)
+                if d.kind == .postgresql, object.kind == .table {
+                    let statements = SQLSplitter.split(ddl)
+                    let isKey = { (sql: String) in sql.hasPrefix("ALTER TABLE ") && sql.contains(" FOREIGN KEY ") }
+                    deferredKeys += statements.filter(isKey).map { $0.hasSuffix(";") ? $0 : $0 + ";" }
+                    ddl = statements.filter { !isKey($0) }.map { $0.hasSuffix(";") ? $0 : $0 + ";" }.joined(separator: "\n\n")
+                }
                 let sequences = object.kind == .table
                     ? d.sequenceStatements(forDDL: ddl, table: d.dumpName(object))
                     : (create: [], own: [], reset: [])
@@ -185,7 +193,8 @@ public enum SQLDumper {
             let inserts = d.insertStatements(into: d.dumpName(object), columns: page.columns, rows: page.rows, rowsPerInsert: options.rowsPerInsert)
             if !inserts.isEmpty { out.append((inserts + resetSequences).joined(separator: "\n")) }
         }
-        if isMySQL { out.append("SET FOREIGN_KEY_CHECKS = 1;") }
+        if !deferredKeys.isEmpty { out.append("-- Foreign keys"); out += deferredKeys }
+        if isMySQL && ordered.contains(where: { $0.kind == .table }) { out.append("SET FOREIGN_KEY_CHECKS = 1;") }
         return out.joined(separator: "\n\n") + "\n"
     }
 }

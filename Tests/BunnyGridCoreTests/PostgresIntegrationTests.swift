@@ -307,10 +307,125 @@ struct PostgresIntegrationTests {
         }
     }
 
+    @Test func designerForeignKeysAndDDL() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.execute("""
+                CREATE TABLE \(schema).customers (id int4 PRIMARY KEY, "first,last" text UNIQUE);
+                CREATE TABLE \(schema).orders (id int4 PRIMARY KEY, customer_id int4, "ref,code" text, total numeric(10,2) CHECK (total >= 0));
+                CREATE INDEX orders_total ON \(schema).orders (total);
+                COMMENT ON TABLE \(schema).orders IS 'Orders';
+                INSERT INTO \(schema).customers VALUES (1, 'Ana Silva');
+                INSERT INTO \(schema).orders VALUES (10, 1, 'Ana Silva', 5);
+                """)
+            let dialect = SQLDialect(kind: .postgresql)
+            let byCustomer = TableForeignKey(name: "fk_orders_customer", columns: ["customer_id"], referencedSchema: schema,
+                                             referencedTable: "customers", referencedColumns: ["id"], onDelete: "CASCADE")
+            let byName = TableForeignKey(name: "fk_orders_ref", columns: ["ref,code"], referencedSchema: schema,
+                                         referencedTable: "customers", referencedColumns: ["first,last"])
+            let add = try dialect.alterForeignKeys(table: "orders", schema: schema, original: [],
+                                                   design: [ForeignKeyDesign(key: byCustomer), ForeignKeyDesign(key: byName)])
+            try await driver.applyDesign(add.drops + add.adds)
+            let keys = try await driver.listForeignKeys(table: "orders", schema: schema)
+            #expect(keys == [byCustomer, byName], "names with commas survive the round trip")
+
+            // Change one action, drop the other.
+            var changed = ForeignKeyDesign(keys[0])
+            changed.key.onUpdate = "RESTRICT"
+            let alter = try dialect.alterForeignKeys(table: "orders", schema: schema, original: keys, design: [changed])
+            #expect(alter.drops.count == 2 && alter.adds.count == 1)
+            try await driver.applyDesign(alter.drops + alter.adds)
+            let after = try await driver.listForeignKeys(table: "orders", schema: schema)
+            #expect(after.map(\.name) == ["fk_orders_customer"])
+            #expect(after.first?.onUpdate == "RESTRICT")
+            #expect(after.first?.onDelete == "CASCADE")
+
+            // DDL assembled from the catalog.
+            let ddl = try await driver.objectDDL(name: "orders", kind: .table, schema: schema)
+            #expect(ddl.hasPrefix(#"CREATE TABLE "\#(schema)"."orders" ("#))
+            #expect(ddl.contains(#"CONSTRAINT "orders_pkey" PRIMARY KEY (id)"#))
+            #expect(ddl.contains("CHECK (total >= 0"))
+            #expect(ddl.contains("CREATE INDEX orders_total ON"))
+            #expect(ddl.contains(#"COMMENT ON TABLE "\#(schema)"."orders" IS 'Orders';"#))
+            #expect(ddl.contains(#"ALTER TABLE "\#(schema)"."orders" ADD CONSTRAINT "fk_orders_customer" FOREIGN KEY (customer_id) REFERENCES"#))
+            #expect(ddl.hasSuffix("ON UPDATE RESTRICT ON DELETE CASCADE;"))
+
+            // A dump puts the keys after every table and row, so it replays whatever the order of the tables.
+            let orders = DatabaseObject(schema: schema, name: "orders", kind: .table)
+            let customers = DatabaseObject(schema: schema, name: "customers", kind: .table)
+            let script = try await SQLDumper.dump([orders, customers], from: driver, includeData: true)
+            let keyPosition = try #require(script.range(of: "-- Foreign keys")?.lowerBound)
+            #expect(script.range(of: "INSERT INTO \"\(schema)\".\"customers\"")!.lowerBound < keyPosition)
+            _ = try await driver.execute(script)
+            #expect(try await driver.listForeignKeys(table: "orders", schema: schema).map(\.name) == ["fk_orders_customer"])
+            #expect(try await driver.countRows(table: "orders", schema: schema) == 1)
+        }
+    }
+
     @Test func readOnlyConnectionsRejectWrites() async throws {
         let driver = try await PG.driver(readOnly: true)
         await #expect(throws: DatabaseError.self) { try await driver.execute("CREATE TABLE should_not_exist (x int)") }
         #expect(try await driver.execute("SELECT 2").first?.rows == [[.integer(2)]])
         await driver.disconnect()
+    }
+
+    // MARK: - Query editor
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancelStopsRunningStatementOnServer() async throws {
+        let driver = try await PG.driver()
+        let pid = try #require(await driver.backendPID)
+        let running = Task { try await driver.executeStatement("SELECT pg_sleep(30)") }
+        // Wait until the server shows the sleep as active on this backend, then cancel from a second connection.
+        let observer = try await PG.driver()
+        var active = false
+        for _ in 0..<100 where !active {
+            try await Task.sleep(for: .milliseconds(50))
+            let state = try await observer.executeStatement("SELECT state FROM pg_stat_activity WHERE pid = \(pid)").rows.first?.first
+            active = state == .text("active")
+        }
+        #expect(active)
+        let clock = ContinuousClock()
+        let start = clock.now
+        try await driver.cancelCurrentQuery()
+        let outcome = await running.result
+        #expect(clock.now - start < .seconds(10))
+        guard case .failure(let error) = outcome else {
+            Issue.record("pg_sleep finished instead of being cancelled")
+            return
+        }
+        #expect(error.localizedDescription.contains("cancel"))
+        // Same backend, still usable.
+        #expect(try await driver.executeStatement("SELECT pg_backend_pid()").rows == [[.integer(Int64(pid))]])
+        await observer.disconnect()
+        await driver.disconnect()
+    }
+
+    @Test func rowCapStopsReadingAndConnectionStaysUsable() async throws {
+        let driver = try await PG.driver()
+        let capped = try await driver.executeTimed("SELECT generate_series(1, 50000) AS n", maxRows: 1_000)
+        #expect(capped.rows.count == 1_000)
+        #expect(capped.isTruncated)
+        #expect(capped.columns == ["n"])
+        #expect(try await driver.executeStatement("SELECT 7").rows == [[.integer(7)]])
+        let exact = try await driver.executeTimed("SELECT generate_series(1, 10)", maxRows: 10)
+        #expect(!exact.isTruncated)
+        await driver.disconnect()
+    }
+
+    @Test func explainJSONBecomesPlanTree() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.execute("""
+                CREATE TABLE \(schema).customers (id int PRIMARY KEY, name text);
+                CREATE TABLE \(schema).orders (id int PRIMARY KEY, customer_id int REFERENCES \(schema).customers(id), total numeric)
+                """)
+            let sql = driver.dialect.explain("SELECT * FROM \(schema).orders o JOIN \(schema).customers c ON c.id = o.customer_id ORDER BY o.total")
+            let result = try await driver.executeTimed(sql)
+            let plan = try #require(QueryPlan.parse(result, kind: .postgresql))
+            let titles = plan.flatMap { $0.flattened() }.map(\.node.title)
+            #expect(titles.contains { $0.hasPrefix("Sort") })
+            // Without VERBOSE the JSON names the relation but not its schema.
+            #expect(titles.contains { $0.contains("on orders o") })
+            #expect(plan.first?.details.first?.key == "cost")
+        }
     }
 }
