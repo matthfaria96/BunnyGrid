@@ -19,6 +19,8 @@ struct AIMessage: Codable, Identifiable, Hashable {
     /// Model that answered, and notes such as a refusal or a fallback.
     var model: String?
     var note: String?
+    /// Platform that answered (nil in chats saved before ChatGPT support: those were Claude).
+    var provider: AIProvider?
 }
 
 struct AIChat: Codable, Identifiable, Hashable {
@@ -35,13 +37,35 @@ struct AIAttachment: Identifiable, Hashable {
     let content: String
 }
 
-/// The AI Assistant pane: chats with Claude about the current database.
+/// Whether a provider's API key has been checked against its API.
+enum KeyVerification: Equatable {
+    case unknown
+    case checking
+    case connected
+    case failed(String)
+}
+
+/// The AI Assistant pane: chats with Claude or ChatGPT about the current database.
 @MainActor
 @Observable
 final class AssistantModel {
     private(set) var chats: [AIChat] = []
     var currentChatID: UUID?
-    var model: ClaudeModel = .opus
+    /// The platform answering new messages; switched from the profile picture or the composer.
+    var provider: AIProvider = AIProvider(rawValue: UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .claude {
+        didSet { UserDefaults.standard.set(provider.rawValue, forKey: "aiProvider") }
+    }
+    var claudeModel: ClaudeModel = ClaudeModel(rawValue: UserDefaults.standard.string(forKey: "claudeModel") ?? "") ?? .opus {
+        didSet { UserDefaults.standard.set(claudeModel.rawValue, forKey: "claudeModel") }
+    }
+    var openAIModel: String = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAIModels.defaultModel {
+        didSet { UserDefaults.standard.set(openAIModel, forKey: "openAIModel") }
+    }
+    /// OpenAI models for the picker: the suggested ones until the account's list arrives.
+    private(set) var openAIModels: [AIModelOption] = OpenAIModels.suggested
+    /// Keys saved in the Keychain, read off the main thread at launch.
+    private(set) var storedKeys: [AIProvider: String] = [:]
+    private(set) var verification: [AIProvider: KeyVerification] = [:]
     var draft = ""
     var includeTable = false
     var includeSchema = false
@@ -53,33 +77,113 @@ final class AssistantModel {
 
     @ObservationIgnored weak var app: AppModel?
     @ObservationIgnored private let storeURL: URL
-    @ObservationIgnored private let keychain = KeychainStore(service: "app.bunnygrid.anthropic")
     @ObservationIgnored private var task: Task<Void, Never>?
 
-    static let apiKeyAccount = "api-key"
+    nonisolated static let apiKeyAccount = "api-key"
 
     init(storeURL: URL) {
         self.storeURL = storeURL
         load()
+        loadKeys()
     }
 
     var currentChat: AIChat? {
         chats.first { $0.id == currentChatID }
     }
 
-    var apiKey: String {
-        if let key = keychain.password(account: Self.apiKeyAccount), !key.isEmpty { return key }
-        return ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+    // MARK: - Platforms and keys
+
+    nonisolated private static func keychain(_ provider: AIProvider) -> KeychainStore {
+        KeychainStore(service: provider.keychainService)
     }
 
-    var hasAPIKey: Bool { !apiKey.isEmpty }
-
-    var storedAPIKey: String {
-        keychain.password(account: Self.apiKeyAccount) ?? ""
+    /// Keychain reads can block on an access prompt (ad hoc builds), so they run detached.
+    private func loadKeys() {
+        Task {
+            let keys = await Task.detached(priority: .userInitiated) {
+                Dictionary(uniqueKeysWithValues: AIProvider.allCases.map { ($0, Self.keychain($0).password(account: Self.apiKeyAccount) ?? "") })
+            }.value
+            storedKeys = keys
+        }
     }
 
-    func setAPIKey(_ key: String) {
-        keychain.setPassword(key.trimmingCharacters(in: .whitespacesAndNewlines), account: Self.apiKeyAccount)
+    func apiKey(for provider: AIProvider) -> String {
+        if let key = storedKeys[provider], !key.isEmpty { return key }
+        return ProcessInfo.processInfo.environment[provider.environmentKey] ?? ""
+    }
+
+    func hasAPIKey(for provider: AIProvider) -> Bool { !apiKey(for: provider).isEmpty }
+
+    var hasAPIKey: Bool { hasAPIKey(for: provider) }
+
+    func storedAPIKey(for provider: AIProvider) -> String { storedKeys[provider] ?? "" }
+
+    /// True when the key comes from the environment rather than the Keychain.
+    func usesEnvironmentKey(_ provider: AIProvider) -> Bool {
+        storedAPIKey(for: provider).isEmpty && hasAPIKey(for: provider)
+    }
+
+    func setAPIKey(_ key: String, for provider: AIProvider) {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        storedKeys[provider] = key
+        verification[provider] = .unknown
+        Task.detached(priority: .userInitiated) {
+            Self.keychain(provider).setPassword(key.isEmpty ? nil : key, account: Self.apiKeyAccount)
+        }
+        if !key.isEmpty { verify(provider) }
+    }
+
+    /// Checks the key against the platform (listing its models) and refreshes the OpenAI model list.
+    func verify(_ provider: AIProvider) {
+        let key = apiKey(for: provider)
+        guard !key.isEmpty else {
+            verification[provider] = .unknown
+            return
+        }
+        verification[provider] = .checking
+        Task {
+            do {
+                switch provider {
+                case .claude:
+                    _ = try await AnthropicClient(apiKey: key).listModels()
+                case .chatGPT:
+                    let ids = try await OpenAIClient(apiKey: key).listModels()
+                    openAIModels = OpenAIModels.options(from: ids)
+                    if !openAIModels.contains(where: { $0.id == openAIModel }), let first = openAIModels.first {
+                        openAIModel = first.id
+                    }
+                }
+                verification[provider] = .connected
+            } catch {
+                verification[provider] = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func verifyIfNeeded(_ provider: AIProvider) {
+        guard hasAPIKey(for: provider), (verification[provider] ?? .unknown) == .unknown else { return }
+        verify(provider)
+    }
+
+    func models(for provider: AIProvider) -> [AIModelOption] {
+        provider == .claude ? provider.suggestedModels : openAIModels
+    }
+
+    func selectedModel(for provider: AIProvider) -> String {
+        provider == .claude ? claudeModel.rawValue : openAIModel
+    }
+
+    func select(_ provider: AIProvider, model: String) {
+        self.provider = provider
+        switch provider {
+        case .claude: if let model = ClaudeModel(rawValue: model) { claudeModel = model }
+        case .chatGPT: openAIModel = model
+        }
+    }
+
+    func modelName(for provider: AIProvider) -> String {
+        let id = selectedModel(for: provider)
+        return models(for: provider).first { $0.id == id }?.name ?? id
     }
 
     // MARK: - Chats
@@ -197,8 +301,9 @@ final class AssistantModel {
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isStreaming else { return }
-        guard hasAPIKey else {
-            error = AnthropicError.missingAPIKey.errorDescription
+        let provider = provider
+        guard hasAPIKey(for: provider) else {
+            error = provider.missingKeyMessage()
             return
         }
         error = nil
@@ -224,8 +329,11 @@ final class AssistantModel {
         let history = (chats.first { $0.id == chatID }?.messages ?? []).map { message -> JSONValue in
             .object(["role": .string(message.role.rawValue), "content": .array(message.apiContent)])
         }
-        let client = AnthropicClient(apiKey: apiKey)
-        let model = model
+        let key = apiKey(for: provider)
+        let stream = switch provider {
+        case .claude: AnthropicClient(apiKey: key).streamMessage(model: claudeModel, system: Self.systemPrompt, messages: history)
+        case .chatGPT: OpenAIClient(apiKey: key).streamResponse(model: openAIModel, instructions: Self.systemPrompt, messages: history)
+        }
         isStreaming = true
         streamingText = ""
         task = Task {
@@ -235,7 +343,7 @@ final class AssistantModel {
             }
             var fallbackNote: String?
             do {
-                for try await event in client.streamMessage(model: model, system: Self.systemPrompt, messages: history) {
+                for try await event in stream {
                     switch event {
                     case .textDelta(let piece):
                         streamingText += piece
@@ -244,13 +352,13 @@ final class AssistantModel {
                     case .finished(let turn):
                         var note = fallbackNote
                         if turn.wasRefused {
-                            note = "Claude declined to answer this request."
+                            note = "\(provider.displayName) declined to answer this request."
                         } else if turn.stopReason == "max_tokens" {
                             note = "The answer was cut off at the output limit."
                         }
                         // A refused turn with no content can't be echoed back; keep it out of the API history.
                         let content = turn.echoContent.isEmpty ? [JSONValue.object(["type": .string("text"), "text": .string(turn.text.isEmpty ? "(no answer)" : turn.text)])] : turn.echoContent
-                        append(AIMessage(role: .assistant, text: turn.text, apiContent: content, model: turn.model, note: note), to: chatID)
+                        append(AIMessage(role: .assistant, text: turn.text, apiContent: content, model: turn.model, note: note, provider: provider), to: chatID)
                     }
                 }
             } catch is CancellationError {

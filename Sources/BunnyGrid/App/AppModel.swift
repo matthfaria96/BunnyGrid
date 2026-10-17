@@ -20,6 +20,8 @@ final class AppModel {
     private(set) var sessions: [UUID: Session] = [:]
     var draft: ConnectionDraft?
     var showingConnectionPicker = false
+    /// The profile popover where the AI platform is chosen.
+    var showingAccountMenu = false
     var alertMessage: String?
     private(set) var history: [QueryHistoryEntry] = []
     private(set) var savedQueries: [SavedQuery] = []
@@ -64,6 +66,7 @@ final class AppModel {
     }
 
     let assistant: AssistantModel
+    let profile = ProfileModel(directory: AppModel.dataDirectory)
 
     @ObservationIgnored private let store: ConnectionStore
     @ObservationIgnored private let historyStore: QueryHistoryStore
@@ -650,6 +653,8 @@ final class AppModel {
         }
         #if DEBUG
         if CommandLine.arguments.contains("--new-connection") { showingConnectionPicker = true }
+        if CommandLine.arguments.contains("--account-menu") { showingAccountMenu = true }
+        if CommandLine.arguments.contains("--ai-pane") { showAssistant = true; rightPane = .ai }
         #endif
         if CommandLine.arguments.contains("--show-objects"), let id = opened {
             Task {

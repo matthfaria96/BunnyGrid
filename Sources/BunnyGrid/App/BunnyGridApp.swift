@@ -135,7 +135,8 @@ struct BunnyGridApp: App {
                 }
             }
             CommandMenu("Tools") {
-                Button("AI Assistant") { model.showAssistant = true }
+                Button("AI Assistant") { model.showAssistant = true; model.rightPane = .ai }
+                Button("AI Platform…") { model.showingAccountMenu = true }
                 Button("Query History") {
                     if model.selectedQueryTab == nil { model.openQuery() }
                 }

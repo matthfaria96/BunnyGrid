@@ -200,26 +200,3 @@ private struct ViewControl: View {
         .help(help)
     }
 }
-
-/// Where Navicat shows the signed-in account: a generic avatar with the macOS user's name.
-private struct AccountBadge: View {
-    var body: some View {
-        Menu {
-            Text("Signed in locally as \(NSFullUserName())")
-            Divider()
-            SettingsLink { Text("Settings…") }
-        } label: {
-            Image(systemName: "person.fill")
-                .font(.system(size: 17))
-                .foregroundStyle(Color.white.opacity(0.92))
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(LinearGradient(colors: [Color(white: 0.72), Color(white: 0.5)], startPoint: .top, endPoint: .bottom)).padding(3))
-                .glassBackground(in: Circle(), interactive: true)
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(NSFullUserName())
-    }
-}

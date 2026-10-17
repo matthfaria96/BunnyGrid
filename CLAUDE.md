@@ -21,7 +21,7 @@ BUNNYGRID_DATA_DIR=<scratch dir> build/BunnyGrid.app/Contents/MacOS/BunnyGrid Re
 then capture the window with `screencapture -l <windowID>`. Debug-only flags: `--demo-edits`, `--focus-cell`, `--show-objects`.
 
 The UI mirrors Navicat Premium's layout (see the user's reference screenshot): keep new features in the same places (main toolbar, navigator tree, Objects tab, table toolbar/footer, status bar, AI pane). Never copy Navicat's artwork; use SF Symbols.
-The AI Assistant calls the Messages API over raw HTTP (`Sources/BunnyGridCore/AI`), default model `claude-opus-5-5`, with `fallbacks: "default"`.
+The AI Assistant talks to Claude (Messages API, default `claude-opus-5-5`, `fallbacks: "default"`) or ChatGPT (OpenAI Responses API, default `gpt-6-astra`, `store: false`), both over raw HTTP (`Sources/BunnyGridCore/AI`). Chat history is stored in Messages-API block shape; `OpenAIClient.input(fromMessages:)` converts it. The platform is picked from the toolbar avatar (`Views/AIAccountView.swift`). Debug flags: `--account-menu`, `--ai-pane`, `-aiProvider chatgpt`.
 
 ## Rules
 

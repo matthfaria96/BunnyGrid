@@ -160,8 +160,8 @@ struct DataMaskingPopover: View {
                         GridRow {
                             Text(column).lineLimit(1)
                             Picker("", selection: Binding(
-                                get: { model.masks[column] ?? .none },
-                                set: { model.masks[column] = $0 == .none ? nil : $0 }
+                                get: { model.masks[column] ?? MaskRule.none },
+                                set: { model.masks[column] = $0 == MaskRule.none ? nil : $0 }
                             )) {
                                 ForEach(MaskRule.allCases) { Text($0.rawValue).tag($0) }
                             }

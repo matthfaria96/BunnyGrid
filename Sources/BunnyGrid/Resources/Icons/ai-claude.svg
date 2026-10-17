@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#EA9474"/>
+      <stop offset="1" stop-color="#C45A39"/>
+    </linearGradient>
+    <radialGradient id="shine" cx="0.32" cy="0.18" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.45"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ray" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFE9DE"/>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="31" fill="url(#fill)"/>
+  <circle cx="32" cy="32" r="31" fill="url(#shine)"/>
+  <circle cx="32" cy="32" r="30.4" fill="none" stroke="#FFFFFF" stroke-opacity="0.3" stroke-width="1.2"/>
+  <!-- Radiating spark: ten tapered rays of alternating length. -->
+  <g transform="translate(32 32)" fill="url(#ray)">
+    <path d="M0 -20.5 C1.9 -20.5 2.9 -9 2.6 -2.5 L-2.6 -2.5 C-2.9 -9 -1.9 -20.5 0 -20.5 Z" transform="rotate(0)"/>
+    <path d="M0 -15 C1.7 -15 2.5 -8 2.3 -2.5 L-2.3 -2.5 C-2.5 -8 -1.7 -15 0 -15 Z" transform="rotate(36)"/>
+    <path d="M0 -20.5 C1.9 -20.5 2.9 -9 2.6 -2.5 L-2.6 -2.5 C-2.9 -9 -1.9 -20.5 0 -20.5 Z" transform="rotate(72)"/>
+    <path d="M0 -15 C1.7 -15 2.5 -8 2.3 -2.5 L-2.3 -2.5 C-2.5 -8 -1.7 -15 0 -15 Z" transform="rotate(108)"/>
+    <path d="M0 -20.5 C1.9 -20.5 2.9 -9 2.6 -2.5 L-2.6 -2.5 C-2.9 -9 -1.9 -20.5 0 -20.5 Z" transform="rotate(144)"/>
+    <path d="M0 -15 C1.7 -15 2.5 -8 2.3 -2.5 L-2.3 -2.5 C-2.5 -8 -1.7 -15 0 -15 Z" transform="rotate(180)"/>
+    <path d="M0 -20.5 C1.9 -20.5 2.9 -9 2.6 -2.5 L-2.6 -2.5 C-2.9 -9 -1.9 -20.5 0 -20.5 Z" transform="rotate(216)"/>
+    <path d="M0 -15 C1.7 -15 2.5 -8 2.3 -2.5 L-2.3 -2.5 C-2.5 -8 -1.7 -15 0 -15 Z" transform="rotate(252)"/>
+    <path d="M0 -20.5 C1.9 -20.5 2.9 -9 2.6 -2.5 L-2.6 -2.5 C-2.9 -9 -1.9 -20.5 0 -20.5 Z" transform="rotate(288)"/>
+    <path d="M0 -15 C1.7 -15 2.5 -8 2.3 -2.5 L-2.3 -2.5 C-2.5 -8 -1.7 -15 0 -15 Z" transform="rotate(324)"/>
+    <circle r="4.2"/>
+  </g>
+</svg>

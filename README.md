@@ -73,7 +73,8 @@ Dados do usuário:
 - histórico: `~/Library/Application Support/BunnyGrid/history.json`
 - consultas salvas e favoritos: `~/Library/Application Support/BunnyGrid/queries.json` e `favorites.json`
 - conversas do AI Assistant: `~/Library/Application Support/BunnyGrid/ai-chats.json`
-- chave da API do Claude: Keychain, serviço `app.bunnygrid.anthropic`
+- chaves de API: Keychain, serviços `app.bunnygrid.anthropic` (Claude) e `app.bunnygrid.openai` (ChatGPT)
+- foto de perfil escolhida no app: `profile-photo.png` na mesma pasta (sem ela, usa a foto da conta do macOS)
 - senhas: Keychain, serviço `app.bunnygrid.connections`
 
 ## O que já funciona (v0.7)
@@ -105,7 +106,7 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
 - **Favorites**: favoritar tabelas/views (menu de contexto ou ⌘D), menu Favorites para abrir, e a estrela no rodapé do painel de navegação mostra só os favoritos.
 - **⌘S** salva o que a aba atual tiver: edições do grid, consulta ou design.
 - **Barra de status**: SQL da aba, alerta, "Record 5 of 1000 in page 1", "Last Refresh", e botões para mostrar/ocultar os painéis.
-- **AI Assistant** (painel direito): conversas salvas, nova conversa, chips de contexto (tabela aberta e schema), anexar arquivo de texto, escolha do modelo (padrão `claude-opus-5-5`), respostas em streaming com blocos SQL que abrem no editor. A chave da API fica no Keychain (**Settings**, ⌘,) ou vem de `ANTHROPIC_API_KEY`. Recusas usam o fallback do servidor (`fallbacks: "default"`) e são avisadas na conversa.
+- **AI Assistant com Claude ou ChatGPT** (painel direito): conversas salvas, nova conversa, chips de contexto (tabela aberta e schema), anexar arquivo de texto, respostas em streaming com blocos SQL que abrem no editor. A plataforma é escolhida no **avatar da barra** (foto da conta do macOS ou uma escolhida, com o selo da IA ativa no canto): ali se troca Claude/ChatGPT, cola a chave (verificada na hora, listando os modelos da conta) e escolhe o modelo. Claude usa a Messages API (padrão `claude-opus-5-5`, fallback do servidor `fallbacks: "default"`); ChatGPT usa a Responses API da OpenAI (padrão `gpt-6-astra`, `store: false`). Uma mesma conversa pode alternar entre as duas. Chaves no Keychain (**Settings › AI Assistant**, ⌘,) ou em `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. Assinaturas ChatGPT Plus e Claude Pro não incluem acesso à API.
 - **Menus**: File, View (painéis), Table, Favorites (em breve), Tools.
 
 ## Licenças

@@ -31,7 +31,7 @@ public enum AnthropicError: LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            "Add your Anthropic API key in Settings (⌘,) to use the AI Assistant."
+            AIProvider.claude.missingKeyMessage()
         case .http(let status, let message):
             switch status {
             case 401: "The API key was rejected (401). Check it in Settings. \(message)"
@@ -138,6 +138,20 @@ public struct AnthropicClient: Sendable {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// Checks the key with `GET /v1/models` and returns the model IDs the account can use.
+    public func listModels() async throws -> [String] {
+        guard !apiKey.isEmpty else { throw AnthropicError.missingAPIKey }
+        var request = URLRequest(url: baseURL.appending(path: "v1/models").appending(queryItems: [URLQueryItem(name: "limit", value: "100")]))
+        request.timeoutInterval = 20
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else { throw AnthropicError.http(status: status, message: Self.errorMessage(from: data)) }
+        let json = try JSONDecoder().decode(JSONValue.self, from: data)
+        return (json["data"]?.arrayValue ?? []).compactMap { $0["id"]?.stringValue }
     }
 
     static func errorMessage(from data: Data) -> String {

@@ -33,48 +33,50 @@ private struct GeneralSettings: View {
 
 private struct AISettings: View {
     @Environment(AppModel.self) private var app
-    @State private var key = ""
-    @State private var saved = false
 
     var body: some View {
         @Bindable var assistant = app.assistant
         Form {
             Section {
-                SecureField("Anthropic API key", text: $key, prompt: Text("sk-ant-…"))
-                HStack {
-                    Button("Save") {
-                        assistant.setAPIKey(key)
-                        saved = true
+                Picker("Platform", selection: $assistant.provider) {
+                    ForEach(AIProvider.allCases) { provider in
+                        Text(provider.displayName).tag(provider)
                     }
-                    .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty)
-                    Button("Remove", role: .destructive) {
-                        assistant.setAPIKey("")
-                        key = ""
-                        saved = false
-                    }
-                    .disabled(assistant.storedAPIKey.isEmpty)
-                    Spacer()
-                    if saved { Label("Saved to Keychain", systemImage: "checkmark.circle.fill").foregroundStyle(.green) }
                 }
-                Text(ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]?.isEmpty == false && assistant.storedAPIKey.isEmpty
-                     ? "Using ANTHROPIC_API_KEY from the environment."
-                     : "Create a key at console.anthropic.com. It is stored in your login Keychain.")
+                .pickerStyle(.segmented)
+                Text("The assistant answers with the platform chosen here or from your profile picture in the toolbar. It uses your own API keys; ChatGPT Plus and Claude Pro subscriptions don't include API access.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } header: {
-                Text("Claude API")
             }
-            Section("Model") {
-                Picker("Default model", selection: $assistant.model) {
-                    ForEach(ClaudeModel.allCases) { Text("\($0.displayName) (\($0.rawValue))").tag($0) }
+            ForEach(AIProvider.allCases) { provider in
+                Section {
+                    APIKeyEditor(provider: provider)
+                    HStack {
+                        Text("Model")
+                        Spacer()
+                        ModelMenu(provider: provider)
+                    }
+                    if provider == .claude {
+                        Text("Requests to Opus, Sonnet and Fable fall back to another Claude model automatically if a safety classifier declines them.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("Conversations are sent with store disabled, so OpenAI doesn't keep them as stored responses. Your account's other GPT models appear once the key is verified.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    HStack(spacing: 6) {
+                        AppIcon(name: provider.iconName, size: 16)
+                        Text("\(provider.displayName) (\(provider.company))")
+                        Spacer()
+                        KeyStatusLabel(provider: provider)
+                    }
                 }
-                Text("Requests to Opus, Sonnet and Fable fall back to another model automatically if a safety classifier declines them.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .padding(.vertical, 8)
-        .onAppear { key = assistant.storedAPIKey }
+        .onAppear {
+            for provider in AIProvider.allCases { assistant.verifyIfNeeded(provider) }
+        }
     }
 }

@@ -42,7 +42,7 @@ public enum SQLCompletion {
         }
     }
 
-    nonisolated(unsafe) private static let referencePattern: NSRegularExpression = {
+    private static let referencePattern: NSRegularExpression = {
         let identifier = #"(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*)"#
         let stop = "on|where|join|left|right|inner|outer|cross|full|natural|group|order|limit|set|values|using|having|union|window"
         let pattern = #"\b(?:from|join|update|into)\s+("# + identifier + #"(?:\."# + identifier + #")?)(?:\s+(?:as\s+)?(?!(?:"# + stop + #")\b)([A-Za-z_]\w*))?"#

@@ -2,7 +2,7 @@ import AppKit
 import BunnyGridCore
 import SwiftUI
 
-/// The right pane: chat with Claude about the current database.
+/// The right pane: chat with Claude or ChatGPT about the current database.
 struct AssistantPanel: View {
     @Environment(AppModel.self) private var app
 
@@ -45,8 +45,8 @@ struct AssistantPanel: View {
                     Button(chat.title) { assistant.currentChatID = chat.id }
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "sparkle").foregroundStyle(.orange)
+                HStack(spacing: 5) {
+                    AppIcon(name: assistant.provider.iconName, size: 15)
                     Text(assistant.currentChat?.title ?? "New Chat")
                         .font(.system(size: 12.5, weight: .medium))
                         .lineLimit(1)
@@ -125,13 +125,20 @@ struct AssistantPanel: View {
 }
 
 private struct APIKeyBanner: View {
+    @Environment(AppModel.self) private var app
+
     var body: some View {
+        let provider = app.assistant.provider
         VStack(alignment: .leading, spacing: 8) {
-            Label("Connect the AI Assistant", systemImage: "key.fill").font(.system(size: 13, weight: .semibold))
-            Text("Add your Anthropic API key in Settings to chat with Claude about your data. The key is stored in your Keychain.")
+            HStack(spacing: 8) {
+                AppIcon(name: provider.iconName, size: 22)
+                Text("Connect \(provider.displayName)").font(.system(size: 13, weight: .semibold))
+            }
+            Text("Paste your \(provider.company) API key to chat with \(provider.displayName) about your data. Switch platforms from your profile picture in the toolbar.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-            SettingsLink { Text("Open Settings…") }
+                .fixedSize(horizontal: false, vertical: true)
+            APIKeyEditor(provider: provider, compact: true)
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
@@ -144,8 +151,8 @@ private struct EmptyChat: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Image(systemName: "sparkle").foregroundStyle(.orange)
-                Text("Ask AI Assistant").font(.system(size: 14, weight: .semibold))
+                AppIcon(name: app.assistant.provider.iconName, size: 18)
+                Text("Ask \(app.assistant.provider.displayName)").font(.system(size: 14, weight: .semibold))
             }
             Text("Write, explain, optimize and fix SQL. Add the open table or schema as context with the chips below.")
                 .font(.system(size: 12))
@@ -209,7 +216,12 @@ private struct MessageView: View {
                     }
                     Spacer()
                     if let model = message.model {
-                        Text(model).font(.system(size: 10)).foregroundStyle(.tertiary)
+                        HStack(spacing: 3) {
+                            AppIcon(name: (message.provider ?? .claude).iconName, size: 10)
+                            Text(model)
+                        }
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
                     }
                 }
             }
@@ -357,7 +369,7 @@ private struct Composer: View {
     var body: some View {
         @Bindable var assistant = app.assistant
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Ask AI Assistant...", text: $assistant.draft, axis: .vertical)
+            TextField("Ask \(assistant.provider.displayName)…", text: $assistant.draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12.5))
                 .lineLimit(1...6)
@@ -397,18 +409,26 @@ private struct Composer: View {
 
             HStack(spacing: 6) {
                 Menu {
-                    ForEach(ClaudeModel.allCases) { model in
-                        Button {
-                            assistant.model = model
-                        } label: {
-                            if assistant.model == model { Label(model.displayName, systemImage: "checkmark") } else { Text(model.displayName) }
+                    ForEach(AIProvider.allCases) { provider in
+                        Section(provider.displayName) {
+                            ForEach(assistant.models(for: provider)) { model in
+                                Button {
+                                    assistant.select(provider, model: model.id)
+                                } label: {
+                                    if assistant.provider == provider && assistant.selectedModel(for: provider) == model.id {
+                                        Label(model.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(model.name)
+                                    }
+                                }
+                            }
                         }
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "sparkle").foregroundStyle(.orange)
-                        Text("Claude").foregroundStyle(.primary)
-                        Text("(\(assistant.model.rawValue))").foregroundStyle(.secondary)
+                        AppIcon(name: assistant.provider.iconName, size: 14)
+                        Text(assistant.provider.displayName).foregroundStyle(.primary)
+                        Text("(\(assistant.selectedModel(for: assistant.provider)))").foregroundStyle(.secondary).lineLimit(1)
                         Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
                     }
                     .font(.system(size: 11.5))
