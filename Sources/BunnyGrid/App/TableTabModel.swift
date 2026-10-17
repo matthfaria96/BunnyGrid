@@ -183,10 +183,15 @@ final class TableTabModel: Identifiable {
 
     // MARK: - Loading
 
-    func loadIfNeeded() async {
+    /// First load; `profile` is the table's default Table Profile, applied before the first page is read.
+    func loadIfNeeded(applying profile: TableProfile? = nil) async {
         guard !hasLoaded else { return }
         hasLoaded = true
-        await reload()
+        if let profile {
+            await apply(profile)
+        } else {
+            await reload()
+        }
     }
 
     func reload() async {

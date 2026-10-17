@@ -263,6 +263,50 @@ struct PostgresIntegrationTests {
         }
     }
 
+    @Test func dumpRunsBackAsAScript() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.execute("""
+                CREATE TABLE \(schema).t (id serial PRIMARY KEY, name text, amount numeric(6,2), ok bool, raw bytea, at timestamp);
+                INSERT INTO \(schema).t (name, amount, ok, raw, at) VALUES
+                  ('O''Brien \\ slash', 12.5, true, '\\x00ff', '2024-02-29 13:45:00'), (NULL, NULL, NULL, NULL, NULL);
+                CREATE VIEW \(schema).named AS SELECT * FROM \(schema).t WHERE name IS NOT NULL;
+                """)
+            let objects = try await driver.listObjects(schema: schema).filter { $0.kind != .routine }
+            let before = try await driver.fetchAllRows(table: "t", schema: schema)
+            let script = try await SQLDumper.dump(objects, from: driver, options: SQLDumpOptions(rowsPerInsert: 10))
+            _ = try await driver.execute("DROP VIEW \(schema).named; DROP TABLE \(schema).t")
+            let report = await driver.runScript(SQLSplitter.split(script), options: ScriptRunOptions(useTransaction: true))
+            #expect(report.errors.isEmpty, "\(report.errors.map(\.message))")
+            #expect(try await driver.fetchAllRows(table: "t", schema: schema).rows == before.rows)
+            #expect(try await driver.countRows(table: "named", schema: schema) == 1)
+            // The serial sequence came back and continues after the restored ids.
+            _ = try await driver.executeStatement("INSERT INTO \(schema).t (name) VALUES ('next')")
+            #expect(try await driver.execute("SELECT max(id) FROM \(schema).t").first?.rows == [[.integer(3)]])
+        }
+    }
+
+    @Test func scriptErrorRollsBackTheTransaction() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.executeStatement("CREATE TABLE \(schema).t (id int PRIMARY KEY)")
+            let report = await driver.runScript(["INSERT INTO \(schema).t VALUES (1)", "INSERT INTO \(schema).t VALUES (1)"],
+                                                options: ScriptRunOptions(stopOnError: true, useTransaction: true))
+            #expect(report.rolledBack)
+            #expect(report.errors.first?.message.contains("duplicate key") == true)
+            #expect(try await driver.countRows(table: "t", schema: schema) == 0)
+        }
+    }
+
+    @Test func importsTypedJSONValues() async throws {
+        try await withSchema { driver, schema in
+            _ = try await driver.executeStatement("CREATE TABLE \(schema).t (id int PRIMARY KEY, price numeric(6,2), ok bool, meta jsonb, note text)")
+            let table = try JSONTableReader.read(Data(#"[{"id": 1, "price": 9.99, "ok": true, "meta": {"a": [1, 2]}, "note": null}]"#.utf8))
+            let changes = table.rows.map { row in RowChange.insert(values: zip(table.columns, row).map { ColumnValue($0, $1) }) }
+            try await driver.applyChanges(changes, table: "t", schema: schema)
+            let row = try #require(try await driver.fetchAllRows(table: "t", schema: schema).rows.first)
+            #expect(row == [.integer(1), .text("9.99"), .bool(true), .text(#"{"a": [1, 2]}"#), .null])
+        }
+    }
+
     @Test func readOnlyConnectionsRejectWrites() async throws {
         let driver = try await PG.driver(readOnly: true)
         await #expect(throws: DatabaseError.self) { try await driver.execute("CREATE TABLE should_not_exist (x int)") }

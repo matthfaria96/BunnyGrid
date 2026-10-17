@@ -48,6 +48,9 @@ struct ContentView: View {
         .sheet(item: $app.exportTarget) { target in
             ExportWizardView(target: target)
         }
+        .sheet(item: $app.sqlFileTarget) { target in
+            ExecuteSQLFileView(target: target)
+        }
         .sheet(item: $app.usersSession) { session in
             UsersView(session: session)
         }

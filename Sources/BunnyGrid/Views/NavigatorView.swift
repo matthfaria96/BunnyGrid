@@ -545,7 +545,7 @@ private struct DatabaseActionItems: View {
         }
         Button("Export Wizard…") {
             let objects = (context.objects(in: schema, category: .tables) ?? []) + (context.objects(in: schema, category: .views) ?? [])
-            app.exportTarget = ExportTarget(context: context, objects: objects)
+            app.exportTarget = ExportTarget(context: context, objects: objects, schema: schema)
         }
         Menu("Dump SQL File") {
             Button("Structure and Data…") { app.dumpDatabase(context, schema: schema, includeData: true) }
