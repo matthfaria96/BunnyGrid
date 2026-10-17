@@ -58,6 +58,37 @@ public struct ExportStepSettings: Codable, Hashable, Sendable {
     }
 }
 
+/// A Data Transfer saved in a job: source and target databases, the tables (empty = every table) and the options.
+public struct DataTransferStepSettings: Codable, Hashable, Sendable {
+    public var source: JobTarget
+    public var destination: JobTarget
+    public var tables: [String]
+    public var createTables: Bool
+    public var dropTargetTables: Bool
+    public var transferData: Bool
+    public var createIndexes: Bool
+    public var createForeignKeys: Bool
+    public var continueOnError: Bool
+
+    public init(source: JobTarget, destination: JobTarget, tables: [String] = [], createTables: Bool = true, dropTargetTables: Bool = false,
+                transferData: Bool = true, createIndexes: Bool = true, createForeignKeys: Bool = true, continueOnError: Bool = false) {
+        self.source = source
+        self.destination = destination
+        self.tables = tables
+        self.createTables = createTables
+        self.dropTargetTables = dropTargetTables
+        self.transferData = transferData
+        self.createIndexes = createIndexes
+        self.createForeignKeys = createForeignKeys
+        self.continueOnError = continueOnError
+    }
+
+    public var options: DataTransferOptions {
+        DataTransferOptions(createTables: createTables, dropTargetTables: dropTargetTables, transferData: transferData,
+                            createIndexes: createIndexes, createForeignKeys: createForeignKeys, continueOnError: continueOnError)
+    }
+}
+
 /// What one step of a batch job does.
 public enum JobAction: Codable, Hashable, Sendable {
     /// A query from the navigator's Queries folder (it carries its own connection and database).
@@ -68,9 +99,10 @@ public enum JobAction: Codable, Hashable, Sendable {
     case sqlFile(target: JobTarget, path: String, options: ScriptRunOptions)
     case backup(target: JobTarget, options: BackupOptions)
     case export(ExportStepSettings)
+    case dataTransfer(DataTransferStepSettings)
 
     public enum Kind: String, CaseIterable, Identifiable, Sendable {
-        case savedQuery, sql, sqlFile, backup, export
+        case savedQuery, sql, sqlFile, backup, export, dataTransfer
         public var id: String { rawValue }
         public var displayName: String {
             switch self {
@@ -79,6 +111,7 @@ public enum JobAction: Codable, Hashable, Sendable {
             case .sqlFile: "Execute SQL File"
             case .backup: "Backup"
             case .export: "Export"
+            case .dataTransfer: "Data Transfer"
             }
         }
         public var systemImage: String {
@@ -88,6 +121,7 @@ public enum JobAction: Codable, Hashable, Sendable {
             case .sqlFile: "doc.text"
             case .backup: "clock.arrow.circlepath"
             case .export: "square.and.arrow.up"
+            case .dataTransfer: "arrow.left.arrow.right"
             }
         }
     }
@@ -99,6 +133,7 @@ public enum JobAction: Codable, Hashable, Sendable {
         case .sqlFile: .sqlFile
         case .backup: .backup
         case .export: .export
+        case .dataTransfer: .dataTransfer
         }
     }
 
@@ -108,6 +143,7 @@ public enum JobAction: Codable, Hashable, Sendable {
         case .savedQuery: nil
         case .sql(let target, _), .sqlFile(let target, _, _), .backup(let target, _): target
         case .export(let settings): settings.target
+        case .dataTransfer(let settings): settings.source
         }
     }
 }

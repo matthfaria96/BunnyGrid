@@ -242,6 +242,7 @@ private struct StepsEditor: View {
         case .sqlFile: .sqlFile(target: target, path: "", options: ScriptRunOptions())
         case .backup: .backup(target: target, options: BackupOptions())
         case .export: .export(Self.exportDefaults(target))
+        case .dataTransfer: .dataTransfer(DataTransferStepSettings(source: target, destination: target))
         }
         let step = JobStep(action: action)
         job.steps.append(step)
@@ -323,6 +324,8 @@ private struct StepForm: View {
                 }
             case .export(let settings):
                 ExportStepForm(settings: Binding(get: { settings }, set: { action = .export($0) }))
+            case .dataTransfer(let settings):
+                TransferStepForm(settings: Binding(get: { settings }, set: { action = .dataTransfer($0) }))
             }
         }
         .formStyle(.grouped)
@@ -381,6 +384,24 @@ private struct ExportStepForm: View {
             }
         }
         Toggle("New dated folder on every run", isOn: $settings.timestampedFolder)
+    }
+}
+
+private struct TransferStepForm: View {
+    @Binding var settings: DataTransferStepSettings
+
+    var body: some View {
+        Section("Source") { TargetFields(target: $settings.source, showsSchema: true) }
+        Section("Target") { TargetFields(target: $settings.destination, showsSchema: true) }
+        Section("Options") {
+            ObjectNamesField(names: $settings.tables)
+            Toggle("Create tables", isOn: $settings.createTables)
+            Toggle("Drop target tables first", isOn: $settings.dropTargetTables)
+            Toggle("Transfer records", isOn: $settings.transferData)
+            Toggle("Create indexes", isOn: $settings.createIndexes)
+            Toggle("Create foreign keys", isOn: $settings.createForeignKeys)
+            Toggle("Continue on error", isOn: $settings.continueOnError)
+        }
     }
 }
 
@@ -533,7 +554,7 @@ private struct HistoryView: View {
     var body: some View {
         VSplitView {
             Table(runs, selection: $selection) {
-                TableColumn("Started") { run in Text(run.startedAt.formatted(date: .abbreviated, time: .standard)) }
+                TableColumn("Started") { run in Text(run.startedAt.formatted(date: .numeric, time: .standard)) }
                     .width(min: 150, ideal: 180)
                 TableColumn("Status") { run in Text(run.status.displayName).foregroundStyle(run.status == .failed ? .red : .primary) }
                     .width(min: 70, ideal: 90)
@@ -546,6 +567,7 @@ private struct HistoryView: View {
             .contextMenu(forSelectionType: UUID.self) { ids in
                 Button("Delete", role: .destructive) { for id in ids { app.automation.deleteRun(id) } }
             }
+            .tableStyle(.inset(alternatesRowBackgrounds: false))
             .overlay { if runs.isEmpty { Text("Not run yet").foregroundStyle(.tertiary) } }
             .frame(minHeight: 140)
             ScrollView {

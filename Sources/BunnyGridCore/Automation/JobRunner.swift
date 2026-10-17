@@ -121,6 +121,7 @@ public actor JobRunner {
         case .sqlFile(let target, let path, _): return "Execute \(URL(fileURLWithPath: path).lastPathComponent) — " + place(target)
         case .backup(let target, _): return "Backup — " + place(target)
         case .export(let settings): return "Export \(settings.format.displayName) — " + place(settings.target)
+        case .dataTransfer(let s): return "Data Transfer — \(place(s.source)) → \(place(s.destination))"
         }
     }
 
@@ -147,6 +148,8 @@ public actor JobRunner {
             return "Backup \(entry.name) (\(entry.manifest.objects.count) objects\(entry.manifest.rowCount.map { ", \($0) rows" } ?? ""), \(size))"
         case .export(let settings):
             return try await export(settings)
+        case .dataTransfer(let settings):
+            return try await transfer(settings)
         }
     }
 
@@ -192,6 +195,35 @@ public actor JobRunner {
             }
         }
         return "Exported \(objects.count) object\(objects.count == 1 ? "" : "s") to \(folder.path)"
+    }
+
+    /// Navicat's Data Transfer between two saved connections (`DataTransfer`).
+    private func transfer(_ settings: DataTransferStepSettings) async throws -> String {
+        let sourceConfig = try connection(settings.source.connectionID)
+        let targetConfig = try connection(settings.destination.connectionID)
+        let source = try await driver(for: settings.source)
+        let destination = try await driver(for: settings.destination)
+        func schema(_ config: ConnectionConfig, _ target: JobTarget) -> String? {
+            switch config.kind {
+            case .postgresql: target.schema ?? "public"
+            case .mysql, .mariadb: target.database
+            case .sqlite: nil
+            }
+        }
+        let sourceSchema = schema(sourceConfig, settings.source)
+        var tables = settings.tables
+        if tables.isEmpty {
+            tables = try await source.listObjects(schema: sourceSchema).filter { $0.kind == .table }.map(\.name)
+        }
+        guard !tables.isEmpty else { throw BackupError.nothingToBackUp }
+        let job = DataTransfer(source: source, sourceSchema: sourceSchema, tables: tables,
+                               destination: .database(destination, schema: schema(targetConfig, settings.destination)),
+                               options: settings.options)
+        let summary = try await job.run()
+        if summary.errors > 0 && !settings.continueOnError {
+            throw JobError.statementFailed("Data Transfer finished with \(summary.errors) error\(summary.errors == 1 ? "" : "s").")
+        }
+        return "Transferred \(summary.tables) table\(summary.tables == 1 ? "" : "s"), \(summary.rows) rows\(summary.errors > 0 ? ", \(summary.errors) errors (continued)" : "")"
     }
 
     /// A file name for an object, without path separators.

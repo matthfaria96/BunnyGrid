@@ -14,7 +14,18 @@ struct BackupSheets: ViewModifier {
             .sheet(item: $automation.restoreTarget) { RestoreBackupView(target: $0) }
             #if DEBUG
             // `--automation` opens the Automation window for screenshots.
-            .task { if CommandLine.arguments.contains("--automation") { openWindow(id: "automation") } }
+            // `--backup-wizard` / `--restore-backup` open those sheets on the current database once it is open.
+            .task {
+                if CommandLine.arguments.contains("--automation") { openWindow(id: "automation") }
+                guard CommandLine.arguments.contains("--backup-wizard") || CommandLine.arguments.contains("--restore-backup") else { return }
+                for _ in 0..<200 where app.currentContext?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
+                guard let context = app.currentContext else { return }
+                let target = BackupTarget(context: context, schema: context.defaultSchema)
+                if CommandLine.arguments.contains("--backup-wizard") { app.automation.backupTarget = target }
+                if CommandLine.arguments.contains("--restore-backup"), let entry = app.automation.backups(for: target).first {
+                    app.automation.restoreTarget = RestoreTarget(entry: entry, context: context)
+                }
+            }
             #endif
     }
 
@@ -137,11 +148,11 @@ struct BackupListView: View {
             TableColumn("Name") { entry in
                 Label { Text(entry.name) } icon: { AppIcon(name: "backup", size: 16) }
             }
-            .width(min: 140, ideal: 170)
+            .width(min: 120, ideal: 150)
             TableColumn("Created") { entry in
                 Text(entry.manifest.createdAt, format: .dateTime.year().month().day().hour().minute().second()).foregroundStyle(.secondary)
             }
-            .width(min: 130, ideal: 160)
+            .width(min: 120, ideal: 140)
             TableColumn("Size") { entry in
                 Text(ByteCountFormatter.string(fromByteCount: Int64(entry.fileSize), countStyle: .file)).monospacedDigit()
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -150,7 +161,7 @@ struct BackupListView: View {
             TableColumn("Objects") { entry in
                 Text("\(entry.manifest.objects.count)\(entry.manifest.rowCount.map { " · \($0.formatted()) rows" } ?? "")").foregroundStyle(.secondary)
             }
-            .width(min: 80, ideal: 120)
+            .width(min: 80, ideal: 100)
             TableColumn("Type") { entry in Text(entry.manifest.method.displayName).foregroundStyle(.secondary) }
                 .width(min: 90, ideal: 150)
             TableColumn("Comment") { entry in Text(entry.manifest.comment).lineLimit(1) }
@@ -376,7 +387,7 @@ struct RestoreBackupView: View {
             }
         }
         .padding(20)
-        .frame(width: 520, height: 460)
+        .frame(width: 520, height: report == nil ? 300 : 460)
         .onAppear {
             let own = "\(target.context.session?.id.uuidString ?? "")/\(target.context.name)"
             destination = destinations.contains { $0.key == own } ? own : destinations.first?.key ?? ""

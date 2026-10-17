@@ -270,6 +270,26 @@ private final class RecordingLaunchControl: LaunchControl, @unchecked Sendable {
         #expect(second.summary.hasPrefix("5 of 6 steps succeeded"))
     }
 
+    @Test func dataTransferStepCopiesIntoAnotherDatabase() async throws {
+        let (dir, _, connection, _) = try await makeDataDirectory()
+        let copyPath = dir.appending(path: "copy.sqlite").path
+        let copy = ConnectionConfig(name: "Copy", kind: .sqlite, filePath: copyPath)
+        try ConnectionStore(fileURL: dir.appending(path: "connections.json")).save([connection, copy])
+        let job = BatchJob(name: "Transfer", steps: [JobStep(action: .dataTransfer(DataTransferStepSettings(
+            source: JobTarget(connectionID: connection.id, database: "main"), destination: JobTarget(connectionID: copy.id, database: "main"),
+            tables: ["orders"])))])
+        let encoded = try JSONEncoder().encode(job)
+        #expect(try JSONDecoder().decode(BatchJob.self, from: encoded) == job)
+        try JobStore(directory: dir.appending(path: "automation")).saveJobs([job])
+        let runner = HeadlessJobRunner(dataDirectory: dir, secrets: { _ in ConnectionSecrets() }, output: { _ in })
+        guard case .finished(let run) = await runner.run(jobID: job.id, scheduled: false) else { Issue.record("no run"); return }
+        #expect(run.status == .succeeded, "\(run.log)")
+        let check = SQLiteDriver(config: copy)
+        try await check.connect()
+        #expect(try await check.countRows(table: "orders", schema: nil) == 3)
+        await check.disconnect()
+    }
+
     @Test func scheduledStartsOfInactiveJobsAreSkipped() async throws {
         let (dir, job, _, _) = try await makeDataDirectory()
         var off = job
