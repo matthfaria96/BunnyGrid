@@ -84,7 +84,7 @@ struct TableTabView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            moreButtons
+            moreButtons.layoutPriority(1)
         }
         .padding(.horizontal, 8)
         .frame(height: 36)
@@ -321,12 +321,12 @@ private struct GridFooter: View {
             IconButton(systemImage: "minus", help: "Delete Selected Records (⌫)", isEnabled: model.isEditable && !model.selectedRows.isEmpty) {
                 model.toggleDelete(model.selectedRows)
             }
-            Spacer().frame(width: 8)
+            Spacer().frame(width: 4)
             IconButton(systemImage: "checkmark", help: "Apply Changes (⌘S)", tint: .green, isEnabled: model.hasChanges && !model.isSaving) {
                 Task { await model.applyChanges() }
             }
             IconButton(systemImage: "xmark", help: "Discard Changes", tint: .red, isEnabled: model.hasChanges) { model.discardChanges() }
-            Spacer().frame(width: 8)
+            Spacer().frame(width: 4)
             IconButton(systemImage: "arrow.clockwise", help: "Refresh (⌘R)", isEnabled: !model.hasChanges) { model.requestReload() }
             IconButton(systemImage: "stop.fill", help: "Stop", isEnabled: model.isLoading) { model.stopLoading() }
 
@@ -350,37 +350,31 @@ private struct GridFooter: View {
                 Label(reason, systemImage: "lock.fill").font(.system(size: 11)).foregroundStyle(.secondary)
             }
 
-            Spacer(minLength: 8)
             // The statement that loaded this page, truncated in the middle like Navicat's footer; click for all of it.
-            if !model.hasChanges, !model.lastSQL.isEmpty {
-                Button { showingSQL = true } label: {
-                    Text(model.lastSQL)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 260)
+            // It gives way first when the pane is narrow, so the footer never pushes the tab wider than its pane.
+            Color.clear
+                .frame(minWidth: 4, maxWidth: .infinity, maxHeight: 20)
+                .overlay {
+                    if !model.hasChanges, !model.lastSQL.isEmpty {
+                        Button { showingSQL = true } label: {
+                            Text(model.lastSQL)
+                                .font(.system(size: 12, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .frame(maxWidth: 260)
+                                .padding(.horizontal, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .help(model.lastSQL)
+                        .popover(isPresented: $showingSQL, arrowEdge: .top) { SQLPreview(sql: model.lastSQL) }
+                    }
                 }
-                .buttonStyle(.plain)
-                .help(model.lastSQL)
-                .popover(isPresented: $showingSQL, arrowEdge: .top) { SQLPreview(sql: model.lastSQL) }
-                .layoutPriority(-1)
-            }
-            Spacer(minLength: 8)
+                .clipped()
 
-            IconButton(systemImage: "arrow.left.to.line", help: "First Page", isEnabled: model.canGoBack) { Task { await model.goToPage(1) } }
-            IconButton(systemImage: "arrow.left", help: "Previous Page", isEnabled: model.canGoBack) { Task { await model.previousPage() } }
-            TextField("", text: $pageText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .padding(.horizontal, 6)
-                .frame(width: 46, height: 20)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
-                .onSubmit { Task { await model.goToPage(Int(pageText) ?? 1) } }
-                .disabled(model.hasChanges)
-                .help("Page")
-            IconButton(systemImage: "arrow.right", help: "Next Page", isEnabled: model.canGoForward) { Task { await model.nextPage() } }
-            IconButton(systemImage: "arrow.right.to.line", help: "Last Page", isEnabled: model.canGoForward && model.totalRows != nil) {
-                if let total = model.totalRows { Task { await model.goToPage((total + model.pageSize - 1) / model.pageSize) } }
+            // First / Last give way when the pane is narrow, so the footer always fits.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 2) { pager(full: true) }
+                HStack(spacing: 2) { pager(full: false) }
             }
             IconButton(systemImage: "gearshape", help: "Records per page") { showingPageSize = true }
                 .popover(isPresented: $showingPageSize, arrowEdge: .top) { PageSizePopover(model: model) }
@@ -391,13 +385,36 @@ private struct GridFooter: View {
                 .opacity(0)
                 .popover(isPresented: $showingFind, arrowEdge: .top) { FindPopover(model: model) }
                 .accessibilityHidden(true)
-            Spacer().frame(width: 8)
+            Spacer().frame(width: 4)
             IconButton(systemImage: "tablecells", help: "Grid View", isOn: model.viewMode == .grid) { model.viewMode = .grid }
             IconButton(systemImage: "list.bullet.rectangle", help: "Form View", isOn: model.viewMode == .form) { model.viewMode = .form }
         }
         .padding(.horizontal, 8)
         .frame(height: 30)
         .onChange(of: model.pageNumber, initial: true) { _, page in pageText = String(page) }
+    }
+
+    @ViewBuilder
+    private func pager(full: Bool) -> some View {
+        if full {
+            IconButton(systemImage: "arrow.left.to.line", help: "First Page", isEnabled: model.canGoBack) { Task { await model.goToPage(1) } }
+        }
+        IconButton(systemImage: "arrow.left", help: "Previous Page", isEnabled: model.canGoBack) { Task { await model.previousPage() } }
+        TextField("", text: $pageText)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12))
+            .padding(.horizontal, 6)
+            .frame(width: 46, height: 20)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
+            .onSubmit { Task { await model.goToPage(Int(pageText) ?? 1) } }
+            .disabled(model.hasChanges)
+            .help("Page")
+        IconButton(systemImage: "arrow.right", help: "Next Page", isEnabled: model.canGoForward) { Task { await model.nextPage() } }
+        if full {
+            IconButton(systemImage: "arrow.right.to.line", help: "Last Page", isEnabled: model.canGoForward && model.totalRows != nil) {
+                if let total = model.totalRows { Task { await model.goToPage((total + model.pageSize - 1) / model.pageSize) } }
+            }
+        }
     }
 }
 

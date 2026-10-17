@@ -15,14 +15,14 @@ struct ContentView: View {
             HSplitView {
                 if app.showNavigator {
                     NavigatorView()
-                        .frame(minWidth: 200, idealWidth: 260, maxWidth: 480)
+                        .frame(minWidth: 200, idealWidth: 240, maxWidth: 480)
                 }
                 WorkspaceView()
-                    .frame(minWidth: 420, maxWidth: .infinity)
+                    .frame(minWidth: 360, maxWidth: .infinity)
                     .layoutPriority(1)
                 if app.showAssistant {
                     RightPane()
-                        .frame(minWidth: 260, idealWidth: app.assistant.isExpanded ? 560 : 290, maxWidth: app.assistant.isExpanded ? 900 : 520)
+                        .frame(minWidth: app.assistant.isExpanded ? 560 : 345, idealWidth: app.assistant.isExpanded ? 560 : 345, maxWidth: app.assistant.isExpanded ? 900 : 600)
                 }
             }
             Divider()

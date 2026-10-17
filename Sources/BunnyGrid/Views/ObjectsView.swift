@@ -109,7 +109,7 @@ struct ObjectsView: View {
             }
             .font(.system(size: 13))
             .padding(.horizontal, 10)
-            .frame(width: 200, height: 28)
+            .frame(minWidth: 90, maxWidth: 200, minHeight: 28, maxHeight: 28)
             .glassBackground(in: Capsule())
         }
         .padding(.horizontal, 12)

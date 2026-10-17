@@ -14,7 +14,9 @@ struct WorkspaceView: View {
             }
             // Every tab stays alive so switching back keeps its scroll position, selection and editor state.
             // Hidden tabs are disabled so their keyboard shortcuts (⌘↩, ⌘R…) don't fire.
-            ZStack {
+            // In an overlay so a hidden tab's minimum width never widens the pane (the split view would otherwise
+            // take the space from the navigator and clip the visible tab).
+            Color.clear.overlay(alignment: .topLeading) { ZStack {
                 ObjectsView()
                     .opacity(app.selectedTabID == nil ? 1 : 0)
                     .allowsHitTesting(app.selectedTabID == nil)
@@ -27,8 +29,9 @@ struct WorkspaceView: View {
                         .disabled(!isActive)
                         .accessibilityHidden(!isActive)
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } }
+            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .clipped()
         }
     }
 }
