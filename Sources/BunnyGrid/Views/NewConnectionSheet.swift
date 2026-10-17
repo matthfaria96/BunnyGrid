@@ -259,49 +259,22 @@ enum ConnectionCatalog {
 
 // MARK: - Tile
 
-/// Glossy tile for a connection type: the engine's color with our own white mark
-/// (engine monogram, or the vendor's short name under a cloud for hosted services).
+/// Tile for a connection type: the product's (or vendor's) logo in its brand colour, with a small
+/// engine badge on hosted services, like Navicat's picker.
 struct ConnectionTypeIcon: View {
     let type: ConnectionType
     var size: CGFloat = 50
 
     var body: some View {
-        let (top, bottom) = type.colors
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.2, style: .continuous)
-                .fill(LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom))
-            RoundedRectangle(cornerRadius: size * 0.2, style: .continuous)
-                .fill(LinearGradient(colors: [.white.opacity(0.28), .clear], startPoint: .top, endPoint: .center))
-            RoundedRectangle(cornerRadius: size * 0.2, style: .continuous)
-                .strokeBorder(.white.opacity(0.18), lineWidth: max(0.5, size * 0.015))
-            if let vendor = type.vendor {
-                VStack(spacing: size * 0.02) {
-                    CloudMark()
-                        .fill(.white.opacity(0.92))
-                        .frame(width: size * 0.5, height: size * 0.28)
-                    Text(vendor.mark)
-                        .font(.system(size: size * (vendor.mark.count > 2 ? 0.24 : 0.28), weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white)
+        BrandTile(brand: type.brand, size: size)
+            .overlay(alignment: .bottomTrailing) {
+                if let badge = type.badge, size >= 24 {
+                    BrandTile(brand: badge, size: size * 0.44)
+                        .shadow(color: .black.opacity(0.18), radius: size * 0.02, y: size * 0.01)
+                        .offset(x: size * 0.1, y: size * 0.08)
                 }
-                .shadow(color: .black.opacity(0.15), radius: 0.5, y: 0.5)
-            } else if type.listGroup != nil {
-                VStack(spacing: size * 0.02) {
-                    CloudMark()
-                        .fill(.white.opacity(0.92))
-                        .frame(width: size * 0.5, height: size * 0.28)
-                    Text(type.family?.monogram ?? "")
-                        .font(.system(size: size * 0.28, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white)
-                }
-            } else {
-                Text(type.family?.monogram ?? "")
-                    .font(.system(size: size * 0.42, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.18), radius: 0.5, y: 0.8)
             }
-        }
-        .frame(width: size, height: size)
-        .shadow(color: .black.opacity(0.22), radius: size * 0.03, y: size * 0.02)
+            .shadow(color: .black.opacity(0.12), radius: size * 0.03, y: size * 0.02)
     }
 }
 
@@ -701,20 +674,12 @@ private struct TypeTile: View {
     }
 }
 
-/// Small mark for a vendor in the filter list: their color with a short white name.
+/// Small mark for a vendor in the filter list: its logo (or name) in the brand colour.
 struct VendorMark: View {
     let vendor: ConnectionVendor
     var size: CGFloat = 16
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
-            .fill(LinearGradient(colors: [vendor.sidebarColor.opacity(0.85), vendor.sidebarColor], startPoint: .top, endPoint: .bottom))
-            .overlay(
-                Text(vendor.mark)
-                    .font(.system(size: size * (vendor.mark.count > 2 ? 0.36 : 0.46), weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
-                    .minimumScaleFactor(0.5)
-            )
-            .frame(width: size, height: size)
+        BrandTile(brand: vendor.brand, size: size)
     }
 }

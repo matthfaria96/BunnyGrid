@@ -50,9 +50,9 @@ enum IconLibrary {
         return candidates.compactMap { $0 }.lazy.compactMap { Bundle(url: $0) }.first
     }()
 
-    static func image(_ name: String) -> NSImage? {
+    static func image(_ name: String, subdirectory: String = "Icons") -> NSImage? {
         if let cached = cache[name] { return cached }
-        guard let url = bundle?.url(forResource: name, withExtension: "svg", subdirectory: "Icons")
+        guard let url = bundle?.url(forResource: name, withExtension: "svg", subdirectory: subdirectory)
                 ?? bundle?.url(forResource: name, withExtension: "svg"),
               let image = NSImage(contentsOf: url) else { return nil }
         cache[name] = image
