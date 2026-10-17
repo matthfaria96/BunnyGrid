@@ -29,6 +29,8 @@ open build/BunnyGrid.app
 
 Também dá para abrir o pacote no Xcode (`open Package.swift`) e rodar o esquema `BunnyGrid`.
 
+Versão para distribuir (universal, Hardened Runtime, DMG, notarização e Sparkle): `scripts/release.sh [--notarize]`. Passo a passo em [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
+
 ### Opções de desenvolvimento
 
 ```sh
@@ -256,4 +258,4 @@ A janela segue o layout do Navicat Premium (ícones próprios em SF Symbols; nad
 ## Licenças
 
 - **Beekeeper Studio Community** é GPL-3 (e `src-commercial/` tem licença comercial). Copiar ou traduzir o código dele para Swift faz do BunnyGrid uma obra derivada sob GPL-3. Até que se decida isso, o Beekeeper serve só como referência de arquitetura e comportamento.
-- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O cliente Redis é código próprio sobre SwiftNIO (o RediStack não foi usado: só fala RESP2). O MongoDB não usa o MongoKitten: o cliente é próprio (BSON + OP_MSG + SCRAM, ~2 mil linhas), sem pacotes novos, testado contra o MongoDB 9.0 (wire version 29). O SQL Server também usa um cliente próprio (TDS 7.4 sobre SwiftNIO; só acrescenta o produto NIOTLS do swift-nio), testado contra o SQL Server 2022 (16.0).
+- Dependências atuais: PostgresNIO e MySQLNIO (MIT), SwiftNIO (Apache-2.0), SQLite do sistema. O cliente Redis é código próprio sobre SwiftNIO (o RediStack não foi usado: só fala RESP2). O MongoDB não usa o MongoKitten: o cliente é próprio (BSON + OP_MSG + SCRAM, ~2 mil linhas), sem pacotes novos, testado contra o MongoDB 9.0 (wire version 29). O SQL Server também usa um cliente próprio (TDS 7.4 sobre SwiftNIO; só acrescenta o produto NIOTLS do swift-nio), testado contra o SQL Server 2022 (16.0). Atualizações: Sparkle 2 (MIT), embutido em `Contents/Frameworks` e inerte sem feed configurado.

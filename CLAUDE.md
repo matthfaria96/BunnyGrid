@@ -11,6 +11,7 @@ export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 swift build && swift test
 scripts/bundle.sh debug     # build/BunnyGrid.app (compiles Resources/AppIcon.icon with actool)
 scripts/preview-icon.sh <dir>   # render the icon in every appearance
+scripts/release.sh [--version X.Y.Z] [--notarize]   # dist/: universal app + DMG (docs/DISTRIBUTION.md)
 ```
 
 Visual check without touching the user's saved connections or driving the mouse:
@@ -31,4 +32,5 @@ The AI Assistant talks to Claude (Messages API, default `claude-opus-5-5`, `fall
 - Navicat reference is `../Clones/Navicat Premium/SPEC.md` (public bundle metadata only). Don't decompile Navicat.
 - `BunnyGridCore` has no UI imports; every engine implements `DatabaseDriver` as an actor. Engine-specific SQL lives in the driver or `SQLDialect`.
 - UI state types are `@MainActor @Observable`. Passwords only in the Keychain, never in `connections.json`.
+- Distribution: account-specific values (signing identity, notary profile, Sparkle feed/key) only via env or the gitignored `scripts/release.env`. Sparkle is always linked but inert unless Info.plist has `SUFeedURL` + `SUPublicEDKey` (`AppUpdater`). App is Hardened Runtime, not sandboxed (launch agents, ~/.ssh, sockets, SQLite sidecars).
 - New core behavior gets Swift Testing tests in `Tests/BunnyGridCoreTests`.

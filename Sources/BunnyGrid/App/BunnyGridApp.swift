@@ -37,6 +37,8 @@ enum AppEntry {
 struct BunnyGridApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
+    /// Created with the app so Sparkle's scheduled checks start at launch (inert without a feed).
+    private let updater = AppUpdater.shared
     @AppStorage("appearance") private var appearance = AppearancePreference.system.rawValue
 
     var body: some Scene {
@@ -51,7 +53,10 @@ struct BunnyGridApp: App {
         .windowStyle(.hiddenTitleBar)
         // In their own type: the menus read the selected tab, and reading it in this body made every
         // tab switch re-evaluate the whole scene (window included).
-        .commands { MainCommands(model: model) }
+        .commands {
+            MainCommands(model: model)
+            CheckForUpdatesCommands(updater: updater)
+        }
 
         Settings {
             SettingsView()

@@ -22,6 +22,16 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/BunnyGrid"
 # SwiftPM resource bundle (SVG icons) lives in Contents/Resources so the signature stays valid.
 cp -R "$(dirname "$BIN")/BunnyGrid_BunnyGrid.bundle" "$APP/Contents/Resources/"
+# Sparkle (linked, inert here: no SUFeedURL in this Info.plist). The executable finds it via
+# @executable_path/../Frameworks. Release builds: scripts/release.sh.
+SPARKLE="$(dirname "$BIN")/Sparkle.framework"
+[[ -d "$SPARKLE" ]] || SPARKLE="$(find "$ROOT/.build/artifacts" -type d -name Sparkle.framework -path '*macos*' -print -quit)"
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$SPARKLE" "$APP/Contents/Frameworks/Sparkle.framework"
+rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" "$APP/Contents/Frameworks/Sparkle.framework/XPCServices"
+codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate" \
+  "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app" >/dev/null 2>&1
+codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework" >/dev/null
 
 # App icon from Icon Composer (Resources/AppIcon.icon): actool compiles the layered Liquid Glass icon into
 # Assets.car (default, dark, tinted and clear renditions on macOS 26+) plus AppIcon.icns for macOS 14–15.
