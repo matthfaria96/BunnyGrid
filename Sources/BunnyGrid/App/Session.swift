@@ -209,6 +209,13 @@ final class Session: Identifiable {
 
     func context(_ name: String) -> DatabaseContext? { contexts[name] }
 
+    /// SQLite's "Attach Database…": ATTACH the file under `alias` and list it beside main.
+    func attachSQLiteDatabase(path: String, alias: String) async throws {
+        guard let sqlite = driver as? SQLiteDriver else { return }
+        try await sqlite.attach(path: path, as: alias)
+        databases = try await driver.listDatabases().filter { $0 != "temp" }
+    }
+
     /// A new, unconnected driver for `database`, for work that needs its own connection
     /// (a table tab's manual transaction, a query editor). On MySQL it connects with `database` as the
     /// default database, so unqualified names in the editor resolve there.
@@ -313,7 +320,8 @@ final class DatabaseContext: Identifiable {
         switch kind {
         case .postgresql: schema
         case .mysql, .mariadb, .mongodb: name
-        case .sqlite: nil
+        // Attached SQLite databases are addressed as `alias.table`; main stays unqualified.
+        case .sqlite: name == "main" ? nil : name
         case .redis: nil
         }
     }
