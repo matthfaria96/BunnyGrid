@@ -29,6 +29,7 @@ struct NavigatorView: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
+        let _ = ColorSwatchMenuItem.install(current: { [app] in app.connection(id: $0)?.color }) { [app] in app.setColor($0, for: $1) }
         VStack(spacing: 0) {
             List(selection: Binding(get: { app.navSelection }, set: { app.select($0) })) {
                 ForEach(rows) { row in
@@ -383,23 +384,9 @@ private struct NavContextMenu: View {
             Divider()
             Button(app.starredConnections.contains(id) ? "Remove Star" : "Add Star") { app.toggleStar(id) }
             // "Color:" with the swatches inline, as in Navicat's menu.
+            // The row is a placeholder that `ColorSwatchMenuItem` turns into small AppKit swatches.
             Section("Color:") {
-                ControlGroup {
-                    ForEach(ConnectionColor.allCases) { color in
-                        Button {
-                            app.setColor(color, for: id)
-                        } label: {
-                            Label {
-                                Text(color == .none ? "None" : color.rawValue.capitalized)
-                            } icon: {
-                                Image(nsImage: ColorSwatch.image(color, selected: app.connection(id: id)?.color == color))
-                            }
-                        }
-                    }
-                } label: {
-                    Text("Color:")
-                }
-                .controlGroupStyle(.palette)
+                Button(ColorSwatchMenuItem.marker(for: id)) {}
             }
             Divider()
             Menu("Manage Group") {

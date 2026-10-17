@@ -91,6 +91,10 @@ struct ConnectionEditorView: View {
                 Divider()
                 footer
             }
+            // Exactly the room left by the profiles sidebar: a wide row in any tab can no longer make the editor
+            // wider than the sheet (which pushed the whole sheet, sidebar included, past its left edge).
+            .frame(width: showProfiles ? 900 - 201 : 900)
+            .clipped()
         }
         .frame(width: 900, height: 700)
         .animation(.easeInOut(duration: 0.2), value: showProfiles)
