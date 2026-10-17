@@ -133,6 +133,8 @@ final class QueryTabModel: Identifiable {
     var aiRun: AskAIRun?
     /// The Ask AI card (compose state).
     var showingAskAICustom = false
+    /// The Query Builder sheet (hammer button).
+    var showingQueryBuilder = false
     /// The last custom question, so Back and reopening restore it.
     var lastCustomAction: AIAction?
     /// The database's shared driver (navigator, table tabs).

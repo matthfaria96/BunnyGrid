@@ -35,6 +35,7 @@ struct QueryTabView: View {
             }
         }
         .overlay { AskAIOverlay(query: model) }
+        .sheet(isPresented: $model.showingQueryBuilder) { QueryBuilderSheet(query: model) }
     }
 
     private var editor: some View {
@@ -76,8 +77,7 @@ struct QueryTabView: View {
         HStack(spacing: 2) {
             ToolIconButton(systemImage: "square.and.arrow.down", help: "Save (⌘S)", tint: .secondary) { app.saveQuery(model) }
             Divider().frame(height: 16).padding(.horizontal, 6)
-            ToolIconButton(systemImage: "hammer", help: "Query Builder (coming soon)") {}
-                .disabled(true)
+            ToolIconButton(systemImage: "hammer", help: "Query Builder") { model.showingQueryBuilder = true }
             ToolIconButton(systemImage: "wand.and.stars", help: "Beautify SQL (⌘⇧B)") { model.beautify() }
                 .disabled(model.isBlank)
             ToolIconButton(systemImage: "parentheses", help: "Code Snippet") {
