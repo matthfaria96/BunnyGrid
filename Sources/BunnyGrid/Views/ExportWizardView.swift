@@ -107,8 +107,8 @@ struct ExportWizardView: View {
             }
             .fixedSize()
             Toggle("Include field names", isOn: $includeHeader)
-        case .json:
-            Text("An array of objects per table, keys in column order. Numbers, booleans and NULL keep their JSON types.")
+        case .json, .html, .markdown, .xml:
+            Text(format.summary ?? "")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         case .sql:
             Toggle("CREATE statements (structure)", isOn: $sqlStructure)

@@ -5,12 +5,13 @@ import UniformTypeIdentifiers
 
 /// What the Import Wizard reads.
 enum ImportSourceKind: String, CaseIterable, Identifiable {
-    case csv, json, excel, sql
+    case csv, json, xml, excel, sql
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .csv: "CSV / TSV"
         case .json: "JSON"
+        case .xml: "XML"
         case .excel: "Excel"
         case .sql: "SQL File"
         }
@@ -46,7 +47,7 @@ struct ImportWizardView: View {
     private var hasFile: Bool {
         switch kind {
         case .csv, .sql: !csvText.isEmpty
-        case .json: jsonTable != nil
+        case .json, .xml: jsonTable != nil
         case .excel: workbook != nil
         }
     }
@@ -110,6 +111,9 @@ struct ImportWizardView: View {
             }
             if kind == .json {
                 Text("An array of objects, an object holding one such array, or one object per line (JSON Lines). Nested values are imported as JSON text.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if kind == .xml {
+                Text("A root element holding repeated records: <RECORDS><RECORD><name>…</name></RECORD></RECORDS> (as Navicat and BunnyGrid export), or records with attributes like <row id=\"1\"/>.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -243,6 +247,7 @@ struct ImportWizardView: View {
         let panel = NSOpenPanel()
         switch kind {
         case .json: panel.allowedContentTypes = [.json, .plainText, .text]
+        case .xml: panel.allowedContentTypes = [.xml, .text]
         case .excel: panel.allowedContentTypes = [UTType(filenameExtension: "xlsx") ?? .spreadsheet]
         case .csv, .sql: panel.allowedContentTypes = [.commaSeparatedText, .tabSeparatedText, .plainText, .text]
         }
@@ -258,6 +263,8 @@ struct ImportWizardView: View {
             switch kind {
             case .json:
                 jsonTable = try JSONTableReader.read(data)
+            case .xml:
+                jsonTable = try XMLTableReader.read(data)
             case .excel:
                 workbook = try XLSXWorkbook(data: data)
             case .csv, .sql:
@@ -278,7 +285,7 @@ struct ImportWizardView: View {
     /// Rebuilds the source table from the file and the CSV options, then maps fields again.
     private func reparse() {
         switch kind {
-        case .json:
+        case .json, .xml:
             source = jsonTable ?? ImportedTable(columns: [], rows: [])
         case .excel:
             do {
@@ -299,7 +306,7 @@ struct ImportWizardView: View {
     /// Maps source columns to target columns with the same name (case-insensitive), or by position without a header row.
     private func autoMap() {
         mapping = [:]
-        let byName = kind == .json || hasHeader
+        let byName = kind == .json || kind == .xml || hasHeader
         for (index, header) in source.columns.enumerated() {
             if byName {
                 if let column = targetColumns.first(where: { $0.name.caseInsensitiveCompare(header.trimmingCharacters(in: .whitespaces)) == .orderedSame }) {

@@ -373,7 +373,7 @@ private struct ExportStepForm: View {
                 Text("Pipe ( | )").tag("|")
             }
             Toggle("Include field names", isOn: $settings.includeHeader)
-        case .json: EmptyView()
+        case .json, .html, .markdown, .xml: EmptyView()
         case .sql:
             Toggle("CREATE statements (structure)", isOn: $settings.sqlStructure)
             Toggle("DROP … IF EXISTS before CREATE", isOn: $settings.sqlDrop)

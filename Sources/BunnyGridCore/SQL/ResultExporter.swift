@@ -4,10 +4,19 @@ public enum ExportFormat: String, CaseIterable, Sendable, Identifiable {
     case csv
     case json
     case xlsx
+    case html
+    case markdown
+    case xml
 
     public var id: String { rawValue }
-    public var fileExtension: String { rawValue }
-    public var displayName: String { self == .xlsx ? "Excel" : rawValue.uppercased() }
+    public var fileExtension: String { self == .markdown ? "md" : rawValue }
+    public var displayName: String {
+        switch self {
+        case .xlsx: "Excel"
+        case .markdown: "Markdown"
+        default: rawValue.uppercased()
+        }
+    }
 }
 
 /// Serializes grid results for the export menu and the Export Wizard.
@@ -17,6 +26,9 @@ public enum ResultExporter {
         case .csv: Data(csv(columns: columns, rows: rows).utf8)
         case .json: json(columns: columns, rows: rows)
         case .xlsx: try XLSXWriter.workbook([XLSXSheet(name: sheetName, columns: columns, rows: rows)])
+        case .html: Data(html(columns: columns, rows: rows, title: sheetName).utf8)
+        case .markdown: Data(markdown(columns: columns, rows: rows).utf8)
+        case .xml: Data(xml(columns: columns, rows: rows).utf8)
         }
     }
 

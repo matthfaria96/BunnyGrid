@@ -257,17 +257,31 @@ extension DatabaseDriver {
     }
 }
 
-/// Export Wizard formats: data files, a SQL script or an Excel workbook.
+/// Export Wizard formats: data files, a SQL script, an Excel workbook or a document (HTML, Markdown, XML).
 public enum TableExportFormat: String, CaseIterable, Identifiable, Sendable {
-    case csv, json, sql, xlsx
+    case csv, json, sql, xlsx, html, markdown, xml
     public var id: String { rawValue }
-    public var fileExtension: String { rawValue }
+    public var fileExtension: String { self == .markdown ? "md" : rawValue }
     public var displayName: String {
         switch self {
         case .csv: "CSV"
         case .json: "JSON"
         case .sql: "SQL (INSERT statements)"
         case .xlsx: "Excel (.xlsx)"
+        case .html: "HTML"
+        case .markdown: "Markdown"
+        case .xml: "XML"
+        }
+    }
+
+    /// What the format writes, for the wizard and the Automation export step.
+    public var summary: String? {
+        switch self {
+        case .html: "A web page per table with all records in one table."
+        case .markdown: "A Markdown table per file (GitHub style); line breaks become <br>."
+        case .xml: "<RECORDS><RECORD>…</RECORD></RECORDS>, Navicat's XML layout, so files move between the two apps."
+        case .json: "An array of objects per table, keys in column order. Numbers, booleans and NULL keep their JSON types."
+        default: nil
         }
     }
 }
@@ -303,6 +317,15 @@ public enum TableExporter {
             return ResultExporter.json(columns: page.columns, rows: page.rows)
         case .xlsx:
             return try await workbook([object], from: driver, includeHeader: options.includeHeader)
+        case .html:
+            let page = try await driver.fetchAllRows(table: object.name, schema: object.schema)
+            return Data(ResultExporter.html(columns: page.columns, rows: page.rows, title: object.name).utf8)
+        case .markdown:
+            let page = try await driver.fetchAllRows(table: object.name, schema: object.schema)
+            return Data(ResultExporter.markdown(columns: page.columns, rows: page.rows).utf8)
+        case .xml:
+            let page = try await driver.fetchAllRows(table: object.name, schema: object.schema)
+            return Data(ResultExporter.xml(columns: page.columns, rows: page.rows).utf8)
         }
     }
 
