@@ -28,7 +28,7 @@
     {"op": "waitFor", "id": "account.theme", "exists": true},
     {"op": "wait", "ms": 300},
     {"op": "screenshot", "name": "account-popover"},
-    {"op": "click", "id": "account.theme", "menu": ["Advanced"], "note": "Theme › Interface › Advanced"},
+    {"op": "click", "id": "account.interface", "menu": ["Advanced"], "note": "Interface › Advanced"},
     {"op": "waitFor", "probe": "interfaceMode", "equals": "advanced"},
     {"op": "waitFor", "label": "Automation", "window": "main", "exists": true, "note": "the Advanced items are back"},
     {"op": "assert", "label": "Model", "window": "main", "exists": true},

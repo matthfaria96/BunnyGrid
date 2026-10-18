@@ -1,7 +1,7 @@
 # Brand logos
 
-Used only in the connection-type picker (New Connection, Edit Connection header) to identify each
-product. All logos and names are trademarks of their respective owners; their use here does not imply
+Used in the connection-type picker (New Connection, Edit Connection header) and wherever an AI assistant
+is shown (profile menu, AI pane, Ask AI, Settings › AI) to identify each product. All logos and names are trademarks of their respective owners; their use here does not imply
 endorsement.
 
 SVG paths are from **Simple Icons 16.33.0** (npm `simple-icons`, tarball
@@ -24,6 +24,15 @@ marks may still be subject to trademark law (see its DISCLAIMER.md). Files are u
 | brand-huawei.svg | huawei | #FF0000 | https://e.huawei.com/ph/material/partner/0a72728b864949c48b22106454352483 |
 | brand-tidb.svg | tidb | #DC150B | https://www.pingcap.com/tidb-brand-guidelines/ |
 | brand-fujitsu.svg | fujitsu | #FF0000 | https://www.fujitsu.com/global/about/brandmanagement/logo/ |
+| brand-claude.svg | claude | #D97757 | https://claude.ai |
+| brand-googlegemini.svg | googlegemini | #8E75B2 | https://gemini.google.com |
+| brand-deepseek.svg | deepseek | #5786FE | https://www.deepseek.com |
+| brand-mistralai.svg | mistralai | #FA520F | https://chat.mistral.ai |
+| brand-ollama.svg | ollama | #000000 | https://github.com/ollama/ollama/issues/2152#issuecomment-1905286922 |
+| brand-lmstudio.svg | lmstudio | #000000 | https://files.lmstudio.ai/lmstudio_icon2.svg |
+
+OpenAI (ChatGPT) and xAI (Grok) are not in Simple Icons (removed at the owners' request), so the app shows
+a text tile for them (`AIProvider.brand`).
 
 ## From the owners' own published files
 

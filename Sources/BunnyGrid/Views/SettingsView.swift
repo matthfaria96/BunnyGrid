@@ -644,7 +644,7 @@ private struct AIPane: View {
                     List(selection: $selection) {
                         ForEach(ai.assistants) { assistant in
                             HStack(spacing: 7) {
-                                AppIcon(name: assistant.provider.iconName, size: 18)
+                                ProviderIcon(provider: assistant.provider, size: 18)
                                 Text(assistant.name).lineLimit(1)
                             }
                             .tag(assistant.id)
@@ -749,13 +749,13 @@ private struct AssistantForm: View {
             row("AI Assistant Name") { TextField("", text: $assistant.name) }
             row("AI Provider") {
                 HStack(spacing: 6) {
-                    AppIcon(name: assistant.provider.iconName, size: 16)
+                    ProviderIcon(provider: assistant.provider, size: 16)
                     Text(assistant.provider.menuTitle)
                 }
             }
             row("API Host") { TextField("", text: $assistant.apiHost, prompt: Text(assistant.provider.defaultHost)) }
             row("API Endpoint") {
-                Text(assistant.baseURL.appending(path: assistant.provider == .claude ? "v1/messages" : "v1/responses").absoluteString)
+                Text(assistant.baseURL.appending(path: assistant.provider.chatPath).absoluteString)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -763,13 +763,17 @@ private struct AssistantForm: View {
             }
             row("API Key") {
                 VStack(alignment: .leading, spacing: 3) {
-                    SecureField("", text: $key, prompt: Text(assistant.provider.keyPlaceholder))
-                    Link("Get an \(assistant.provider.company) API key", destination: assistant.provider.keysURL).font(.system(size: 11))
+                    SecureField("", text: $key, prompt: Text(assistant.provider.isLocal ? "Optional" : assistant.provider.keyPlaceholder))
+                    if assistant.provider.isLocal {
+                        Link("Download \(assistant.provider.displayName)", destination: assistant.provider.keysURL).font(.system(size: 11))
+                    } else {
+                        Link("Get an \(assistant.provider.company) API key", destination: assistant.provider.keysURL).font(.system(size: 11))
+                    }
                 }
             }
             row("Model") {
                 HStack(spacing: 4) {
-                    TextField("", text: $assistant.model, prompt: Text(assistant.provider.defaultModel))
+                    TextField("", text: $assistant.model, prompt: Text(assistant.provider.defaultModel.isEmpty ? "First listed model" : assistant.provider.defaultModel))
                     Menu {
                         ForEach(app.assistant.models(for: assistant.provider)) { option in
                             Button(option.name) { assistant.model = option.id }
@@ -793,7 +797,9 @@ private struct AssistantForm: View {
                 .labelsHidden()
                 .frame(width: 220)
                 // As a tooltip: a caption row here pushed the form past the list and over "AI Assistant UI".
-                .help("Effort replaces Temperature: current Claude and GPT models no longer take a sampling temperature.")
+                .help(assistant.provider.api == .chatCompletions
+                      ? "Effort applies to Claude and ChatGPT; other providers use the model's own default."
+                      : "Effort replaces Temperature: current Claude and GPT models no longer take a sampling temperature.")
             }
             row("Instructions") {
                 TextEditor(text: $assistant.instruction)

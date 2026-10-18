@@ -1,6 +1,7 @@
-"""Local stand-in for the Claude Messages API and the OpenAI Responses API (streaming), for UI scenarios.
+"""Local stand-in for the Claude Messages API, the OpenAI Responses API and OpenAI-compatible Chat Completions
+(Gemini, Grok, DeepSeek, Mistral, Ollama, LM Studio), all streaming, for UI scenarios.
 
-Usage: python3 mock-ai.py PORT. Answers GET /v1/models, POST /v1/messages and POST /v1/responses with a short
+Usage: python3 mock-ai.py PORT. Answers GET /v1/models, POST /v1/messages, POST /v1/responses and POST /v1/chat/completions with a short
 reply that echoes the last user text ("Mock reply to: …") plus a fenced SQL block, as server-sent events.
 Every request body is appended to requests.jsonl in the working directory, so a scenario can inspect it.
 """
@@ -45,7 +46,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/v1/models"):
-            self.send_json({"data": [{"id": "claude-opus-5-5", "type": "model"}, {"id": "gpt-6-astra", "object": "model"}], "has_more": False})
+            self.send_json({"data": [{"id": "mock-local-model", "object": "model"}, {"id": "claude-opus-5-5", "type": "model"}, {"id": "gpt-6-astra", "object": "model"}], "has_more": False})
         else:
             self.send_json({"error": {"message": "not found"}}, 404)
 
@@ -81,6 +82,19 @@ class Handler(BaseHTTPRequestHandler):
             events += [("response.output_text.delta", {"type": "response.output_text.delta", "delta": p}) for p in pieces]
             events += [("response.completed", {"type": "response.completed", "response": {"model": model}})]
             self.events(events)
+        elif self.path.startswith("/v1/chat/completions"):
+            model = body.get("model", "mock-local-model")
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("connection", "close")
+            self.end_headers()
+            chunks = [{"model": model, "choices": [{"index": 0, "delta": {"content": p}}]} for p in pieces]
+            chunks.append({"model": model, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+            for chunk in chunks:
+                self.wfile.write(("data: %s\n\n" % json.dumps(chunk)).encode())
+                self.wfile.flush()
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.close_connection = True
         else:
             self.send_json({"error": {"message": "not found"}}, 404)
 

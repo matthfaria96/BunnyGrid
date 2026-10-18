@@ -1,0 +1,117 @@
+{
+  "name": "navigator-saved-connection",
+  "fixture": "saved-sqlite",
+  "args": [
+    "--window-size",
+    "1400x900"
+  ],
+  "steps": [
+    {
+      "op": "waitFor",
+      "label": "demo.sqlite",
+      "role": "AXStaticText",
+      "exists": true,
+      "note": "saved connection listed (launched from the Dock, no file argument)"
+    },
+    {
+      "op": "click",
+      "label": "My Connections",
+      "role": "AXStaticText",
+      "index": 0,
+      "note": "first click only activates the window (macOS first-mouse behaviour)"
+    },
+    {
+      "op": "click",
+      "label": "demo.sqlite",
+      "role": "AXStaticText",
+      "index": 0,
+      "note": "single-click selects the connection"
+    },
+    {
+      "op": "waitFor",
+      "probe": "navSelection",
+      "contains": "connection",
+      "timeout": 3
+    },
+    {
+      "op": "doubleClick",
+      "label": "demo.sqlite",
+      "role": "AXStaticText",
+      "index": 0,
+      "note": "double-click connects"
+    },
+    {
+      "op": "waitFor",
+      "probe": "openSessions",
+      "equals": 1,
+      "timeout": 10
+    },
+    {
+      "op": "waitFor",
+      "id": "nav.toggle.Tables",
+      "exists": true,
+      "timeout": 10
+    },
+    {
+      "op": "click",
+      "label": "Tables",
+      "role": "AXStaticText",
+      "index": 0,
+      "note": "single-click a folder shows its objects in the Objects tab"
+    },
+    {
+      "op": "waitFor",
+      "probe": "navSelection",
+      "contains": "category",
+      "timeout": 3
+    },
+    {
+      "op": "waitFor",
+      "label": "orders",
+      "role": "AXStaticText",
+      "exists": true,
+      "timeout": 5,
+      "note": "Objects tab lists the tables"
+    },
+    {
+      "op": "click",
+      "id": "nav.toggle.Tables",
+      "note": "expand Tables with the chevron"
+    },
+    {
+      "op": "click",
+      "label": "orders",
+      "role": "AXStaticText",
+      "index": 0,
+      "note": "single-click a table selects it"
+    },
+    {
+      "op": "waitFor",
+      "probe": "navSelection",
+      "contains": "orders",
+      "timeout": 3
+    },
+    {
+      "op": "doubleClick",
+      "label": "orders",
+      "role": "AXStaticText",
+      "index": 0,
+      "note": "double-click opens the table"
+    },
+    {
+      "op": "waitFor",
+      "probe": "tabKind",
+      "equals": "table",
+      "timeout": 5
+    },
+    {
+      "op": "assert",
+      "probe": "tabTitle",
+      "contains": "orders"
+    },
+    {
+      "op": "screenshot",
+      "name": "end"
+    }
+  ]
+}

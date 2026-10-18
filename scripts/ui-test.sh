@@ -108,7 +108,7 @@ for name, text in setup["files"].items():
   (
     cd "$run"
     BUNNYGRID_DATA_DIR="$run/data" BUNNYGRID_MEMORY_KEYCHAIN=1 BUNNYGRID_UI_RUN="$run" BUNNYGRID_LAUNCH_AGENTS_DIR="$run/agents" \
-    BUNNYGRID_ANTHROPIC_BASE_URL="http://127.0.0.1:58989" BUNNYGRID_OPENAI_BASE_URL="http://127.0.0.1:58989" \
+    BUNNYGRID_ANTHROPIC_BASE_URL="http://127.0.0.1:58989" BUNNYGRID_OPENAI_BASE_URL="http://127.0.0.1:58989" BUNNYGRID_OLLAMA_BASE_URL="http://127.0.0.1:58989/v1" \
     ANTHROPIC_API_KEY="mock-key" OPENAI_API_KEY="mock-key" BUNNYGRID_MEMORY_KEYCHAIN_SEED="$seed" \
     "$APP" "${final[@]}" -AppleLanguages '(en)' -AppleLocale en_US -ApplePersistenceIgnoreState YES -NSQuitAlwaysKeepsWindows NO \
       --ui-script "$file" --ui-results "$run/results.json" --ui-shots "$run/shots" > "$run/app.log" 2>&1 &

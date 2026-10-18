@@ -171,7 +171,7 @@ struct AskAIButton: View {
                 }
             }
         } label: {
-            if let icon = IconLibrary.image(app.assistant.provider.iconName, size: 15) {
+            if let icon = ProviderIcon.image(app.assistant.provider, size: 15, dark: NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua) {
                 Image(nsImage: icon)
             } else {
                 Image(systemName: "sparkles")
@@ -396,7 +396,7 @@ private struct AssistantMenu: View {
             }
         } label: {
             HStack(spacing: 5) {
-                AppIcon(name: app.assistant.provider.iconName, size: 14)
+                ProviderIcon(provider: app.assistant.provider, size: 14)
                 Text(app.assistant.active?.name ?? "").fontWeight(.semibold)
                 Text("(\(app.assistant.activeModelName))").foregroundStyle(.secondary)
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
@@ -440,7 +440,7 @@ struct AskAIResultCard: View {
                     Text(run.customAction != nil ? "New AI Action" : run.title).font(.system(size: 14, weight: .semibold))
                     Spacer()
                     HStack(spacing: 5) {
-                        AppIcon(name: run.provider.iconName, size: 14)
+                        ProviderIcon(provider: run.provider, size: 14)
                         Text(run.assistantConfig.name).fontWeight(.semibold)
                         Text("(\(run.model ?? app.assistant.modelName(for: run.assistantConfig)))").foregroundStyle(.secondary)
                     }

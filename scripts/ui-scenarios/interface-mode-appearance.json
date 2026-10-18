@@ -18,7 +18,7 @@
     {"op": "wait", "ms": 800, "note": "the sheet finishes closing"},
     {"op": "click", "id": "toolbar.account"},
     {"op": "waitFor", "id": "account.theme", "exists": true},
-    {"op": "click", "id": "account.theme", "menu": ["Light"], "note": "Theme › Appearance › Light"},
+    {"op": "click", "id": "account.theme", "menu": ["Light"], "note": "Theme › Light"},
     {"op": "waitFor", "probe": "appearance", "notContains": "Dark"},
     {"op": "click", "id": "account.theme", "menu": ["Dark"], "note": "and back to Dark"},
     {"op": "waitFor", "probe": "appearance", "contains": "Dark"},

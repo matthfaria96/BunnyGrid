@@ -111,8 +111,8 @@ final class AssistantModel {
     var compareEnabled = UserDefaults.standard.object(forKey: "aiCompareEnabled") as? Bool ?? true {
         didSet { UserDefaults.standard.set(compareEnabled, forKey: "aiCompareEnabled") }
     }
-    /// OpenAI models for the picker: the suggested ones until the account's list arrives.
-    private(set) var openAIModels: [AIModelOption] = OpenAIModels.suggested
+    /// Models each host listed (`GET models`), replacing the suggested ones once the key checks out.
+    private(set) var listedModels: [AIProvider: [AIModelOption]] = [:]
     /// Keys saved in the Keychain per assistant, read off the main thread at launch.
     private(set) var storedKeys: [UUID: String] = [:]
     private(set) var verification: [UUID: KeyVerification] = [:]
@@ -222,9 +222,15 @@ final class AssistantModel {
         }
     }
 
-    /// `BUNNYGRID_ANTHROPIC_BASE_URL` / `BUNNYGRID_OPENAI_BASE_URL` override the default host (proxy or local mock).
+    /// `BUNNYGRID_ANTHROPIC_BASE_URL` / `BUNNYGRID_OPENAI_BASE_URL` (or `BUNNYGRID_GEMINI_BASE_URL`, …) override the
+    /// default host (proxy or local mock).
     static func baseURL(for assistant: AIAssistantConfig) -> URL {
-        let name = assistant.provider == .claude ? "BUNNYGRID_ANTHROPIC_BASE_URL" : "BUNNYGRID_OPENAI_BASE_URL"
+        let prefix = switch assistant.provider {
+        case .claude: "ANTHROPIC"
+        case .chatGPT: "OPENAI"
+        default: assistant.provider.rawValue.uppercased()
+        }
+        let name = "BUNNYGRID_\(prefix)_BASE_URL"
         if assistant.apiHost == assistant.provider.defaultHost, let value = ProcessInfo.processInfo.environment[name],
            !value.isEmpty, let url = URL(string: value) {
             return url
@@ -266,7 +272,8 @@ final class AssistantModel {
         return ProcessInfo.processInfo.environment[assistant.provider.environmentKey] ?? ""
     }
 
-    func hasAPIKey(for assistant: AIAssistantConfig) -> Bool { !apiKey(for: assistant).isEmpty }
+    /// Local providers (Ollama, LM Studio) need no key.
+    func hasAPIKey(for assistant: AIAssistantConfig) -> Bool { !assistant.provider.requiresAPIKey || !apiKey(for: assistant).isEmpty }
 
     /// Whether the active assistant can answer.
     var hasAPIKey: Bool { active.map(hasAPIKey(for:)) ?? false }
@@ -292,7 +299,7 @@ final class AssistantModel {
     /// Checks the key against the assistant's host (listing its models) and refreshes the OpenAI model list.
     func verify(_ assistant: AIAssistantConfig) {
         let key = apiKey(for: assistant)
-        guard !key.isEmpty else {
+        guard hasAPIKey(for: assistant) else {
             verification[assistant.id] = .unknown
             return
         }
@@ -300,12 +307,19 @@ final class AssistantModel {
         let url = Self.baseURL(for: assistant)
         Task {
             do {
-                switch assistant.provider {
-                case .claude:
+                switch assistant.provider.api {
+                case .anthropic:
                     _ = try await AnthropicClient(apiKey: key, baseURL: url).listModels()
-                case .chatGPT:
+                case .openAIResponses:
                     let ids = try await OpenAIClient(apiKey: key, baseURL: url).listModels()
-                    openAIModels = OpenAIModels.options(from: ids)
+                    listedModels[.chatGPT] = OpenAIModels.options(from: ids)
+                case .chatCompletions:
+                    let ids = try await ChatCompletionsClient(provider: assistant.provider, apiKey: key, baseURL: url).listModels()
+                    listedModels[assistant.provider] = ids.map { AIModelOption(id: $0, name: $0) }
+                    // A new assistant starts without a model; take the first one the host serves.
+                    if let current = assistants.first(where: { $0.id == assistant.id }), let first = ids.first, !ids.contains(current.model) {
+                        setModel(first, for: current)
+                    }
                 }
                 verification[assistant.id] = .connected
             } catch {
@@ -319,9 +333,10 @@ final class AssistantModel {
         let key = key.isEmpty ? (ProcessInfo.processInfo.environment[assistant.provider.environmentKey] ?? "") : key
         let url = Self.baseURL(for: assistant)
         do {
-            switch assistant.provider {
-            case .claude: _ = try await AnthropicClient(apiKey: key, baseURL: url).listModels()
-            case .chatGPT: _ = try await OpenAIClient(apiKey: key, baseURL: url).listModels()
+            switch assistant.provider.api {
+            case .anthropic: _ = try await AnthropicClient(apiKey: key, baseURL: url).listModels()
+            case .openAIResponses: _ = try await OpenAIClient(apiKey: key, baseURL: url).listModels()
+            case .chatCompletions: _ = try await ChatCompletionsClient(provider: assistant.provider, apiKey: key, baseURL: url).listModels()
             }
             return .success(())
         } catch {
@@ -335,11 +350,12 @@ final class AssistantModel {
     }
 
     func models(for provider: AIProvider) -> [AIModelOption] {
-        provider == .claude ? provider.suggestedModels : openAIModels
+        listedModels[provider] ?? provider.suggestedModels
     }
 
     func modelName(for assistant: AIAssistantConfig) -> String {
-        models(for: assistant.provider).first { $0.id == assistant.model }?.name ?? assistant.model
+        if assistant.model.isEmpty { return "Choose a model" }
+        return models(for: assistant.provider).first { $0.id == assistant.model }?.name ?? assistant.model
     }
 
     /// The active assistant's model name, for labels.
@@ -360,11 +376,14 @@ final class AssistantModel {
     func stream(_ assistant: AIAssistantConfig, messages: [JSONValue], system: String = AIPrompts.systemPrompt) -> AsyncThrowingStream<AssistantStreamEvent, any Error> {
         let key = apiKey(for: assistant)
         let url = Self.baseURL(for: assistant)
-        return switch assistant.provider {
-        case .claude:
+        return switch assistant.provider.api {
+        case .anthropic:
             AnthropicClient(apiKey: key, baseURL: url).streamMessage(modelID: assistant.model, system: system, messages: messages, options: assistant.options)
-        case .chatGPT:
+        case .openAIResponses:
             OpenAIClient(apiKey: key, baseURL: url).streamResponse(model: assistant.model, instructions: system, messages: messages, options: assistant.options)
+        case .chatCompletions:
+            ChatCompletionsClient(provider: assistant.provider, apiKey: key, baseURL: url)
+                .streamChat(model: assistant.model, system: system, messages: messages, options: assistant.options)
         }
     }
 

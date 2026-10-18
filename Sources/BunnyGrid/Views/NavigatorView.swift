@@ -40,6 +40,14 @@ struct NavigatorView: View {
                         .listRowSeparator(.hidden)
                 }
             }
+            // Double-click and the context menu go through the List, not a gesture on each row: a row TapGesture swallows the
+            // first click, so single-click selection (Objects tab, Info pane, toolbar enablement) never happened.
+            .contextMenu(forSelectionType: NavNode.self) { nodes in
+                if let node = nodes.first { NavContextMenu(node: node) }
+            } primaryAction: { nodes in
+                guard let node = nodes.first else { return }
+                withAnimation(.easeInOut(duration: 0.18)) { app.activate(node) }
+            }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .environment(\.defaultMinListRowHeight, 22)
@@ -286,10 +294,6 @@ struct NavRowView: View {
         .font(.system(size: 13))
         .padding(.leading, CGFloat(row.depth) * 18)
         .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture(count: 2).onEnded {
-            withAnimation(.easeInOut(duration: 0.18)) { app.activate(row.node) }
-        })
-        .contextMenu { NavContextMenu(node: row.node) }
     }
 }
 

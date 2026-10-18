@@ -152,7 +152,7 @@ private struct AssistantHeader: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    AppIcon(name: assistant.provider.iconName, size: 16)
+                    ProviderIcon(provider: assistant.provider, size: 16)
                     Text(assistant.currentChat?.title ?? "New Chat")
                         .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
@@ -269,7 +269,7 @@ private struct ManageChatsView: View {
                                 .buttonStyle(.plain)
                                 .padding(.top, 8)
                             }
-                            AppIcon(name: (chat.messages.last { $0.role == .assistant }?.provider ?? app.assistant.provider).iconName, size: 30)
+                            ProviderIcon(provider: (chat.messages.last { $0.role == .assistant }?.provider ?? app.assistant.provider), size: 30)
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
                                     Text(chat.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
@@ -318,7 +318,7 @@ private struct APIKeyBanner: View {
         let provider = active.provider
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                AppIcon(name: provider.iconName, size: 22)
+                ProviderIcon(provider: provider, size: 22)
                 Text("Connect \(provider.displayName)").font(.system(size: 13, weight: .semibold))
             }
             Text("Paste your \(provider.company) API key to chat with \(provider.displayName) about your data. Switch platforms from your profile picture in the toolbar.")
@@ -430,7 +430,7 @@ private struct MessageView: View {
         let provider = message.provider ?? .claude
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                AppIcon(name: provider.iconName, size: 16)
+                ProviderIcon(provider: provider, size: 16)
                 Text(message.assistantName ?? provider.displayName).font(.system(size: 12.5, weight: .semibold))
                 if let date = message.createdAt {
                     TimelineView(.periodic(from: .now, by: 30)) { _ in
@@ -481,7 +481,7 @@ private struct CompareOffer: View {
                         if let last = app.assistant.currentChat?.messages.last { app.assistant.compare(last.id, with: candidate) }
                     } label: {
                         HStack(spacing: 5) {
-                            AppIcon(name: candidate.provider.iconName, size: 14)
+                            ProviderIcon(provider: candidate.provider, size: 14)
                             Text(candidate.name).font(.system(size: 12, weight: .semibold))
                             Text("(\(app.assistant.modelName(for: candidate)))").font(.system(size: 12)).foregroundStyle(.secondary)
                         }
@@ -509,7 +509,7 @@ private struct StreamingReply: View {
         VStack(alignment: .leading, spacing: 6) {
             if text.isEmpty {
                 HStack(spacing: 7) {
-                    if showsAvatar { AppIcon(name: provider.iconName, size: 16) }
+                    if showsAvatar { ProviderIcon(provider: provider, size: 16) }
                     Text("\(name ?? provider.displayName) is thinking").font(.system(size: 12)).foregroundStyle(.secondary)
                     ThinkingDots()
                 }
@@ -719,7 +719,7 @@ private struct PickerLabel: View {
     var body: some View {
         let assistant = app.assistant
         HStack(spacing: 5) {
-            AppIcon(name: assistant.provider.iconName, size: 14)
+            ProviderIcon(provider: assistant.provider, size: 14)
             Text(assistant.active?.name ?? "No assistant").fontWeight(.semibold).foregroundStyle(.primary)
             Text("(\(assistant.activeModelName))").foregroundStyle(.secondary).lineLimit(1)
             Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)

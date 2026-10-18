@@ -1,0 +1,28 @@
+{
+  "name": "ai-local-provider",
+  "requires": ["mock-ai"],
+  "args": ["{{DB}}", "--open-table", "customers", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "tabKind", "equals": "table"},
+    {"op": "click", "id": "toolbar.account", "note": "avatar"},
+    {"op": "waitFor", "id": "account.addAssistant", "exists": true},
+    {"op": "click", "id": "account.addAssistant", "menu": ["Ollama"], "note": "+ › Ollama (a local, keyless provider)"},
+    {"op": "waitFor", "probe": "assistant.assistants.count", "equals": 3},
+    {"op": "waitFor", "probe": "assistant.assistants.2.model", "equals": "mock-local-model", "timeout": 10, "note": "first model the server lists is picked"},
+    {"op": "wait", "ms": 300},
+    {"op": "screenshot", "name": "popover"},
+    {"op": "key", "key": "escape", "note": "close the popover"},
+    {"op": "click", "label": "AI", "role": "AXButton", "index": 0, "note": "right pane AI tab"},
+    {"op": "waitFor", "id": "ai.draft", "exists": true},
+    {"op": "type", "target": {"id": "ai.draft"}, "text": "Count the customers"},
+    {"op": "waitFor", "probe": "assistant.draft", "contains": "Count"},
+    {"op": "click", "id": "ai.send"},
+    {"op": "waitFor", "probe": "assistant.chats.0.messages.count", "equals": 2, "timeout": 15},
+    {"op": "waitFor", "probe": "assistant.isStreaming", "equals": "false", "timeout": 15},
+    {"op": "assert", "probe": "assistant.chats.0.messages.1.text", "contains": "Mock reply to: Count the customers"},
+    {"op": "assert", "probe": "file:$RUN/requests.jsonl", "contains": "/v1/chat/completions", "note": "Chat Completions was called"},
+    {"op": "assert", "probe": "file:$RUN/requests.jsonl", "contains": "mock-local-model"},
+    {"op": "assert", "probe": "assistant.error", "equals": "nil"},
+    {"op": "screenshot", "name": "reply"}
+  ]
+}

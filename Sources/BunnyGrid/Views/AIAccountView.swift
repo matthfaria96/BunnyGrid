@@ -3,11 +3,36 @@ import BunnyGridCore
 import SwiftUI
 
 extension AIProvider {
-    var iconName: String {
+    /// The company's mark in its brand colour (Simple Icons, CC0; see Resources/Icons/brands/SOURCES.md).
+    /// OpenAI and xAI asked Simple Icons to drop their logos, so they get a text tile like Oracle does.
+    var brand: Brand {
         switch self {
-        case .claude: "ai-claude"
-        case .chatGPT: "ai-chatgpt"
+        case .claude: .logo(slug: "claude", hex: 0xD97757)
+        case .chatGPT: .monogram(short: "AI", long: "OpenAI", hex: 0x000000)
+        case .gemini: .logo(slug: "googlegemini", hex: 0x8E75B2)
+        case .grok: .monogram(short: "xAI", long: "Grok", hex: 0x000000)
+        case .deepSeek: .logo(slug: "deepseek", hex: 0x5786FE)
+        case .mistral: .logo(slug: "mistralai", hex: 0xFA520F)
+        case .ollama: .logo(slug: "ollama", hex: 0x000000)
+        case .lmStudio: .logo(slug: "lmstudio", hex: 0x000000)
         }
+    }
+}
+
+/// An AI provider's brand mark: a plate from 22 pt up, the bare glyph below that.
+struct ProviderIcon: View {
+    let provider: AIProvider
+    var size: CGFloat = 16
+
+    var body: some View {
+        BrandTile(brand: provider.brand, size: size)
+    }
+
+    /// A fixed-size image for menu items, which ignore SwiftUI frames.
+    @MainActor static func image(_ provider: AIProvider, size: CGFloat, dark: Bool) -> NSImage? {
+        let renderer = ImageRenderer(content: BrandTile(brand: provider.brand, size: size).environment(\.colorScheme, dark ? .dark : .light))
+        renderer.scale = 2
+        return renderer.nsImage
     }
 }
 
@@ -45,7 +70,7 @@ struct ProfileAvatarWithPlatform: View {
     var body: some View {
         ProfileAvatar(size: size)
             .overlay(alignment: .bottomTrailing) {
-                AppIcon(name: app.assistant.provider.iconName, size: size * 0.5)
+                ProviderIcon(provider: app.assistant.provider, size: size * 0.5)
                     .background(Circle().fill(Color(nsColor: .windowBackgroundColor)).padding(-size * 0.05))
                     .offset(x: size * 0.12, y: size * 0.1)
                     .id(app.assistant.provider)
@@ -90,9 +115,12 @@ struct AIAccountPopover: View {
             header
                 .padding(16)
             Divider()
-            ThemeRow()
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+            VStack(spacing: 6) {
+                ThemeRow()
+                InterfaceRow()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
             Divider()
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -104,7 +132,7 @@ struct AIAccountPopover: View {
                                 let added = assistant.addAssistant(provider)
                                 assistant.activate(added.id)
                             } label: {
-                                if let icon = IconLibrary.image(provider.iconName, size: 16) {
+                                if let icon = ProviderIcon.image(provider, size: 16, dark: NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua) {
                                     Label { Text(provider.menuTitle) } icon: { Image(nsImage: icon) }
                                 } else {
                                     Text(provider.menuTitle)
@@ -119,12 +147,13 @@ struct AIAccountPopover: View {
                     .menuIndicator(.hidden)
                     .fixedSize()
                     .help("Add Assistant")
+                    .accessibilityIdentifier("account.addAssistant")
                 }
                 if !assistant.aiEnabled {
                     Toggle("Enable AI Assistant", isOn: Binding(get: { assistant.aiEnabled }, set: { assistant.aiEnabled = $0 }))
                         .font(.system(size: 12))
                 } else if assistant.assistants.isEmpty {
-                    Text("Click \"+\" to add a Claude or ChatGPT assistant.").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("Click \"+\" to add an assistant: Claude, ChatGPT, Gemini, Grok, DeepSeek, Mistral, or a local model with Ollama or LM Studio.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 ForEach(assistant.aiEnabled ? assistant.assistants : []) { config in
                     AssistantRow(assistant: config)
@@ -191,7 +220,7 @@ struct AIAccountPopover: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.profile.name).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                 HStack(spacing: 4) {
-                    AppIcon(name: app.assistant.provider.iconName, size: 12)
+                    ProviderIcon(provider: app.assistant.provider, size: 12)
                     Text(app.assistant.active.map { "\($0.name) · \(app.assistant.modelName(for: $0))" } ?? "No assistant")
                         .lineLimit(1)
                 }
@@ -203,40 +232,65 @@ struct AIAccountPopover: View {
     }
 }
 
-/// "Theme": the appearance (System / Light / Dark) and the interface (Simple / Advanced), each with a checkmark.
-/// Both apply at once; Settings › General and View › Interface Mode show the same choices.
+/// "Theme" (System / Light / Dark) and "Interface" (Simple / Advanced): two rows, each with its own menu.
+/// Settings › General and View › Interface Mode show the same choices.
 private struct ThemeRow: View {
     @AppStorage("appearance") private var appearance = AppearancePreference.system.rawValue
 
     var body: some View {
-        let options = AppOptions.shared
         let current = AppearancePreference(rawValue: appearance) ?? .system
+        AccountMenuRow(icon: "paintpalette", title: "Theme", id: "account.theme", help: "Appearance") {
+            Picker("Theme", selection: Binding(get: { current }, set: { choice in
+                appearance = choice.rawValue
+                choice.apply()
+            })) {
+                ForEach(AppearancePreference.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(current.title)
+        }
+    }
+}
+
+private struct InterfaceRow: View {
+    var body: some View {
+        let options = AppOptions.shared
+        AccountMenuRow(icon: "rectangle.3.group", title: "Interface", id: "account.interface", help: "Simple or Advanced interface") {
+            Picker("Interface", selection: Binding(get: { options.interfaceMode }, set: { options.setInterfaceMode($0) })) {
+                ForEach(InterfaceMode.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(options.interfaceMode.title)
+        }
+    }
+}
+
+/// Icon, title and a trailing pop-up menu showing the current choice.
+private struct AccountMenuRow<Content: View, Label: View>: View {
+    let icon: String
+    let title: String
+    let id: String
+    let help: String
+    @ViewBuilder var content: Content
+    @ViewBuilder var label: Label
+
+    var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "paintpalette")
+            Image(systemName: icon)
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .frame(width: 18)
-            Text("Theme").font(.system(size: 12))
+            Text(title).font(.system(size: 12))
             Spacer()
-            Menu {
-                Picker("Appearance", selection: Binding(get: { current }, set: { choice in
-                    appearance = choice.rawValue
-                    choice.apply()
-                })) {
-                    ForEach(AppearancePreference.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.inline)
-                Picker("Interface", selection: Binding(get: { options.interfaceMode }, set: { options.setInterfaceMode($0) })) {
-                    ForEach(InterfaceMode.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.inline)
-            } label: {
-                Text("\(current.title) · \(options.interfaceMode.title)").font(.system(size: 12))
-            }
-            .menuStyle(.button)
-            .fixedSize()
-            .accessibilityIdentifier("account.theme")
-            .help("Appearance and interface mode")
+            Menu { content } label: { label.font(.system(size: 12)) }
+                .menuStyle(.button)
+                .fixedSize()
+                .accessibilityIdentifier(id)
+                .help(help)
         }
     }
 }
@@ -253,7 +307,7 @@ private struct AssistantRow: View {
             app.assistant.activate(assistant.id)
         } label: {
             HStack(spacing: 10) {
-                AppIcon(name: assistant.provider.iconName, size: 30)
+                ProviderIcon(provider: assistant.provider, size: 30)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(assistant.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     KeyStatusLabel(assistant: assistant)
@@ -297,6 +351,21 @@ struct KeyStatusLabel: View {
             if !model.hasAPIKey(for: assistant) {
                 Circle().fill(Color.secondary.opacity(0.5)).frame(width: 6, height: 6)
                 Text("\(company) · Not connected")
+            } else if assistant.provider.isLocal {
+                switch model.verification[assistant.id] ?? .unknown {
+                case .checking:
+                    ProgressView().controlSize(.mini)
+                    Text("On this Mac · Checking…")
+                case .connected:
+                    Circle().fill(Color.green).frame(width: 6, height: 6)
+                    Text("On this Mac · Running")
+                case .failed(let message):
+                    Circle().fill(Color.red).frame(width: 6, height: 6)
+                    Text("On this Mac · Not running").help(message)
+                case .unknown:
+                    Circle().fill(Color.secondary.opacity(0.5)).frame(width: 6, height: 6)
+                    Text("On this Mac")
+                }
             } else {
                 switch model.verification[assistant.id] ?? .unknown {
                 case .checking:
@@ -328,6 +397,9 @@ struct ModelMenu: View {
     var body: some View {
         let model = app.assistant
         Menu {
+            if model.models(for: assistant.provider).isEmpty {
+                Text(assistant.provider.isLocal ? "No models loaded in \(assistant.provider.displayName)" : "Connect to list models")
+            }
             ForEach(model.models(for: assistant.provider)) { option in
                 Button {
                     model.setModel(option.id, for: assistant)
@@ -353,6 +425,29 @@ struct APIKeyEditor: View {
     var body: some View {
         let model = app.assistant
         let provider = assistant.provider
+        if provider.isLocal {
+            localServer(model: model, provider: provider)
+        } else {
+            keyField(model: model, provider: provider)
+        }
+    }
+
+    /// Ollama and LM Studio take no key: say where the server is expected and offer to check again.
+    private func localServer(model: AssistantModel, provider: AIProvider) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("Runs on this Mac at \(assistant.apiHost)").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer()
+                Button("Check Again") { model.verify(assistant) }
+            }
+            if case .failed(let message) = model.verification[assistant.id] ?? .unknown {
+                Text(message).font(.system(size: 11)).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
+            }
+            Link("Download \(provider.displayName)", destination: provider.keysURL).font(.system(size: 11))
+        }
+    }
+
+    private func keyField(model: AssistantModel, provider: AIProvider) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 SecureField("\(provider.company) API key", text: $key, prompt: Text(provider.keyPlaceholder))
