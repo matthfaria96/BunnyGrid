@@ -1,0 +1,9 @@
+{
+  "name": "value-editor-at-launch",
+  "args": ["{{DB}}", "--open-table", "customers", "--value-editor", "name", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "tabKind", "equals": "table", "note": "a value-editor request made before the window existed used to throw in NSPopover"},
+    {"op": "waitFor", "probe": "popover", "equals": "true", "timeout": 5, "note": "it waits for the grid to be on screen, then opens"},
+    {"op": "screenshot", "name": "editor"}
+  ]
+}

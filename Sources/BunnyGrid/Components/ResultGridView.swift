@@ -181,7 +181,9 @@ struct ResultGridView: NSViewRepresentable {
                 tableView.scrollRowToVisible(request.row)
                 tableView.selectRowIndexes(IndexSet(integer: request.row), byExtendingSelection: false)
             }
-            if let request = view.editorRequest, request != lastEditorRequest {
+            // Off screen (a hidden tab, or a request made at launch before the window exists) the request waits:
+            // NSPopover throws when its anchor view has no window.
+            if let request = view.editorRequest, request != lastEditorRequest, tableView.window != nil {
                 lastEditorRequest = request
                 // Wait for the reload and scroll above to lay out the cell the popover points at.
                 DispatchQueue.main.async { [weak self] in self?.showEditor(for: request.cell) }
@@ -194,7 +196,7 @@ struct ResultGridView: NSViewRepresentable {
 
         /// Opens the value editor in a popover pointing at the cell.
         func showEditor(for cell: GridCell) {
-            guard let tableView, let editorContent, cell.row < rows.count,
+            guard let tableView, tableView.window != nil, let editorContent, cell.row < rows.count,
                   let position = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == String(cell.column) }) else { return }
             if tableView.currentEditor() != nil { tableView.window?.makeFirstResponder(tableView) }
             popover?.close()
