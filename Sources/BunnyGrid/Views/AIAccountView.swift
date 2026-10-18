@@ -25,12 +25,12 @@ struct ProviderIcon: View {
     var size: CGFloat = 16
 
     var body: some View {
-        BrandTile(brand: provider.brand, size: size)
+        BrandTile(brand: provider.brand, size: size, uniformPlates: true)
     }
 
     /// A fixed-size image for menu items, which ignore SwiftUI frames.
     @MainActor static func image(_ provider: AIProvider, size: CGFloat, dark: Bool) -> NSImage? {
-        let renderer = ImageRenderer(content: BrandTile(brand: provider.brand, size: size).environment(\.colorScheme, dark ? .dark : .light))
+        let renderer = ImageRenderer(content: BrandTile(brand: provider.brand, size: size, uniformPlates: true).environment(\.colorScheme, dark ? .dark : .light))
         renderer.scale = 2
         return renderer.nsImage
     }
@@ -467,7 +467,7 @@ struct APIKeyEditor: View {
                 Text(message).font(.system(size: 11)).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
             }
             HStack(spacing: 4) {
-                Link("Get an \(provider.company) API key", destination: provider.keysURL)
+                Link("Get your \(provider.company) API key", destination: provider.keysURL)
                 Text("· stored in your Keychain").foregroundStyle(.secondary)
             }
             .font(.system(size: 11))

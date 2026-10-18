@@ -767,7 +767,7 @@ private struct AssistantForm: View {
                     if assistant.provider.isLocal {
                         Link("Download \(assistant.provider.displayName)", destination: assistant.provider.keysURL).font(.system(size: 11))
                     } else {
-                        Link("Get an \(assistant.provider.company) API key", destination: assistant.provider.keysURL).font(.system(size: 11))
+                        Link("Get your \(assistant.provider.company) API key", destination: assistant.provider.keysURL).font(.system(size: 11))
                     }
                 }
             }
@@ -789,17 +789,18 @@ private struct AssistantForm: View {
                 TextField("", value: $assistant.maxTokens, format: .number, prompt: Text(assistant.provider == .claude ? "64000" : "Model limit"))
                     .frame(width: 120)
             }
-            row("Effort") {
-                Picker("", selection: $assistant.effort) {
-                    ForEach(AIEffort.allCases) { Text($0.title).tag($0) }
+            // Only Claude and ChatGPT take an effort setting; Chat Completions hosts use the model's default.
+            if assistant.provider.api != .chatCompletions {
+                row("Effort") {
+                    Picker("", selection: $assistant.effort) {
+                        ForEach(AIEffort.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 220)
+                    // As a tooltip: a caption row here pushed the form past the list and over "AI Assistant UI".
+                    .help("Effort replaces Temperature: current Claude and GPT models no longer take a sampling temperature.")
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 220)
-                // As a tooltip: a caption row here pushed the form past the list and over "AI Assistant UI".
-                .help(assistant.provider.api == .chatCompletions
-                      ? "Effort applies to Claude and ChatGPT; other providers use the model's own default."
-                      : "Effort replaces Temperature: current Claude and GPT models no longer take a sampling temperature.")
             }
             row("Instructions") {
                 TextEditor(text: $assistant.instruction)

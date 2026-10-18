@@ -92,12 +92,21 @@ extension ConnectionType {
 struct BrandTile: View {
     let brand: Brand
     var size: CGFloat = 50
+    /// Marks shown side by side (AI providers) keep one plate colour per appearance: in dark mode a dark brand
+    /// colour turns white instead of switching that tile to a light plate.
+    var uniformPlates = false
     /// Small marks (filter rows, list rows) drop the plate so the logo fills the space.
     var plated: Bool { size >= 22 }
     @Environment(\.colorScheme) private var colorScheme
 
     /// Dark plate only when the brand colour keeps enough contrast on it (WCAG luminance ≥ 0.2).
-    private var lightPlate: Bool { colorScheme == .light || brand.luminance < 0.2 }
+    private var lightPlate: Bool { colorScheme == .light || (!uniformPlates && brand.luminance < 0.2) }
+
+    private var glyphColor: Color {
+        guard colorScheme == .dark else { return brand.color }
+        if !plated { return brand.luminance < 0.08 ? .white : brand.color }
+        return uniformPlates && brand.luminance < 0.2 ? .white : brand.color
+    }
 
     var body: some View {
         ZStack {
@@ -108,8 +117,7 @@ struct BrandTile: View {
                     .strokeBorder(lightPlate ? Color.black.opacity(0.10) : Color.white.opacity(0.12), lineWidth: max(0.5, size * 0.02))
             }
             // Without a plate, a very dark brand colour turns white on dark backgrounds (Simple Icons guidance).
-            BrandGlyph(brand: brand, size: size * (plated ? 0.66 : 1),
-                       color: !plated && colorScheme == .dark && brand.luminance < 0.08 ? .white : brand.color)
+            BrandGlyph(brand: brand, size: size * (plated ? 0.66 : 1), color: glyphColor)
         }
         .frame(width: size, height: size)
     }
