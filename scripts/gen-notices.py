@@ -62,9 +62,10 @@ BUNNYGRID = {
     "name": "BunnyGrid",
     "license": "GNU Affero General Public License v3.0",
     "usage": "",
-    "url": "",
+    "url": "https://github.com/matthfaria96/BunnyGrid",
     "text": (
-        "Copyright (C) 2026 Matheus Faria\n\n"
+        "Copyright (C) 2026 Matheus Faria\n"
+        "Source code: https://github.com/matthfaria96/BunnyGrid\n\n"
         "BunnyGrid is free software: you can redistribute it and/or modify it under the terms of the GNU Affero "
         "General Public License as published by the Free Software Foundation, either version 3 of the License, or "
         "(at your option) any later version. It is distributed WITHOUT ANY WARRANTY; without even the implied "
