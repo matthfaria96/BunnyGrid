@@ -306,6 +306,7 @@ struct NewConnectionSheet: View {
     @State private var selection: ConnectionType?
     @State private var expandedGroups: Set<String> = []
     @State private var details: (draft: ConnectionDraft, type: ConnectionType?)?
+    @State private var showingPractice = false
     @State private var showingURI = false
     @State private var uriText = ""
     @State private var uriError: String?
@@ -334,11 +335,25 @@ struct NewConnectionSheet: View {
                 ConnectionEditorView(draft: details.draft, type: details.type) {
                     withAnimation(.easeInOut(duration: 0.2)) { self.details = nil }
                 }
+            } else if showingPractice {
+                PracticeDatabaseView {
+                    withAnimation(.easeInOut(duration: 0.2)) { showingPractice = false }
+                } done: {
+                    dismiss()
+                }
+                .frame(width: 900, height: 700)
             } else {
                 picker
             }
         }
         .animation(.easeInOut(duration: 0.2), value: details == nil)
+        .animation(.easeInOut(duration: 0.2), value: showingPractice)
+        .onAppear {
+            if app.connectionPickerStartsWithPractice {
+                showingPractice = true
+                app.connectionPickerStartsWithPractice = false
+            }
+        }
         #if DEBUG
         .onAppear {
             let args = CommandLine.arguments
@@ -377,6 +392,14 @@ struct NewConnectionSheet: View {
                 }
                 .padding(.horizontal, 30)
                 .padding(.bottom, 8)
+
+                if !isFiltering {
+                    PracticeDatabaseBanner {
+                        withAnimation(.easeInOut(duration: 0.2)) { showingPractice = true }
+                    }
+                    .padding(.horizontal, 30)
+                    .padding(.bottom, 10)
+                }
 
                 if listMode { list } else { grid }
 

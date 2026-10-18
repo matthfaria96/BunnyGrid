@@ -1,0 +1,26 @@
+{
+  "name": "practice-database",
+  "args": ["--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "id": "nav.practice", "exists": true, "note": "empty navigator offers a practice database"},
+    {"op": "click", "id": "nav.practice"},
+    {"op": "waitFor", "id": "practice.create", "exists": true, "timeout": 5, "note": "New Connection opens on the practice page"},
+    {"op": "click", "id": "practice.template.finance", "note": "pick Personal Finance"},
+    {"op": "wait", "ms": 300},
+    {"op": "screenshot", "name": "templates"},
+    {"op": "click", "id": "practice.create"},
+    {"op": "waitFor", "probe": "connections", "equals": "bunnygrid", "timeout": 5},
+    {"op": "waitFor", "probe": "tabKind", "equals": "table", "timeout": 10, "note": "connected and the first table opened"},
+    {"op": "assert", "probe": "tabTitle", "contains": "accounts"},
+    {"op": "waitFor", "label": "Budget vs actual (October)", "role": "AXStaticText", "exists": true, "timeout": 5, "note": "example queries in the Queries folder"},
+    {"op": "doubleClick", "label": "Budget vs actual (October)", "role": "AXStaticText", "index": 0},
+    {"op": "waitFor", "probe": "tabKind", "equals": "query", "timeout": 5},
+    {"op": "click", "label": "Run", "role": "AXButton", "index": 0, "note": "run it"},
+    {"op": "waitFor", "probe": "tab.resultCount", "notEquals": "0", "timeout": 10},
+    {"op": "assert", "probe": "alert", "equals": "nil"},
+    {"op": "screenshot", "name": "query"},
+    {"op": "key", "key": "n", "modifiers": ["cmd"], "note": "New Connection again: the banner is at the top"},
+    {"op": "waitFor", "id": "practice.banner", "exists": true, "timeout": 5},
+    {"op": "screenshot", "name": "banner"}
+  ]
+}

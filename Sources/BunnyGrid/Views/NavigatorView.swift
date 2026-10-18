@@ -31,45 +31,46 @@ struct NavigatorView: View {
     var body: some View {
         let _ = ColorSwatchMenuItem.install(current: { [app] in app.connection(id: $0)?.color }) { [app] in app.setColor($0, for: $1) }
         VStack(spacing: 0) {
-            List(selection: Binding(get: { app.navSelection }, set: { app.select($0) })) {
-                ForEach(rows) { row in
-                    NavRowView(row: row)
-                        .tag(row.node)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
-                        .selectionDisabled(row.isDisabled)
-                        .listRowSeparator(.hidden)
+            if app.connections.isEmpty {
+                emptyState
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(selection: Binding(get: { app.navSelection }, set: { app.select($0) })) {
+                    ForEach(rows) { row in
+                        NavRowView(row: row)
+                            .tag(row.node)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
+                            .selectionDisabled(row.isDisabled)
+                            .listRowSeparator(.hidden)
+                    }
                 }
-            }
-            // Double-click and the context menu go through the List, not a gesture on each row: a row TapGesture swallows the
-            // first click, so single-click selection (Objects tab, Info pane, toolbar enablement) never happened.
-            .contextMenu(forSelectionType: NavNode.self) { nodes in
-                if let node = nodes.first { NavContextMenu(node: node) }
-            } primaryAction: { nodes in
-                guard let node = nodes.first else { return }
-                withAnimation(.easeInOut(duration: 0.18)) { app.activate(node) }
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .environment(\.defaultMinListRowHeight, 22)
-            .overlay {
-                if app.connections.isEmpty {
-                    Text("No Items").font(.system(size: 13)).foregroundStyle(.secondary)
+                // Double-click and the context menu go through the List, not a gesture on each row: a row TapGesture swallows the
+                // first click, so single-click selection (Objects tab, Info pane, toolbar enablement) never happened.
+                .contextMenu(forSelectionType: NavNode.self) { nodes in
+                    if let node = nodes.first { NavContextMenu(node: node) }
+                } primaryAction: { nodes in
+                    guard let node = nodes.first else { return }
+                    withAnimation(.easeInOut(duration: 0.18)) { app.activate(node) }
                 }
-            }
-            .onKeyPress(.return) {
-                guard let node = app.navSelection else { return .ignored }
-                withAnimation(.easeInOut(duration: 0.18)) { app.activate(node) }
-                return .handled
-            }
-            .onKeyPress(.rightArrow) {
-                guard let node = app.navSelection, isExpandable(node), !app.expanded.contains(node) else { return .ignored }
-                withAnimation(.easeInOut(duration: 0.18)) { app.setExpanded(node, true) }
-                return .handled
-            }
-            .onKeyPress(.leftArrow) {
-                guard let node = app.navSelection, app.expanded.contains(node) else { return .ignored }
-                withAnimation(.easeInOut(duration: 0.18)) { app.setExpanded(node, false) }
-                return .handled
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, 22)
+                .onKeyPress(.return) {
+                    guard let node = app.navSelection else { return .ignored }
+                    withAnimation(.easeInOut(duration: 0.18)) { app.activate(node) }
+                    return .handled
+                }
+                .onKeyPress(.rightArrow) {
+                    guard let node = app.navSelection, isExpandable(node), !app.expanded.contains(node) else { return .ignored }
+                    withAnimation(.easeInOut(duration: 0.18)) { app.setExpanded(node, true) }
+                    return .handled
+                }
+                .onKeyPress(.leftArrow) {
+                    guard let node = app.navSelection, app.expanded.contains(node) else { return .ignored }
+                    withAnimation(.easeInOut(duration: 0.18)) { app.setExpanded(node, false) }
+                    return .handled
+                }
+
             }
 
             if let browser = app.redisSelection?.session.redis { RedisFilterBar(browser: browser) }
@@ -110,6 +111,21 @@ struct NavigatorView: View {
                 app.redisPendingDelete = nil
             }
         }
+    }
+
+    /// Shown instead of the list when there are no connections (an overlay on the List was invisible to VoiceOver).
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Text("No Connections").font(.system(size: 13)).foregroundStyle(.secondary)
+            Button("Create a Practice Database…") {
+                app.connectionPickerStartsWithPractice = true
+                app.showingConnectionPicker = true
+            }
+            .controlSize(.small)
+            .accessibilityIdentifier("nav.practice")
+            Text("Nothing to install").font(.system(size: 11)).foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12)
     }
 
     @State private var newGroupName = ""

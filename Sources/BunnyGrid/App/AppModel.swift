@@ -28,6 +28,8 @@ final class AppModel {
     private(set) var sessions: [UUID: Session] = [:]
     var draft: ConnectionDraft?
     var showingConnectionPicker = false
+    /// New Connection opens straight on "Create a Practice Database" (from the empty navigator).
+    var connectionPickerStartsWithPractice = false
     /// The profile popover where the AI platform is chosen.
     var showingAccountMenu = false
     /// The first-launch welcome sheet (OnboardingView): Simple or Advanced, and the appearance.
@@ -840,6 +842,45 @@ final class AppModel {
         let config = ConnectionConfig(name: url.lastPathComponent, kind: .sqlite, filePath: path)
         save(config, password: nil)
         connect(config.id)
+    }
+
+    // MARK: - Practice databases
+
+    /// Where practice databases are created (inside the app's data folder).
+    static var practiceDirectory: URL { dataDirectory.appending(path: "Practice Databases", directoryHint: .isDirectory) }
+
+    /// Creates a practice SQLite database from a template, saves it as a connection with the template's example
+    /// queries in its Queries folder, connects and opens the first table. Returns false and sets `alertMessage` on failure.
+    @discardableResult
+    func createPracticeDatabase(_ template: PracticeTemplate, name: String) -> Bool {
+        let url = PracticeDatabase.availableURL(named: name, in: Self.practiceDirectory)
+        do {
+            try PracticeDatabase.create(template, at: url)
+        } catch {
+            alertMessage = error.localizedDescription
+            return false
+        }
+        let displayName = url.deletingPathExtension().lastPathComponent
+        var config = ConnectionConfig(name: displayName, kind: .sqlite, filePath: url.path)
+        config.remarks = "Practice database (\(template.name) template). No user or password: it is a file on this Mac."
+        save(config, password: nil)
+        for example in template.examples {
+            savedQueries.append(SavedQuery(connectionID: config.id, database: "main", name: example.name, sql: example.sql))
+        }
+        persistSavedQueries()
+        connect(config.id)
+        let id = config.id
+        Task {
+            for _ in 0..<200 where sessions[id]?.context("main")?.isOpen != true { try? await Task.sleep(for: .milliseconds(50)) }
+            guard let context = sessions[id]?.context("main"), context.isOpen else { return }
+            expanded.insert(.category(id, "main", nil, .tables))
+            if template.examples.isEmpty == false { expanded.insert(.category(id, "main", nil, .queries)) }
+            for _ in 0..<100 where context.objects(in: nil) == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            if let first = template.tables.first, let object = context.objects(in: nil)?.first(where: { $0.name == first }) {
+                openTable(object, in: context)
+            }
+        }
+        return true
     }
 
     // MARK: - Launch arguments
