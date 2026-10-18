@@ -16,7 +16,8 @@ public enum ChatCompletionsError: LocalizedError, Sendable {
                 ? "\(provider.displayName) has no model loaded. Load one in \(provider.displayName), then pick it under Model."
                 : "Pick a \(provider.displayName) model first (profile picture › Model)."
         case .http(let provider, let status, let message):
-            switch status {
+            // Gemini and xAI answer a bad key with 400, not 401.
+            switch status == 400 && message.localizedCaseInsensitiveContains("api key") ? 401 : status {
             case 401, 403: "\(provider.company) rejected the API key (\(status)). Check it in Settings. \(message)"
             case 404: "Model not available on \(provider.displayName) (404). \(message)"
             case 429: "\(provider.company) rate limit or quota reached (429). \(message)"
@@ -126,14 +127,15 @@ public struct ChatCompletionsClient: Sendable {
             .filter { !$0.contains("embed") }
     }
 
-    /// Error bodies are `{"error": {"message"}}`, `{"error": "…"}`, `{"message"}` or (Gemini) an array of those.
+    /// Error bodies are `{"error": {"message"}}`, `{"error": "…"}` (xAI), `{"message"}`, `{"detail"}` (Mistral) or
+    /// (Gemini) an array of those.
     static func errorMessage(from data: Data) -> String {
         guard var json = try? JSONDecoder().decode(JSONValue.self, from: data) else {
             return String(data: data, encoding: .utf8) ?? ""
         }
         if let first = json.arrayValue?.first { json = first }
         return json["error"]?["message"]?.stringValue ?? json["error"]?.stringValue ?? json["message"]?.stringValue
-            ?? String(data: data, encoding: .utf8) ?? ""
+            ?? json["detail"]?.stringValue ?? String(data: data, encoding: .utf8) ?? ""
     }
 
     /// Connection failures (local server not started, no network) become a readable error.

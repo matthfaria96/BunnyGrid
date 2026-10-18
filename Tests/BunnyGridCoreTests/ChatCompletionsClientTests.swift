@@ -75,6 +75,22 @@ import Testing
         #expect(ChatCompletionsClient.errorMessage(from: Data("plain".utf8)) == "plain")
     }
 
+    /// Bodies the real hosts returned for a made-up key (2026-10-18).
+    @Test func realBadKeyResponsesReadAsRejectedKeys() {
+        let cases: [(AIProvider, Int, String, String)] = [
+            (.gemini, 400, #"[{"error":{"code":400,"message":"Please pass a valid API key","status":"INVALID_ARGUMENT"}}]"#, "Please pass a valid API key"),
+            (.grok, 400, #"{"code":"invalid-argument","error":"Incorrect API key provided. You can obtain an API key from https://console.x.ai."}"#, "Incorrect API key provided"),
+            (.deepSeek, 401, #"{"error":{"message":"Authentication Fails, Your api key: ****-123 is invalid","type":"authentication_error"}}"#, "Authentication Fails"),
+            (.mistral, 401, #"{"detail":"Invalid API Key"}"#, "Invalid API Key"),
+        ]
+        for (provider, status, body, expected) in cases {
+            let message = ChatCompletionsClient.errorMessage(from: Data(body.utf8))
+            #expect(message.hasPrefix(expected))
+            let description = ChatCompletionsError.http(provider, status: status, message: message).errorDescription ?? ""
+            #expect(description.contains("rejected the API key"), "\(provider): \(description)")
+        }
+    }
+
     @Test func providersPickTheRightAPI() {
         #expect(AIProvider.claude.api == .anthropic)
         #expect(AIProvider.chatGPT.api == .openAIResponses)
