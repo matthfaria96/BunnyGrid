@@ -32,7 +32,7 @@ marks may still be subject to trademark law (see its DISCLAIMER.md). Files are u
 | brand-lmstudio.svg | lmstudio | #000000 | https://files.lmstudio.ai/lmstudio_icon2.svg |
 
 OpenAI (ChatGPT) and xAI (Grok) are not in Simple Icons (removed at the owners' request), so the app shows
-a text tile for them (`AIProvider.brand`).
+a text tile for them (`AIProvider.brand`); see the table below.
 
 ## From the owners' own published files
 
@@ -65,3 +65,5 @@ No artwork was copied. Checked 2026-10-17.
 | Oracle / Oracle Cloud | ORACLE | #C74634 ("Oracle Red, PMS 180 C, CMYK 3/91/86/12", Oracle Redwood Brand Style Guide, Oct 2024, p. 14) | Third Party Usage Guidelines for Oracle Logos (https://www.oracle.com/legal/logos/): "you are generally not able to use Oracle logos unless you are specifically licensed or authorized to use them". The OCI architecture icon toolkit is offered only "to draw custom architecture diagrams" |
 | Tencent Cloud | Tencent Cloud | #0052D9 (fill of the logo in tencentcloud.com's top navigation) | Tencent website terms (https://www.tencent.com/en-us/service-agreement.html): trademarks, logos and "other distinctive brand features ... you can only use them with our prior written permission". The brandbook is not public |
 | HighGo | HighGo | #EC6C00 (accent fill of the logo on highgo.com) | No logo download, press kit or terms published; the only copy is the website's own artwork |
+| OpenAI (ChatGPT) | OpenAI / AI | #000000 (OpenAI's black wordmark) | OpenAI Brand Guidelines (https://openai.com/brand/) route logo permission requests to partnercomms@openai.com, i.e. logo use needs prior permission. Simple Icons dropped the mark. Checked 2026-10-18 (the page blocks automated reading; terms seen through search excerpts) |
+| xAI (Grok) | Grok / xAI | #000000 (xAI's black mark) | xAI Brand Guidelines (https://x.ai/legal/brand-guidelines) reserve the "xAI"/"Grok" marks and logos and allow them "to accurately refer" to xAI; the logo-specific terms could not be read (page blocks automated reading). Simple Icons dropped the mark. Reports say xAI rebranded as SpaceXAI in July 2026 (unconfirmed). Checked 2026-10-18 |
