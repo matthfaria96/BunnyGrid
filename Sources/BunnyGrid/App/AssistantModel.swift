@@ -317,7 +317,7 @@ final class AssistantModel {
                     let ids = try await ChatCompletionsClient(provider: assistant.provider, apiKey: key, baseURL: url).listModels()
                     listedModels[assistant.provider] = ids.map { AIModelOption(id: $0, name: $0) }
                     // A new assistant starts without a model; take the first one the host serves.
-                    if let current = assistants.first(where: { $0.id == assistant.id }), let first = ids.first, !ids.contains(current.model) {
+                    if let current = assistants.first(where: { $0.id == assistant.id }), let first = assistant.provider.preferredModel(from: ids), !ids.contains(current.model) {
                         setModel(first, for: current)
                     }
                 }

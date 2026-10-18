@@ -129,6 +129,13 @@ public enum AIProvider: String, CaseIterable, Codable, Sendable, Identifiable {
         }
     }
 
+    /// The model a new assistant takes from the host's list. Gemini lists retired models first (they answer 404
+    /// for new accounts), so it takes Google's rolling alias for the current Flash model when listed.
+    public func preferredModel(from ids: [String]) -> String? {
+        let aliases = self == .gemini ? ["gemini-flash-latest", "gemini-pro-latest"] : []
+        return aliases.first(where: ids.contains) ?? ids.first
+    }
+
     /// Models offered before (or without) asking the API for the account's list.
     public var suggestedModels: [AIModelOption] {
         switch self {

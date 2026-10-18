@@ -119,12 +119,21 @@ public struct ChatCompletionsClient: Sendable {
         return Self.modelIDs(from: data)
     }
 
-    /// `{"data": [{"id": …}]}`; Gemini prefixes ids with `models/`, which its chat endpoint doesn't take.
+    /// `{"data": [{"id": …}]}` minus models that can't hold a text chat; Gemini prefixes ids with `models/`, which
+    /// its chat endpoint doesn't take.
     public static func modelIDs(from data: Data) -> [String] {
         guard let json = try? JSONDecoder().decode(JSONValue.self, from: data) else { return [] }
         let ids = (json["data"]?.arrayValue ?? []).compactMap { $0["id"]?.stringValue }
         return ids.map { $0.hasPrefix("models/") ? String($0.dropFirst("models/".count)) : $0 }
-            .filter { !$0.contains("embed") }
+            .filter(isChatModel)
+    }
+
+    /// Hosts list speech, image, music and embedding models next to the chat ones (Gemini's list is mostly those).
+    public static func isChatModel(_ id: String) -> Bool {
+        let id = id.lowercased()
+        let excluded = ["embed", "tts", "transcribe", "audio", "image", "imagen", "veo", "lyria", "banana", "robotics",
+                        "computer-use", "moderation", "whisper", "ocr", "aqa"]
+        return !excluded.contains { id.contains($0) }
     }
 
     /// Error bodies are `{"error": {"message"}}`, `{"error": "…"}` (xAI), `{"message"}`, `{"detail"}` (Mistral) or

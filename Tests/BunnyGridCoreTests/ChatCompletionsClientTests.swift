@@ -63,8 +63,8 @@ import Testing
         }
     }
 
-    @Test func modelIDsDropGeminiPrefixAndEmbeddings() {
-        let data = Data(#"{"object":"list","data":[{"id":"models/gemini-pro"},{"id":"models/text-embedding-004"},{"id":"llama3"}]}"#.utf8)
+    @Test func modelIDsDropGeminiPrefixAndNonChatModels() {
+        let data = Data(#"{"object":"list","data":[{"id":"models/gemini-pro"},{"id":"models/text-embedding-004"},{"id":"models/gemini-3.8-flash-tts"},{"id":"models/gemini-3.1-flash-image"},{"id":"models/lyria-3.5"},{"id":"llama3"}]}"#.utf8)
         #expect(ChatCompletionsClient.modelIDs(from: data) == ["gemini-pro", "llama3"])
     }
 
@@ -106,11 +106,42 @@ import Testing
         #expect(AIProvider.gemini.menuTitle == "Google Gemini")
         #expect(AIProvider.ollama.menuTitle == "Ollama")
         #expect(AIProvider.chatGPT.chatPath == "v1/responses")
+        #expect(AIProvider.gemini.preferredModel(from: ["gemini-2.5-flash", "gemini-flash-latest"]) == "gemini-flash-latest")
+        #expect(AIProvider.ollama.preferredModel(from: ["llama3.2", "qwen3"]) == "llama3.2")
+        #expect(AIProvider.mistral.preferredModel(from: []) == nil)
     }
 
     @Test func savedAssistantsStillDecode() throws {
         let json = Data(#"[{"id":"853824A2-9645-449C-85E9-26ABFDB0A6DD","name":"Claude","provider":"claude","apiHost":"https://api.anthropic.com","model":"claude-opus-5-5","effort":"medium","instruction":""}]"#.utf8)
         let saved = try JSONDecoder().decode([AIAssistantConfig].self, from: json)
         #expect(saved.first?.provider == .claude)
+    }
+
+    /// Live check against a real host, run only when a key is in the environment:
+    /// `BUNNYGRID_LIVE_PROVIDER=gemini BUNNYGRID_LIVE_KEY=… swift test --filter liveChat`
+    /// (`ollama` / `lmstudio` need no key). The key is never written anywhere.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["BUNNYGRID_LIVE_PROVIDER"] != nil))
+    func liveChat() async throws {
+        let env = ProcessInfo.processInfo.environment
+        let provider = try #require(AIProvider(rawValue: env["BUNNYGRID_LIVE_PROVIDER"] ?? ""))
+        let client = ChatCompletionsClient(provider: provider, apiKey: env["BUNNYGRID_LIVE_KEY"] ?? "",
+                                           baseURL: URL(string: provider.defaultHost)!)
+        let models = try await client.listModels()
+        #expect(!models.isEmpty)
+        let model = try #require(env["BUNNYGRID_LIVE_MODEL"] ?? provider.preferredModel(from: models))
+        let messages: [JSONValue] = [.object(["role": .string("user"), "content": .string("Reply with exactly: SELECT 1;")])]
+        var deltas = 0
+        var turn: AssistantTurn?
+        for try await event in client.streamChat(model: model, system: "You write SQL.", messages: messages) {
+            switch event {
+            case .textDelta: deltas += 1
+            case .finished(let finished): turn = finished
+            case .fallback: break
+            }
+        }
+        let text = try #require(turn?.text)
+        print("live \(provider.rawValue) \(model) [\(models.count) models, \(deltas) deltas]: \(text)")
+        #expect(deltas > 0)
+        #expect(text.contains("SELECT 1"))
     }
 }
