@@ -42,7 +42,7 @@ let package = Package(
                 "BunnyGridCore",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
-            resources: [.copy("Resources/Icons")],
+            resources: [.copy("Resources/Icons"), .copy("Resources/Licenses")],
             // Sparkle.framework is embedded in Contents/Frameworks (scripts/bundle.sh, scripts/release.sh);
             // SwiftPM's own @loader_path rpath keeps `swift run` working from the build directory.
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]

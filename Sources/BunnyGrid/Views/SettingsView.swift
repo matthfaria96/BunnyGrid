@@ -13,8 +13,8 @@ struct SettingsView: View {
     @State private var interfaceMode = InterfaceMode.advanced
     @State private var ai = AIDraft()
 
-    /// Simple mode shows General, Editor, Records and AI; the others keep their saved values.
-    private static let simplePanes: Set<String> = ["general", "editor", "records", "ai"]
+    /// Simple mode shows General, Editor, Records, AI and About; the others keep their saved values.
+    private static let simplePanes: Set<String> = ["general", "editor", "records", "ai", "about"]
     private var showsAdvancedPanes: Bool { Feature.advancedSettings.isAvailable }
 
     var body: some View {
@@ -42,6 +42,9 @@ struct SettingsView: View {
                 pane("advanced") { AdvancedPane(draft: $draft) }
                     .tabItem { Label("Advanced", systemImage: "gearshape.2") }
             }
+            AboutPane()
+                .tag("about")
+                .tabItem { Label("About", systemImage: "info.circle") }
         }
         .frame(width: 760)
         .onAppear(perform: reload)

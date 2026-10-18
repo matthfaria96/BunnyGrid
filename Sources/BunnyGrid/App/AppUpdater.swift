@@ -44,10 +44,25 @@ struct CheckForUpdatesCommands: Commands {
     let updater: AppUpdater
 
     var body: some Commands {
+        // About BunnyGrid opens Settings › About (version, licenses), as in MacDash.
+        CommandGroup(replacing: .appInfo) {
+            AboutItem()
+        }
         CommandGroup(after: .appInfo) {
             if updater.isEnabled {
                 CheckForUpdatesItem(updater: updater)
             }
+        }
+    }
+}
+
+private struct AboutItem: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Button("About BunnyGrid") {
+            UserDefaults.standard.set("about", forKey: "settingsTab")
+            openSettings()
         }
     }
 }

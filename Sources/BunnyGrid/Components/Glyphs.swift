@@ -40,7 +40,7 @@ enum IconLibrary {
     private static var cache: [String: NSImage] = [:]
 
     /// The SwiftPM resource bundle: inside the .app's Resources, or next to the executable during `swift run`.
-    private static let bundle: Bundle? = {
+    static let bundle: Bundle? = {
         let name = "BunnyGrid_BunnyGrid.bundle"
         let candidates = [
             Bundle.main.resourceURL?.appending(path: name),

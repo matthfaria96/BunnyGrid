@@ -1,0 +1,18 @@
+{
+  "name": "about",
+  "args": ["{{DB}}", "--window-size", "1400x900"],
+  "steps": [
+    {"op": "waitFor", "probe": "openSessions", "equals": 1},
+    {"op": "menuBar", "path": ["BunnyGrid", "About BunnyGrid"], "note": "app menu › About BunnyGrid opens Settings › About"},
+    {"op": "waitFor", "id": "about.licenses", "exists": true, "timeout": 5},
+    {"op": "wait", "ms": 400},
+    {"op": "screenshot", "name": "about"},
+    {"op": "click", "id": "about.licenses"},
+    {"op": "waitFor", "label": "Open-source licenses", "role": "AXStaticText", "exists": true, "timeout": 5},
+    {"op": "waitFor", "label": "Citadel 0.12.1", "exists": true, "note": "generated from the real license files"},
+    {"op": "wait", "ms": 400},
+    {"op": "screenshot", "name": "licenses"},
+    {"op": "click", "label": "Done", "role": "AXButton"},
+    {"op": "waitFor", "label": "Citadel 0.12.1", "exists": false, "timeout": 3}
+  ]
+}
