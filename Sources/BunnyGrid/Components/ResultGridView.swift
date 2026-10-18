@@ -107,6 +107,8 @@ struct ResultGridView: NSViewRepresentable {
         private var copyTarget: GridCopyTarget?
         private var editorContent: GridEditorContent?
         private var lastEditorRequest: GridEditorRequest?
+        /// A value-editor request that arrived while the grid had no window; shown once it is on screen.
+        private var pendingEditorRequest: GridEditorRequest?
         private var popover: NSPopover?
 
         /// Options › Records › Grid Font, or the default grid font.
@@ -181,12 +183,16 @@ struct ResultGridView: NSViewRepresentable {
                 tableView.scrollRowToVisible(request.row)
                 tableView.selectRowIndexes(IndexSet(integer: request.row), byExtendingSelection: false)
             }
-            // Off screen (a hidden tab, or a request made at launch before the window exists) the request waits:
-            // NSPopover throws when its anchor view has no window.
-            if let request = view.editorRequest, request != lastEditorRequest, tableView.window != nil {
+            if let request = view.editorRequest, request != lastEditorRequest {
                 lastEditorRequest = request
-                // Wait for the reload and scroll above to lay out the cell the popover points at.
-                DispatchQueue.main.async { [weak self] in self?.showEditor(for: request.cell) }
+                if tableView.window != nil {
+                    // Wait for the reload and scroll above to lay out the cell the popover points at.
+                    DispatchQueue.main.async { [weak self] in self?.showEditor(for: request.cell) }
+                } else {
+                    // Off screen (a hidden tab, or a request made at launch before the window exists): NSPopover
+                    // throws when its anchor has no window, so it waits for `tableDidMoveToWindow`.
+                    pendingEditorRequest = request
+                }
             }
         }
 
@@ -214,6 +220,12 @@ struct ResultGridView: NSViewRepresentable {
             popover.contentViewController = host
             popover.show(relativeTo: tableView.frameOfCell(atColumn: position, row: cell.row), of: tableView, preferredEdge: .maxY)
             self.popover = popover
+        }
+
+        func tableDidMoveToWindow() {
+            guard let request = pendingEditorRequest, tableView?.window != nil else { return }
+            pendingEditorRequest = nil
+            DispatchQueue.main.async { [weak self] in self?.showEditor(for: request.cell) }
         }
 
         /// ⌥↩ opens the value editor on the focused cell.
@@ -826,6 +838,11 @@ final class GridTableView: NSTableView {
     // change only made the enclosing SwiftUI host lay itself out again each frame of a resize.
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
     override func invalidateIntrinsicContentSize() {}
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        coordinator?.tableDidMoveToWindow()
+    }
 
     override func drawGrid(inClipRect clipRect: NSRect) {
         super.drawGrid(inClipRect: clipRect)
