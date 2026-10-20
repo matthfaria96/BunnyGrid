@@ -45,11 +45,15 @@ struct AboutPane: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 14)
 
-            Button("Open-source licenses") { showLicenses = true }
-                .buttonStyle(.link)
-                .font(.system(size: 12))
-                .padding(.top, 10)
-                .accessibilityIdentifier("about.licenses")
+            HStack(spacing: 18) {
+                Link("witchmymac.com", destination: URL(string: "http://witchmymac.com")!)
+                    .font(.system(size: 12))
+                Button("Open-source licenses") { showLicenses = true }
+                    .buttonStyle(.link)
+                    .font(.system(size: 12))
+                    .accessibilityIdentifier("about.licenses")
+            }
+            .padding(.top, 10)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 14)
