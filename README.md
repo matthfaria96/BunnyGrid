@@ -9,6 +9,21 @@ References:
 - **Beekeeper Studio**: architecture (driver contract, connection → tree → tabs flow). Used only as a reference; no code was copied (see [Credits and licenses](#credits-and-licenses)).
 - **Navicat Premium**: feature map in `../Clones/Navicat Premium/SPEC.md` (public bundle metadata only). It sets the roadmap in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Install
+
+1. Download `BunnyGrid-<version>.dmg` from [Releases](https://github.com/matthfaria96/BunnyGrid/releases) or from https://witchmymac.com.
+2. Open the DMG and drag **BunnyGrid** to **Applications**.
+
+The app is not notarized by Apple, so macOS blocks it the first time you open it. To allow it, paste this in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/BunnyGrid.app"
+```
+
+This only removes the "downloaded from the internet" mark from BunnyGrid.
+
+Without Terminal: open the app, click **OK** on the warning, then go to **System Settings → Privacy & Security** and click **Open Anyway**.
+
 ## Requirements
 
 - macOS 14 or later

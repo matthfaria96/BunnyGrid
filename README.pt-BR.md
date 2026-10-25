@@ -9,6 +9,21 @@ Referências:
 - **Beekeeper Studio**: arquitetura (contrato de driver, fluxo conexão → árvore → abas). Usado só como referência; nenhum código foi copiado (veja [Créditos e licenças](#créditos-e-licenças)).
 - **Navicat Premium**: mapa de funções em `../Clones/Navicat Premium/SPEC.md` (só metadados públicos do bundle). Define o roadmap em [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Instalação
+
+1. Baixe o `BunnyGrid-<versão>.dmg` em [Releases](https://github.com/matthfaria96/BunnyGrid/releases) ou em https://witchmymac.com.
+2. Abra o DMG e arraste o **BunnyGrid** para **Aplicativos**.
+
+O app não é notarizado pela Apple, então o macOS bloqueia na primeira vez que você abre. Para liberar, cole isto no Terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/BunnyGrid.app"
+```
+
+Isso só remove a marca de "baixado da internet" do BunnyGrid.
+
+Sem Terminal: abra o app, clique em **OK** no aviso, depois vá em **Ajustes do Sistema → Privacidade e Segurança** e clique em **Abrir Mesmo Assim**.
+
 ## Requisitos
 
 - macOS 14 ou posterior
