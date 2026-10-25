@@ -114,6 +114,42 @@ ARTWORK = [
         "url": "https://www.kingbase.com.cn/about/about.html",
         "text": "Published for download by CETC Kingbase with no usage terms attached. Used only to identify the product.",
     },
+    {
+        "id": "simple-icons-older",
+        "name": "Simple Icons 9.19.0 and 13.21.0",
+        "license": "CC0 1.0",
+        "usage": "Azure and SQL Server (9.19.0); AWS, Oracle and OpenAI (13.21.0) logos",
+        "url": "https://github.com/simple-icons/simple-icons",
+        "text": CC0 + "\n\nThese marks were later removed upstream. Logos are trademarks of their owners; they only "
+        "identify the product and imply no endorsement.",
+    },
+    {
+        "id": "lobehub-icons",
+        "name": "LobeHub Icons 1.95.1",
+        "license": "MIT",
+        "usage": "xAI and Tencent Cloud logos",
+        "url": "https://github.com/lobehub/lobe-icons",
+        "text": "From @lobehub/icons-static-svg 1.95.1, MIT License, Copyright (c) LobeHub.\n"
+        "https://github.com/lobehub/lobe-icons/blob/master/LICENSE\n\n"
+        "Logos are trademarks of their owners; they only identify the product and imply no endorsement.",
+    },
+    {
+        "id": "garnet",
+        "name": "Garnet logo",
+        "license": "MIT (repository)",
+        "usage": "New Connection",
+        "url": "https://github.com/microsoft/garnet",
+        "text": "Silhouette redrawn from website/static/img/logo_128.png in the Garnet repository (MIT License). "
+        "Microsoft trademarks are subject to Microsoft's Trademark & Brand Guidelines; used only to identify the product.",
+    },
+    {
+        "id": "highgo",
+        "name": "HighGo logo",
+        "license": "Owner's website artwork",
+        "usage": "New Connection",
+        "url": "https://www.highgo.com",
+        "text": "Latin wordmark from the highgo.com site logo; no terms published. Used only to identify the product.",
+    },
 ]
 
 SYSTEM = [

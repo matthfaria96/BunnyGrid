@@ -31,8 +31,21 @@ marks may still be subject to trademark law (see its DISCLAIMER.md). Files are u
 | brand-ollama.svg | ollama | #000000 | https://github.com/ollama/ollama/issues/2152#issuecomment-1905286922 |
 | brand-lmstudio.svg | lmstudio | #000000 | https://files.lmstudio.ai/lmstudio_icon2.svg |
 
-OpenAI (ChatGPT) and xAI (Grok) are not in Simple Icons (removed at the owners' request), so the app shows
-a text tile for them (`AIProvider.brand`); see the table below.
+## Older Simple Icons releases and LobeHub Icons
+
+Added 2026-10-19. Marks that were later removed from Simple Icons come from the last release that had them
+(CC0-1.0); xAI and Tencent Cloud come from **LobeHub Icons** (npm `@lobehub/icons-static-svg` 1.95.1,
+**MIT**, https://github.com/lobehub/lobe-icons). Single-colour paths, tinted by the app.
+
+| File | Brand hex | Source | Licence |
+|---|---|---|---|
+| brand-amazonwebservices.svg | #FF9900 | Simple Icons 13.21.0 `amazonwebservices` | CC0-1.0 |
+| brand-microsoftazure.svg | #0078D4 | Simple Icons 9.19.0 `microsoftazure` | CC0-1.0 |
+| brand-microsoftsqlserver.svg | #CC2927 | Simple Icons 9.19.0 `microsoftsqlserver` | CC0-1.0 |
+| brand-oracle.svg | #F80000 | Simple Icons 13.21.0 `oracle` | CC0-1.0 |
+| brand-openai.svg | #000000 (Simple Icons' #412991 is OpenAI's old purple) | Simple Icons 13.21.0 `openai` | CC0-1.0 |
+| brand-xai.svg | #000000 | LobeHub Icons 1.95.1 `xai.svg` | MIT |
+| brand-tencentcloud.svg | #0052D9 | LobeHub Icons 1.95.1 `tencentcloud.svg` | MIT |
 
 ## From the owners' own published files
 
@@ -44,19 +57,23 @@ Simple Icons marks, and padded to a square viewBox. The artwork is otherwise unc
 |---|---|---|---|---|
 | brand-ivorysql.svg | #FBAF42 (the logo's gold, `.st1`) | `static/img/logo.svg` in https://github.com/IvorySQL/Ivory-www (the ivorysql.org site repo, branch `main`) | Repository licence **CC0-1.0** ("Creative Commons Zero v1.0 Universal"); IvorySQL itself is Apache-2.0 | The white outline and gold tusk fills merged into one path |
 | brand-oceanbase.svg | #0096FE (the logo gradient's start colour) | `images/logo.svg` in https://github.com/oceanbase/oceanbase (commit a7d679d, 2026-07-14) | Repository licence **Apache-2.0**: copyright licence to reproduce and distribute; §6 grants no trademark rights "except as required for reasonable and customary use in describing the origin of the Work". No OceanBase trademark/logo policy is published | Only the symbol (the three gradient paths `cls-1..3`), without the "OceanBase" wordmark; gradient replaced by one fill |
+| brand-highgo.svg | #EC6C00 (the logo's orange accent; the letters are #01111C) | Latin "HIGHGO" line of the `#icon-logo` sprite on https://www.highgo.com (`/_nuxt/BsGUcdq0.js`), downloaded 2026-10-19 | Owner's site artwork, no terms published | Chinese characters removed, one fill |
+| brand-garnet.svg | #7A060C (face of the logo) | silhouette redrawn from `website/static/img/logo_128.png` in https://github.com/microsoft/garnet | Repository **MIT**; Microsoft Trademark & Brand Guidelines apply to the mark | Traced as one single-colour path |
 | brand-kingbase.svg | #C9151E (the red of the owner's RGB PNGs) | "Logo下载 / LOGO组合包下载" on https://www.kingbase.com.cn/about/about.html → `uploadnew/file/2024/10/29/86eef8cb-6e94-4620-8d6f-d1d9f79ad24c.zip` (dated 2024-09-06; "KING BASE商标源文件(金仓数据库).ai") | Offered publicly by 电科金仓 (CETC Kingbase) as a logo pack "提供矢量图、JPG、PNG版" with **no usage terms attached**; the site has no trademark notice | The stacked English wordmark ("英文-竖版" artboard) converted from the PDF-compatible .ai to SVG |
 
-Basis for these three: the owner publishes the artwork for download (under CC0 / Apache-2.0, or as a
+Basis for the rows above: the owner publishes the artwork for download (under CC0 / Apache-2.0, or as a
 public logo pack) and no published policy of theirs restricts referring to the product with it. It is
 used only to identify the product (nominative use), never for BunnyGrid itself, and implies no endorsement.
 
-## Text tiles (no logo shipped)
+## Owners' guidelines (for the record)
 
-These owners' published terms don't allow their logos in third-party software, or no permission-granting
-source exists, so the picker shows the name as text in the brand colour (`Components/BrandLogo.swift`).
-No artwork was copied. Checked 2026-10-17.
+Until 2026-10-19 these brands were shown as text tiles because of the published terms below. On 2026-10-19
+the project owner decided to show the companies' marks instead, for nominative identification of the product
+the user is connecting to in a free AGPL app, despite these guidelines. The marks are never used for
+BunnyGrid itself and imply no endorsement. `.monogram` text tiles remain in `Components/BrandLogo.swift` only
+as the fallback for unknown types. Notes checked 2026-10-17/18:
 
-| Brand | Tile text | Colour (source) | Why no logo |
+| Brand | Former tile text | Colour (source) | Owner's terms |
 |---|---|---|---|
 | AWS (all Amazon services) | aws | #FF9900 (AWS logo orange; AWS publishes no colour spec publicly) | AWS Trademark Guidelines (https://aws.amazon.com/trademark-guidelines/) §13: "AWS does not object to fair use of its marks by third parties ... Any such use should be in plain text only (no logos)"; §10 lists "product icons" as protected trade dress. The AWS Architecture Icons (https://aws.amazon.com/architecture/icons/, package of 2026-07-31) are allowed only "to create architecture diagrams" and in "whitepapers, presentations, data sheets, and posters" |
 | Microsoft Azure | Azure | #0078D4 (Azure blue, as in Microsoft's Azure icons; approx.) | Azure Architecture Icons terms (https://learn.microsoft.com/azure/architecture/icons/, V24, July 2026): "Microsoft permits the use of these icons in architectural diagrams, training materials, or documentation. You can copy, distribute, and display the icons only for the permitted use unless granted explicit permission by Microsoft." Microsoft Trademark & Brand Guidelines: "Don't use Microsoft's logos, icons, or designs, in any manner"; app/product icons (incl. Azure) "will require a license first" |
