@@ -63,11 +63,11 @@ step() { print -P "%B==> $*%b"; }
 warn() { print -P "%F{yellow}warning:%f $*" >&2; }
 die() { print -P "%F{red}error:%f $*" >&2; exit 1; }
 
-# Version: --version, else the latest vX.Y.Z tag, else 0.1.0. Build number: commit count (monotonic, which is
+# Version: --version, else the latest vX.Y.Z tag, else 0.2.0. Build number: commit count (monotonic, which is
 # what Sparkle compares).
 if [[ -z "$VERSION" ]]; then
   VERSION="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null | sed 's/^v//')" || true
-  [[ -z "$VERSION" ]] && VERSION="0.1.0"
+  [[ -z "$VERSION" ]] && VERSION="0.2.0"
 fi
 [[ "$VERSION" =~ '^[0-9]+(\.[0-9]+){1,2}$' ]] || die "version must look like 1.2.3 (got $VERSION)"
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
@@ -250,7 +250,7 @@ if (( MAKE_DMG )); then
   spctl -a -t open --context context:primary-signature -vv "$DMG" 2>&1 | sed 's/^/    /' || true
 fi
 if [[ "$IDENTITY" == "-" ]]; then
-  echo "    (Expected: ad hoc builds are rejected by Gatekeeper. Downloaded copies need right-click › Open, or"
+  echo "    (Expected: ad hoc builds are rejected by Gatekeeper. Downloaded copies need xattr -dr com.apple.quarantine on the app, or"
   echo "     \"Open Anyway\" in System Settings › Privacy & Security. Sign with Developer ID and --notarize to fix.)"
 elif (( ! NOTARIZE )); then
   echo "    (Signed with Developer ID but not notarized: Gatekeeper blocks downloaded copies until --notarize.)"
