@@ -67,7 +67,8 @@ private struct AboutItem: View {
     }
 }
 
-private struct CheckForUpdatesItem: View {
+/// The app menu item and the button in Settings › About; disabled while a check or install is under way.
+struct CheckForUpdatesItem: View {
     let updater: AppUpdater
 
     var body: some View {

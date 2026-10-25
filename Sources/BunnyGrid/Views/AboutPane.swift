@@ -54,6 +54,13 @@ struct AboutPane: View {
                     .accessibilityIdentifier("about.licenses")
             }
             .padding(.top, 10)
+
+            if AppUpdater.shared.isEnabled {
+                CheckForUpdatesItem(updater: AppUpdater.shared)
+                    .controlSize(.small)
+                    .padding(.top, 14)
+                    .accessibilityIdentifier("about.checkForUpdates")
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 14)

@@ -18,7 +18,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.27.0"),
         // Auto-updates (MIT). Linked always but inert unless the release sets SUFeedURL + SUPublicEDKey
         // (scripts/release.sh, BUNNYGRID_SPARKLE_FEED_URL / BUNNYGRID_SPARKLE_PUBLIC_KEY).
-        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.10.0"),
     ],
     targets: [
         .target(

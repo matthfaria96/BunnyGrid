@@ -182,6 +182,8 @@ if [[ -n "$FEED" ]]; then
   <key>SUFeedURL</key><string>$FEED</string>
   <key>SUPublicEDKey</key><string>$EDKEY</string>
   <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>86400</integer>
+  <key>SUAutomaticallyUpdate</key><false/>
 PLIST
 fi
 cat >> "$PLIST" <<PLIST
