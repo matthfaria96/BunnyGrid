@@ -3933,6 +3933,44 @@ https://www.apache.org/licenses/LICENSE-2.0
 
 Published for download by CETC Kingbase with no usage terms attached. Used only to identify the product.
 
+### Simple Icons 9.19.0 and 13.21.0
+
+- Source: https://github.com/simple-icons/simple-icons
+- License: CC0 1.0
+- Used in: Azure and SQL Server (9.19.0); AWS, Oracle and OpenAI (13.21.0) logos
+
+Creative Commons Zero v1.0 Universal (CC0-1.0): the authors dedicated the work to the public domain.
+https://creativecommons.org/publicdomain/zero/1.0/
+
+These marks were later removed upstream. Logos are trademarks of their owners; they only identify the product and imply no endorsement.
+
+### LobeHub Icons 1.95.1
+
+- Source: https://github.com/lobehub/lobe-icons
+- License: MIT
+- Used in: xAI and Tencent Cloud logos
+
+From @lobehub/icons-static-svg 1.95.1, MIT License, Copyright (c) LobeHub.
+https://github.com/lobehub/lobe-icons/blob/master/LICENSE
+
+Logos are trademarks of their owners; they only identify the product and imply no endorsement.
+
+### Garnet logo
+
+- Source: https://github.com/microsoft/garnet
+- License: MIT (repository)
+- Used in: New Connection
+
+Silhouette redrawn from website/static/img/logo_128.png in the Garnet repository (MIT License). Microsoft trademarks are subject to Microsoft's Trademark & Brand Guidelines; used only to identify the product.
+
+### HighGo logo
+
+- Source: https://www.highgo.com
+- License: Owner's website artwork
+- Used in: New Connection
+
+Latin wordmark from the highgo.com site logo; no terms published. Used only to identify the product.
+
 ## References (no code or artwork copied)
 
 - [Beekeeper Studio](https://github.com/beekeeper-studio/beekeeper-studio) (GPL-3.0): architecture reference (driver contract, connection → tree → tabs); no code copied.

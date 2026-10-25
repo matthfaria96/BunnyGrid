@@ -8,9 +8,9 @@ extension AIProvider {
     var brand: Brand {
         switch self {
         case .claude: .logo(slug: "claude", hex: 0xD97757)
-        case .chatGPT: .monogram(short: "AI", long: "OpenAI", hex: 0x000000)
+        case .chatGPT: .logo(slug: "openai", hex: 0x000000)
         case .gemini: .logo(slug: "googlegemini", hex: 0x8E75B2)
-        case .grok: .monogram(short: "xAI", long: "Grok", hex: 0x000000)
+        case .grok: .logo(slug: "xai", hex: 0x000000)
         case .deepSeek: .logo(slug: "deepseek", hex: 0x5786FE)
         case .mistral: .logo(slug: "mistralai", hex: 0xFA520F)
         case .ollama: .logo(slug: "ollama", hex: 0x000000)

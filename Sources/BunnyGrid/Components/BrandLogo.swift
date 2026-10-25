@@ -40,8 +40,8 @@ extension ConnectionFamily {
         switch self {
         case .mysql: .logo(slug: "mysql", hex: 0x4479A1)
         case .postgresql: .logo(slug: "postgresql", hex: 0x4169E1)
-        case .sqlserver: .monogram(short: "SQL", long: "SQL Server", hex: 0xCC2927)
-        case .oracle: .monogram(short: "O", long: "ORACLE", hex: 0xC74634)
+        case .sqlserver: .logo(slug: "microsoftsqlserver", hex: 0xCC2927)
+        case .oracle: .logo(slug: "oracle", hex: 0xF80000)
         case .sqlite: .logo(slug: "sqlite", hex: 0x003B57)
         case .mariadb: .logo(slug: "mariadb", hex: 0x003545)
         case .mongodb: .logo(slug: "mongodb", hex: 0x47A248)
@@ -54,18 +54,18 @@ extension ConnectionFamily {
 extension ConnectionVendor {
     var brand: Brand {
         switch self {
-        case .aws: .monogram(short: "aws", long: "aws", hex: 0xFF9900)
+        case .aws: .logo(slug: "amazonwebservices", hex: 0xFF9900)
         case .fujitsu: .logo(slug: "fujitsu", hex: 0xFF0000)
         case .google: .logo(slug: "googlecloud", hex: 0x4285F4)
-        case .microsoft: .monogram(short: "Az", long: "Azure", hex: 0x0078D4)
-        case .oracle: .monogram(short: "O", long: "ORACLE", hex: 0xC74634)
+        case .microsoft: .logo(slug: "microsoftazure", hex: 0x0078D4)
+        case .oracle: .logo(slug: "oracle", hex: 0xF80000)
         case .alibaba: .logo(slug: "alibabacloud", hex: 0xFF6A00)
-        case .highgo: .monogram(short: "HG", long: "HighGo", hex: 0xEC6C00)
+        case .highgo: .logo(slug: "highgo", hex: 0xEC6C00)
         case .huawei: .logo(slug: "huawei", hex: 0xFF0000)
         case .kingbase: .logo(slug: "kingbase", hex: 0xC9151E)
         case .oceanbase: .logo(slug: "oceanbase", hex: 0x0096FE)
         case .pingcap: .logo(slug: "tidb", hex: 0xDC150B)
-        case .tencent: .monogram(short: "TC", long: "Tencent Cloud", hex: 0x0052D9)
+        case .tencent: .logo(slug: "tencentcloud", hex: 0x0052D9)
         }
     }
 }
@@ -75,7 +75,7 @@ extension ConnectionType {
     var brand: Brand {
         switch id {
         case "ivorysql": .logo(slug: "ivorysql", hex: 0xFBAF42)
-        case "ms-garnet": .monogram(short: "G", long: "Garnet", hex: 0x7A060C)
+        case "ms-garnet": .logo(slug: "garnet", hex: 0x7A060C)
         default: vendor?.brand ?? family?.brand ?? .monogram(short: "?", long: "?", hex: 0x8E8E93)
         }
     }
